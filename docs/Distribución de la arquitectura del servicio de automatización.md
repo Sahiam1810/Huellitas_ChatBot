@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI y la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo. Todavía no existen endpoints conversacionales, agente, módulos veterinarios, RAG, Qdrant, Redis ni comunicación con .NET.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, y `POST /api/v1/messages`. Este primer flujo invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, módulos veterinarios, LangGraph, RAG, Qdrant, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -252,7 +252,7 @@ Creará los siete módulos aprobados y los incorporará a una única instancia d
 
 ## `bootstrap/lifecycle.py`
 
-Coordina inicialización, readiness y cierre ordenado. Actualmente construye únicamente el modelo seleccionado, sin invocarlo durante el arranque, y cierra su cliente durante el shutdown.
+Coordina inicialización, readiness y cierre ordenado. Actualmente construye el modelo seleccionado y el `MessageProcessor`, sin invocar al proveedor durante el arranque, y libera ambas dependencias durante el shutdown.
 
 ## `bootstrap/settings.py`
 
@@ -275,7 +275,7 @@ api/routers/
 `-- info.py
 ```
 
-- `chat.py`: mensajes, continuación, confirmación y cancelación de una acción pendiente.
+- `chat.py`: actualmente expone `POST /api/v1/messages`, valida exclusivamente el transporte y delega al `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
 - `conversations.py`: contexto permitido y estado técnico requerido para coordinar una conversación.
 - `internal.py`: indexación, sincronización y preparación opcional de contenido interno.
 - `health.py`: expone `GET /health/live` y `GET /health/ready` fuera de la API de negocio versionada.
@@ -330,6 +330,7 @@ El token nunca se entrega al modelo, prompts o Qdrant, y debe redactarse de logs
 
 ```text
 orchestration/
+|-- message_processor.py
 |-- main_graph.py
 |-- state.py
 |-- intent_router.py
@@ -346,6 +347,8 @@ orchestration/
     |-- retry_policy.py
     `-- safety_policy.py
 ```
+
+`message_processor.py` es el corte vertical previo a los módulos disponible actualmente. Recibe un comando neutral, interrumpe la generación si la conversación está escalada y, en caso contrario, solicita una respuesta al puerto `ChatModel`. No contiene reglas veterinarias, persistencia ni selección de módulos.
 
 ## Grafo principal
 
@@ -695,6 +698,8 @@ Si cambian los datos relevantes, la confirmación se invalida. El agente nunca a
 
 # 17. Fallbacks y resiliencia
 
+El endpoint implementado devuelve Problem Details seguros: `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Estos errores técnicos todavía no producen una respuesta conversacional de fallback.
+
 ## Categorías
 
 - `routing_fallback`: intención desconocida o ambigua.
@@ -823,7 +828,7 @@ Cada módulo prueba contratos, reglas, transiciones, confirmaciones y fallbacks 
 
 Se validan los adaptadores de .NET, Qdrant, Redis y proveedores de modelos con entornos o dobles controlados.
 
-En la base multiproveedor actual, todas las pruebas de modelos utilizan clientes simulados: no realizan llamadas de red ni consumen créditos. Las pruebas en vivo requerirán una fase y una autorización separadas.
+En la base multiproveedor y el endpoint de mensajes actuales, todas las pruebas de modelos utilizan clientes simulados: no realizan llamadas de red ni consumen créditos. Las pruebas en vivo requerirán una fase y una autorización separadas.
 
 ## Pruebas end-to-end
 
@@ -861,9 +866,8 @@ No se agregan condiciones específicas del nuevo módulo en `main_graph.py`, `in
 
 # 22. Decisiones fuera de alcance
 
-Esta fase no define ni implementa:
+El incremento actual no implementa:
 
-- Proveedor definitivo de modelo conversacional.
 - Proveedor definitivo de embeddings.
 - Esquemas HTTP finales de .NET.
 - Contenido veterinario definitivo.
@@ -871,6 +875,12 @@ Esta fase no define ni implementa:
 - Infraestructura de despliegue.
 - Integraciones directas con canales externos.
 - Tablas o migraciones de Oracle Database 26ai.
-- Comportamiento ejecutable del bot.
+- Validación JWT.
+- Consulta o persistencia del historial canónico.
+- Comportamiento de idempotencia, bloqueos o checkpoints.
+- Llamadas al backend .NET.
+- Módulos veterinarios, registro dinámico o LangGraph.
+- RAG, embeddings, Qdrant o Redis.
+- Herramientas, streaming o respuestas estructuradas de negocio.
 
-La implementación futura deberá desarrollarse por módulos y aprobar cada contrato antes de conectar adaptadores concretos.
+La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.adapters.models.model_factory import create_chat_model
 from app.bootstrap.settings import Settings
 from app.observability.logging import configure_logging
+from app.orchestration.message_processor import MessageProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,12 @@ def build_lifespan(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(settings.log_level)
-        app.state.dependencies.chat_model = create_chat_model(settings)
+        chat_model = create_chat_model(settings)
+        app.state.dependencies.chat_model = chat_model
+        app.state.dependencies.message_processor = MessageProcessor(
+            chat_model=chat_model,
+            max_output_tokens=settings.chat_max_output_tokens,
+        )
         app.state.ready = True
         logger.info(
             "application_started name=%s version=%s environment=%s",
@@ -29,6 +35,7 @@ def build_lifespan(
             yield
         finally:
             app.state.ready = False
+            app.state.dependencies.message_processor = None
             chat_model = app.state.dependencies.chat_model
             app.state.dependencies.chat_model = None
             try:

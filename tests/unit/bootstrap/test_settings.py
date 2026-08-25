@@ -19,6 +19,7 @@ HUELLITAS_ENV_KEYS = (
 PROVIDER_ENV_KEYS = (
     "HUELLITAS_CHAT_ENABLED",
     "HUELLITAS_CHAT_PROVIDER",
+    "HUELLITAS_CHAT_MAX_OUTPUT_TOKENS",
     "HUELLITAS_OPENROUTER_API_KEY",
     "HUELLITAS_OPENROUTER_BASE_URL",
     "HUELLITAS_OPENROUTER_MODEL",
@@ -221,3 +222,23 @@ def test_environment_selects_provider_without_code_changes(
     assert active is not None
     assert active.provider is ModelProvider.OPENAI
     assert active.model == "gpt-environment"
+
+
+def test_chat_output_limit_uses_safe_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.chat_max_output_tokens == 1024
+
+
+def test_chat_output_limit_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HUELLITAS_CHAT_MAX_OUTPUT_TOKENS", "2048")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.chat_max_output_tokens == 2048
+
+
+@pytest.mark.parametrize("limit", [0, -1, 32769])
+def test_chat_output_limit_rejects_values_outside_bounds(limit: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(chat_max_output_tokens=limit, _env_file=None)

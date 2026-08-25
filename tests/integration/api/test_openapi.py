@@ -20,10 +20,15 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert schema["info"]["version"] == "0.1.0"
     assert set(schema["paths"]) == {
         "/api/v1/info",
+        "/api/v1/messages",
         "/health/live",
         "/health/ready",
     }
     assert "503" in schema["paths"]["/health/ready"]["get"]["responses"]
+    message_operation = schema["paths"]["/api/v1/messages"]["post"]
+    assert set(message_operation["responses"]) >= {"200", "422", "502", "503", "504"}
+    request_schema = message_operation["requestBody"]["content"]["application/json"]["schema"]
+    assert request_schema["$ref"].endswith("/MessageRequest")
 
 
 def test_documentation_routes_are_absent_when_disabled() -> None:

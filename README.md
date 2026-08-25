@@ -2,7 +2,7 @@
 
 Monolito modular de automatización conversacional para una plataforma veterinaria.
 
-El proyecto implementa actualmente su base operativa de FastAPI y la frontera neutral para modelos conversacionales. OpenRouter, OpenAI directo y Gemini directo están disponibles mediante configuración, pero todavía no existe un endpoint de chat ni un agente que los invoque. Los módulos veterinarios, RAG y operaciones externas permanecen sin implementar.
+El proyecto implementa actualmente su base operativa de FastAPI, la frontera neutral para modelos conversacionales y un endpoint inicial de mensajes. OpenRouter, OpenAI directo y Gemini directo están disponibles mediante configuración; el procesador actual envía el mensaje al proveedor activo o conserva el control humano cuando .NET informa que la conversación está escalada. Los módulos veterinarios, RAG y operaciones externas permanecen sin implementar.
 
 ## Responsabilidades
 
@@ -57,9 +57,35 @@ Los valores disponibles están documentados en `.env.example`. Construir el serv
 | `GET` | `/health/live` | Confirma que el proceso responde. |
 | `GET` | `/health/ready` | Confirma que la aplicación terminó de iniciar. |
 | `GET` | `/api/v1/info` | Expone metadatos seguros del servicio. |
+| `POST` | `/api/v1/messages` | Procesa un mensaje mediante el proveedor activo o informa control humano. |
 | `GET` | `/docs` | Swagger UI, cuando está habilitado. |
 | `GET` | `/redoc` | ReDoc, cuando está habilitado. |
 | `GET` | `/openapi.json` | Esquema OpenAPI, cuando está habilitado. |
+
+## Prueba de mensajes
+
+Una solicitud real consume créditos del proveedor y requiere `HUELLITAS_CHAT_ENABLED=true`. También puedes probar el contrato desde Swagger en `/docs`. JWT todavía no se exige en este incremento; no expongas el endpoint fuera de un entorno de desarrollo confiable hasta implementar esa validación.
+
+```powershell
+$body = @{
+    message = "Hola"
+    conversationId = "bda5a441-e907-4781-bca6-44c25a73255a"
+    userId = "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9"
+    petId = $null
+    channel = "web"
+    language = "es-CO"
+    roles = @("customer")
+    isEscalated = $false
+    correlationId = "8dd1b2d9-4812-463a-87a4-eb6346cb2f83"
+    idempotencyKey = "local-message-001"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -ContentType "application/json" `
+    -Body $body
+```
 
 ## Calidad
 

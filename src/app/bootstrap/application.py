@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
-from app.api.routers import health, info
+from app.api.routers import chat, health, info
 from app.bootstrap.dependencies import ApplicationDependencies
 from app.bootstrap.lifecycle import build_lifespan
 from app.bootstrap.settings import Settings, load_settings
@@ -27,5 +27,6 @@ def create_application(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(chat.router, prefix="/api/v1")
     app.include_router(info.router, prefix="/api/v1")
     return app
