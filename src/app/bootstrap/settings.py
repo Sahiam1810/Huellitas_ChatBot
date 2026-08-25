@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER
+    chat_max_output_tokens: int = Field(default=1024, ge=1, le=32768)
 
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: AnyHttpUrl = AnyHttpUrl("https://openrouter.ai/api/v1")
