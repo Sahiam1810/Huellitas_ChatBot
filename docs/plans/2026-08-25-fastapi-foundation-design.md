@@ -70,6 +70,7 @@ Cada elemento fuera de alcance tendrá una rama y un incremento posterior.
 |-- src/
 |   `-- app/
 |       |-- __init__.py
+|       |-- __main__.py
 |       |-- main.py
 |       |-- bootstrap/
 |       |   |-- __init__.py
@@ -108,6 +109,10 @@ Los `__init__.py` se limitan a los paquetes utilizados en este incremento. Los p
 ### `src/app/main.py`
 
 Importa la factory y expone una instancia ASGI. No registra routers, configura settings ni crea integraciones directamente.
+
+### `src/app/__main__.py`
+
+Ofrece el comando local `python -m app`, carga settings y ejecuta Uvicorn programáticamente con el host, puerto y nivel de log configurados. Esto garantiza que las variables aprobadas tengan un consumidor real sin introducir scripts externos a la arquitectura.
 
 ### `src/app/bootstrap/application.py`
 
@@ -392,4 +397,5 @@ Después de fusionar este incremento se diseñarán por separado:
 - [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
 - [uv: archivos de configuración y env files](https://docs.astral.sh/uv/configuration/files/)
 - [uv: caché](https://docs.astral.sh/uv/concepts/cache/)
+- [Uvicorn: configuración y ejecución programática](https://www.uvicorn.org/settings/)
 - [Python: variables del intérprete](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONPYCACHEPREFIX)
