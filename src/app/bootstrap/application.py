@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routers import health, info
+from app.bootstrap.dependencies import ApplicationDependencies
 from app.bootstrap.lifecycle import build_lifespan
 from app.bootstrap.settings import Settings, load_settings
 
@@ -21,6 +22,7 @@ def create_application(settings: Settings | None = None) -> FastAPI:
         openapi_url=openapi_url,
         lifespan=build_lifespan(resolved_settings),
     )
+    app.state.dependencies = ApplicationDependencies()
     app.state.ready = False
     app.state.settings = resolved_settings
     register_exception_handlers(app)
