@@ -4,6 +4,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.adapters.models.model_factory import create_chat_model
 from app.bootstrap.settings import Settings
 from app.observability.logging import configure_logging
 
@@ -16,6 +17,7 @@ def build_lifespan(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(settings.log_level)
+        app.state.dependencies.chat_model = create_chat_model(settings)
         app.state.ready = True
         logger.info(
             "application_started name=%s version=%s environment=%s",
@@ -27,6 +29,12 @@ def build_lifespan(
             yield
         finally:
             app.state.ready = False
-            logger.info("application_stopped name=%s", settings.app_name)
+            chat_model = app.state.dependencies.chat_model
+            app.state.dependencies.chat_model = None
+            try:
+                if chat_model is not None:
+                    await chat_model.close()
+            finally:
+                logger.info("application_stopped name=%s", settings.app_name)
 
     return lifespan

@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. La base operativa de FastAPI implementa únicamente configuración, ciclo de vida, documentación y salud interna; los módulos y las integraciones permanecen vacíos hasta su fase correspondiente.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI y la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo. Todavía no existen endpoints conversacionales, agente, módulos veterinarios, RAG, Qdrant, Redis ni comunicación con .NET.
 
 ---
 
@@ -242,7 +242,7 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Será la raíz de composición. Construirá adaptadores, servicios técnicos, registro de módulos y orquestador.
+Es la raíz de composición. Actualmente conserva el modelo conversacional opcional seleccionado; incorporará después los demás adaptadores, servicios técnicos, registro de módulos y orquestador.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
@@ -252,11 +252,11 @@ Creará los siete módulos aprobados y los incorporará a una única instancia d
 
 ## `bootstrap/lifecycle.py`
 
-Coordinará inicialización, readiness y cierre ordenado de clientes y recursos técnicos.
+Coordina inicialización, readiness y cierre ordenado. Actualmente construye únicamente el modelo seleccionado, sin invocarlo durante el arranque, y cierra su cliente durante el shutdown.
 
 ## `bootstrap/settings.py`
 
-Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, visibilidad de la documentación, host y puerto. Ningún router de API lee directamente el entorno del proceso.
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto y proveedores de modelos. `HUELLITAS_CHAT_ENABLED=false` permite arrancar sin credenciales; cuando está habilitado, solo se exige la configuración del proveedor seleccionado. Ningún router de API lee directamente el entorno del proceso.
 
 ---
 
@@ -495,7 +495,7 @@ Los puertos se nombran por la capacidad que necesita el consumidor, no por una t
 - `human_handoff.py`: solicitud y consulta de escalamiento.
 - `knowledge_source.py`: sincronización de contenido autorizado desde .NET.
 - `token_validator.py`: validación de JWT.
-- `chat_model.py`: generación conversacional y salida estructurada.
+- `chat_model.py`: contrato neutral asíncrono para mensajes y generación textual. Herramientas, streaming y salida estructurada se incorporarán en fases posteriores.
 - `embedding_model.py`: generación de embeddings.
 - `vector_store.py`: indexación y recuperación vectorial.
 - `cache.py`: operaciones técnicas temporales.
@@ -520,6 +520,10 @@ adapters/
 |-- security/
 |   `-- jwt.py
 |-- models/
+|   |-- model_factory.py
+|   |-- openrouter.py
+|   |-- openai.py
+|   `-- gemini.py
 |-- embeddings/
 |-- vector_store/
 |   `-- qdrant.py
@@ -530,6 +534,15 @@ adapters/
 `dotnet_client.py` concentra detalles comunes de transporte, pero no expone un contrato de negocio general. Los gateways traducen cada puerto a operaciones específicas de .NET.
 
 Los factories de modelos o embeddings solo pueden utilizarse desde `bootstrap`. Los módulos reciben puertos ya construidos.
+
+La base multiproveedor implementada cumple estas reglas:
+
+- `model_factory.py` construye exactamente un adaptador según `HUELLITAS_CHAT_PROVIDER`.
+- OpenRouter utiliza la interfaz compatible con OpenAI; OpenAI directo utiliza Responses API; Gemini directo utiliza `google-genai`.
+- Los SDK permanecen dentro de `adapters/models`; el agente y los módulos futuros solo conocerán `ChatModel`.
+- Los timeouts son configurables y los reintentos automáticos de SDK están deshabilitados para evitar consumos duplicados no coordinados.
+- Las excepciones externas se traducen a categorías neutrales sin adjuntar detalles sensibles del proveedor.
+- No existe fallback entre proveedores ni selección por módulo en esta fase.
 
 No existe adaptador de Oracle en Python.
 
@@ -810,6 +823,8 @@ Cada módulo prueba contratos, reglas, transiciones, confirmaciones y fallbacks 
 
 Se validan los adaptadores de .NET, Qdrant, Redis y proveedores de modelos con entornos o dobles controlados.
 
+En la base multiproveedor actual, todas las pruebas de modelos utilizan clientes simulados: no realizan llamadas de red ni consumen créditos. Las pruebas en vivo requerirán una fase y una autorización separadas.
+
 ## Pruebas end-to-end
 
 Casos mínimos:
@@ -848,7 +863,6 @@ No se agregan condiciones específicas del nuevo módulo en `main_graph.py`, `in
 
 Esta fase no define ni implementa:
 
-- Dependencias o versiones concretas de Python.
 - Proveedor definitivo de modelo conversacional.
 - Proveedor definitivo de embeddings.
 - Esquemas HTTP finales de .NET.
