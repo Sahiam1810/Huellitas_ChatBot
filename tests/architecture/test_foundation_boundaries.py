@@ -28,6 +28,25 @@ def imported_roots(path: Path) -> set[str]:
     return roots
 
 
+def imported_names(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    package = list(path.parent.relative_to("src").parts)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                keep = len(package) - (node.level - 1)
+                base = package[:keep]
+                if node.module:
+                    base.extend(node.module.split("."))
+                names.add(".".join(base))
+            elif node.module:
+                names.add(node.module)
+    return names
+
+
 def test_foundation_does_not_import_future_integrations() -> None:
     foundation_files = (
         Path("src/app/main.py"),
@@ -113,3 +132,44 @@ def test_provider_secret_is_absent_from_http_metadata() -> None:
     assert info_response.status_code == 200
     assert secret not in info_response.text
     assert secret not in openapi_document
+
+
+def test_module_registry_is_independent_from_http_and_adapters() -> None:
+    registry_files = (
+        Path("src/app/orchestration/module_manifest.py"),
+        Path("src/app/orchestration/module_registry.py"),
+    )
+    forbidden_prefixes = ("fastapi", "app.api", "app.adapters")
+    violations = {
+        str(path): sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        for path in registry_files
+    }
+
+    assert {path: names for path, names in violations.items() if names} == {}
+
+
+def test_veterinary_modules_respect_isolation_boundaries() -> None:
+    modules_root = Path("src/app/modules")
+    forbidden_prefixes = ("app.api", "app.adapters", "app.bootstrap")
+    violations: dict[str, list[str]] = {}
+
+    for path in modules_root.rglob("*.py"):
+        module_name = path.relative_to(modules_root).parts[0]
+        own_module = f"app.modules.{module_name}"
+        forbidden: list[str] = []
+        for name in imported_names(path):
+            imports_sibling_module = name.startswith("app.modules.") and not (
+                name == own_module or name.startswith(f"{own_module}.")
+            )
+            if (
+                name.startswith(forbidden_prefixes)
+                or name == "app.modules"
+                or imports_sibling_module
+            ):
+                forbidden.append(name)
+        if forbidden:
+            violations[str(path)] = sorted(forbidden)
+
+    assert violations == {}

@@ -574,12 +574,13 @@ def test_veterinary_modules_respect_isolation_boundaries() -> None:
         own_module = f"app.modules.{module_name}"
         forbidden: list[str] = []
         for name in imported_names(path):
-            if name.startswith(forbidden_prefixes):
-                forbidden.append(name)
-            elif name == "app.modules":
-                forbidden.append(name)
-            elif name.startswith("app.modules.") and not (
+            imports_sibling_module = name.startswith("app.modules.") and not (
                 name == own_module or name.startswith(f"{own_module}.")
+            )
+            if (
+                name.startswith(forbidden_prefixes)
+                or name == "app.modules"
+                or imports_sibling_module
             ):
                 forbidden.append(name)
         if forbidden:
