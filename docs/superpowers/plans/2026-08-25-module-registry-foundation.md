@@ -139,8 +139,8 @@ Expected: collection fails because `app.orchestration.module_manifest` does not 
 Create `src/app/orchestration/module_manifest.py`:
 
 ```python
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 class InvalidModuleManifestError(ValueError):
