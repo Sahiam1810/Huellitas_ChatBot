@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La fase actual solo establece arquitectura. Los archivos Python del scaffold permanecen vacíos hasta que cada componente sea diseñado e implementado en una fase independiente.
+La implementación avanza mediante incrementos pequeños aprobados. La base operativa de FastAPI implementa únicamente configuración, ciclo de vida, documentación y salud interna; los módulos y las integraciones permanecen vacíos hasta su fase correspondiente.
 
 ---
 
@@ -254,6 +254,10 @@ Creará los siete módulos aprobados y los incorporará a una única instancia d
 
 Coordinará inicialización, readiness y cierre ordenado de clientes y recursos técnicos.
 
+## `bootstrap/settings.py`
+
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, visibilidad de la documentación, host y puerto. Ningún router de API lee directamente el entorno del proceso.
+
 ---
 
 # 7. API interna versionada y JWT
@@ -267,13 +271,15 @@ api/routers/
 |-- chat.py
 |-- conversations.py
 |-- internal.py
-`-- health.py
+|-- health.py
+`-- info.py
 ```
 
 - `chat.py`: mensajes, continuación, confirmación y cancelación de una acción pendiente.
 - `conversations.py`: contexto permitido y estado técnico requerido para coordinar una conversación.
 - `internal.py`: indexación, sincronización y preparación opcional de contenido interno.
-- `health.py`: liveness y readiness.
+- `health.py`: expone `GET /health/live` y `GET /health/ready` fuera de la API de negocio versionada.
+- `info.py`: expone únicamente metadatos seguros del servicio mediante `GET /api/v1/info`.
 
 Los routers validan transporte y delegan. No seleccionan módulos ni contienen reglas veterinarias.
 

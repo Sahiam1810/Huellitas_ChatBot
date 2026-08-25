@@ -1160,7 +1160,7 @@ Run:
 ```powershell
 uv lock --check
 uv sync --check
-uv run --env-file .env.example python -c "from app.main import app; print(sorted(route.path for route in app.routes))"
+uv run --env-file .env.example python -c "from app.main import app; routes = {*app.openapi()['paths'], app.docs_url, app.redoc_url, app.openapi_url}; print(sorted(filter(None, routes)))"
 uv cache dir
 $scatteredCaches = Get-ChildItem . -Recurse -Directory -Filter '__pycache__' | Where-Object { $_.FullName -notlike "$(Resolve-Path .cache)*" }
 if ($scatteredCaches) { $scatteredCaches.FullName; throw 'Found Python caches outside .cache' }
