@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, y `POST /api/v1/messages`. Este primer flujo invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, módulos veterinarios, LangGraph, RAG, Qdrant, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable y un `ModuleRegistry` vacío. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, LangGraph, RAG, Qdrant, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -242,13 +242,13 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Actualmente conserva el modelo conversacional opcional seleccionado; incorporará después los demás adaptadores, servicios técnicos, registro de módulos y orquestador.
+Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado y el procesador de mensajes. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
 ## `bootstrap/module_registry.py`
 
-Creará los siete módulos aprobados y los incorporará a una única instancia del registro definido por orquestación.
+Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrará módulos reales solamente cuando cada corte vertical haya definido y aprobado su contrato de ejecución; no crea manifiestos ficticios para los siete módulos planeados.
 
 ## `bootstrap/lifecycle.py`
 
@@ -334,6 +334,7 @@ orchestration/
 |-- main_graph.py
 |-- state.py
 |-- intent_router.py
+|-- module_manifest.py
 |-- module_registry.py
 |-- execution_context.py
 |-- response_builder.py
@@ -349,6 +350,8 @@ orchestration/
 ```
 
 `message_processor.py` es el corte vertical previo a los módulos disponible actualmente. Recibe un comando neutral, interrumpe la generación si la conversación está escalada y, en caso contrario, solicita una respuesta al puerto `ChatModel`. No contiene reglas veterinarias, persistencia ni selección de módulos.
+
+`module_manifest.py` y `module_registry.py` forman el plano de descubrimiento implementado. El manifiesto declara identidad y capacidades inmutables; el registro permite consultar por identificador o intención y rechaza conflictos antes de modificar sus índices. Todavía no conserva ejecutores ni participa en el flujo HTTP.
 
 ## Grafo principal
 
@@ -372,7 +375,7 @@ No incorpora campos privados de citas, orientación, perfiles o recordatorios.
 
 ## Registro de módulos
 
-Existe una sola instancia de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra los módulos.
+Existe una sola instancia de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` construye actualmente un registro vacío. Los conflictos de identificador y de intención exacta ya se rechazan; las referencias ejecutables, `ModuleResult`, el routing y el registro de módulos reales permanecen pendientes.
 
 Cada manifiesto declara:
 
@@ -812,6 +815,7 @@ Los recordatorios simples deben usar preferentemente plantillas deterministas. P
 
 - Un módulo no importa otro.
 - Los módulos no importan adaptadores.
+- Las pruebas AST impiden que un módulo importe API, adaptadores, bootstrap u otro módulo.
 - La API y el orquestador no contienen reglas veterinarias.
 - Los adaptadores cumplen sus puertos.
 - Los módulos tienen estructura simétrica.
@@ -879,7 +883,9 @@ El incremento actual no implementa:
 - Consulta o persistencia del historial canónico.
 - Comportamiento de idempotencia, bloqueos o checkpoints.
 - Llamadas al backend .NET.
-- Módulos veterinarios, registro dinámico o LangGraph.
+- `ModuleResult`, referencias ejecutables y routing modular.
+- Implementación y registro de los siete módulos veterinarios.
+- LangGraph y subgrafos ejecutables.
 - RAG, embeddings, Qdrant o Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 

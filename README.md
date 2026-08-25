@@ -2,7 +2,7 @@
 
 Monolito modular de automatización conversacional para una plataforma veterinaria.
 
-El proyecto implementa actualmente su base operativa de FastAPI, la frontera neutral para modelos conversacionales y un endpoint inicial de mensajes. OpenRouter, OpenAI directo y Gemini directo están disponibles mediante configuración; el procesador actual envía el mensaje al proveedor activo o conserva el control humano cuando .NET informa que la conversación está escalada. Los módulos veterinarios, RAG y operaciones externas permanecen sin implementar.
+El proyecto implementa actualmente su base operativa de FastAPI, la frontera neutral para modelos conversacionales, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles mediante configuración; el procesador actual envía el mensaje al proveedor activo o conserva el control humano cuando .NET informa que la conversación está escalada. La ejecución y el routing de módulos veterinarios, RAG y operaciones externas permanecen sin implementar.
 
 ## Responsabilidades
 
@@ -105,3 +105,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño arquitectónico general](docs/plans/2026-08-25-veterinary-chatbot-architecture-design.md)
 - [Diseño de la base FastAPI](docs/plans/2026-08-25-fastapi-foundation-design.md)
 - [Diseño de la base multiproveedor](docs/plans/2026-08-25-multi-provider-model-foundation-design.md)
+- [Diseño de la base del registro modular](docs/plans/2026-08-25-module-registry-foundation-design.md)
