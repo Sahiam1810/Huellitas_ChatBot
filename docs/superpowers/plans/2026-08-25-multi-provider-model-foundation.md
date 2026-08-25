@@ -1688,7 +1688,12 @@ Expected: all tests pass, coverage is at least 90%, Ruff is clean, and the lockf
 
 ```powershell
 uv run --env-file .env.example python -c "from app.main import app; print(sorted(app.openapi()['paths']))"
-$scatteredCaches = Get-ChildItem . -Recurse -Directory -Filter '__pycache__' | Where-Object { $_.FullName -notlike "$(Resolve-Path .cache)*" }
+$cacheRoot = (Resolve-Path '.cache').Path
+$venvRoot = (Resolve-Path '.venv').Path
+$scatteredCaches = Get-ChildItem . -Recurse -Directory -Filter '__pycache__' | Where-Object {
+    -not $_.FullName.StartsWith($cacheRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+    -not $_.FullName.StartsWith($venvRoot, [System.StringComparison]::OrdinalIgnoreCase)
+}
 if ($scatteredCaches) { $scatteredCaches.FullName; throw 'Found Python caches outside .cache' }
 git diff --check
 git status --short

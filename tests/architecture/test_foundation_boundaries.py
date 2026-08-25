@@ -1,5 +1,11 @@
 import ast
+import json
 from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from app.bootstrap.application import create_application
+from app.bootstrap.settings import Settings
 
 FORBIDDEN_FOUNDATION_IMPORTS = {
     "langgraph",
@@ -7,6 +13,8 @@ FORBIDDEN_FOUNDATION_IMPORTS = {
     "qdrant_client",
     "redis",
 }
+SDK_IMPORTS = {"google", "openai"}
+MODEL_ADAPTERS_ROOT = Path("src/app/adapters/models")
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -40,3 +48,45 @@ def test_api_layer_does_not_read_environment_directly() -> None:
     imported = set().union(*(imported_roots(path) for path in api_files))
 
     assert "os" not in imported
+
+
+def test_provider_sdks_are_isolated_to_model_adapters() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app").rglob("*.py"):
+        sdk_imports = imported_roots(path) & SDK_IMPORTS
+        if sdk_imports and not path.is_relative_to(MODEL_ADAPTERS_ROOT):
+            violations[str(path)] = sorted(sdk_imports)
+
+    assert violations == {}
+
+
+def test_model_foundation_does_not_add_conversational_routes() -> None:
+    app = create_application(Settings(environment="test", _env_file=None))
+
+    assert set(app.openapi()["paths"]) == {
+        "/health/live",
+        "/health/ready",
+        "/api/v1/info",
+    }
+
+
+def test_provider_secret_is_absent_from_http_metadata() -> None:
+    secret = "must-never-be-exposed"
+    app = create_application(
+        Settings(
+            environment="test",
+            chat_enabled=True,
+            chat_provider="openrouter",
+            openrouter_api_key=secret,
+            _env_file=None,
+        )
+    )
+    client = TestClient(app)
+
+    info_response = client.get("/api/v1/info")
+    openapi_document = json.dumps(app.openapi())
+
+    client.close()
+    assert info_response.status_code == 200
+    assert secret not in info_response.text
+    assert secret not in openapi_document
