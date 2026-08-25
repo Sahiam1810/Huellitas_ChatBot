@@ -53,7 +53,7 @@
 - Create `src/app/ports/knowledge_source.py`: future authorized-content synchronization contract.
 - Create `src/app/ports/token_validator.py`: future JWT verification contract.
 - Preserve technical ports for chat models, embeddings, Qdrant abstraction, Redis abstraction, and temporary checkpoints.
-- Remove the broad inherited `src/app/ports/backend.py` contract and the unused `event_publisher.py` until an event transport is selected.
+- Remove the broad inherited `src/app/ports/backend.py` contract, the duplicated `conversation_store.py` contract, and the unused `event_publisher.py` until an event transport is selected.
 
 ### Adapters
 
@@ -176,6 +176,7 @@ src/app/adapters/persistence/postgres_conversations.py
 src/app/adapters/persistence/repositories/.gitkeep
 src/app/adapters/vector_store/pgvector.py
 src/app/ports/backend.py
+src/app/ports/conversation_store.py
 src/app/ports/event_publisher.py
 migrations/.gitkeep
 ```
@@ -227,7 +228,25 @@ Run:
 
 ```powershell
 rg --files src/app/ports src/app/adapters src/app/orchestration | Sort-Object
-rg --files | rg "assessment|learning_gateway|catalog_gateway|pgvector|postgres_|migrations"
+$legacyPaths = @(
+    'migrations/.gitkeep',
+    'src/app/adapters/backend/assessment_gateway.py',
+    'src/app/adapters/backend/authentication.py',
+    'src/app/adapters/backend/catalog_gateway.py',
+    'src/app/adapters/backend/learning_gateway.py',
+    'src/app/adapters/persistence/postgres_checkpoints.py',
+    'src/app/adapters/persistence/postgres_conversations.py',
+    'src/app/adapters/persistence/repositories/.gitkeep',
+    'src/app/adapters/vector_store/pgvector.py',
+    'src/app/ports/backend.py',
+    'src/app/ports/conversation_store.py',
+    'src/app/ports/event_publisher.py'
+)
+$remainingLegacyPaths = $legacyPaths | Where-Object { Test-Path -LiteralPath $_ }
+if ($remainingLegacyPaths) {
+    $remainingLegacyPaths
+    throw 'Inherited architecture files remain in the scaffold.'
+}
 Get-ChildItem src/app -Recurse -File -Filter '*.py' | Where-Object Length -gt 0
 git diff --check
 ```
