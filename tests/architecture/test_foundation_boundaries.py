@@ -60,14 +60,37 @@ def test_provider_sdks_are_isolated_to_model_adapters() -> None:
     assert violations == {}
 
 
-def test_model_foundation_does_not_add_conversational_routes() -> None:
+def test_api_exposes_only_approved_foundation_routes() -> None:
     app = create_application(Settings(environment="test", _env_file=None))
 
     assert set(app.openapi()["paths"]) == {
         "/health/live",
         "/health/ready",
         "/api/v1/info",
+        "/api/v1/messages",
     }
+
+
+def test_api_layer_does_not_import_concrete_adapters() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app/api").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        adapter_imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                adapter_imports.extend(
+                    alias.name for alias in node.names if alias.name.startswith("app.adapters")
+                )
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.module.startswith("app.adapters")
+            ):
+                adapter_imports.append(node.module)
+        if adapter_imports:
+            violations[str(path)] = sorted(adapter_imports)
+
+    assert violations == {}
 
 
 def test_provider_secret_is_absent_from_http_metadata() -> None:
