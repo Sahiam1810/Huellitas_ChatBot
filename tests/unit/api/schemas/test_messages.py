@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.api.schemas.requests import MessageRequest
 from app.api.schemas.responses import MessageResponse, RagResponse, TokenUsageResponse
-from app.orchestration.rag_contracts import RagStatus
+from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import MessageResponseType
 
@@ -91,6 +91,8 @@ def test_message_response_serializes_safe_camel_case_metadata() -> None:
         module=None,
         rag=RagResponse(
             status=RagStatus.USED,
+            route=SemanticRoute.CONTEXTUAL,
+            top_score=0.91,
             global_matches=2,
             conversation_matches=1,
             memory_stored=True,
@@ -109,6 +111,8 @@ def test_message_response_serializes_safe_camel_case_metadata() -> None:
         "module": None,
         "rag": {
             "status": "used",
+            "route": "contextual",
+            "topScore": 0.91,
             "globalMatches": 2,
             "conversationMatches": 1,
             "memoryStored": True,

@@ -51,6 +51,20 @@ def test_documentation_routes_exist_when_enabled() -> None:
         "used",
         "degraded",
     }
+    assert set(schema["components"]["schemas"]["SemanticRoute"]["enum"]) == {
+        "direct",
+        "contextual",
+        "general",
+        "disabled",
+        "skipped",
+        "degraded",
+    }
+    rag_response = schema["components"]["schemas"]["RagResponse"]
+    assert {"route", "topScore"} <= set(rag_response["required"])
+    assert rag_response["properties"]["route"]["$ref"].endswith("/SemanticRoute")
+    assert {"retrieved", "ai_generated", "human_controlled"} == set(
+        schema["components"]["schemas"]["MessageResponseType"]["enum"]
+    )
     documents = schema["paths"]["/api/v1/knowledge/documents"]
     assert set(documents) == {"get", "post"}
     assert set(documents["post"]["responses"]) >= {"201", "409", "422", "502", "503", "504"}

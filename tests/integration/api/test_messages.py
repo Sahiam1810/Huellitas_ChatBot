@@ -13,13 +13,14 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.ports.chat_model import ChatResponse, ModelProvider
+from app.ports.conversation_memory_store import ConversationMemoryMatch
 from app.ports.embedding_model import (
     EmbeddingProvider,
     EmbeddingResponse,
     EmbeddingUsage,
     EmbeddingVector,
 )
-from app.ports.global_knowledge_store import GlobalKnowledgeKind
+from app.ports.global_knowledge_store import GlobalKnowledgeKind, GlobalKnowledgeMatch
 from app.shared.exceptions import (
     ModelAuthenticationError,
     ModelInvalidResponseError,
@@ -91,6 +92,28 @@ def rag_provider_settings() -> Settings:
     )
 
 
+def semantic_rag_provider_settings() -> Settings:
+    return Settings(
+        environment="test",
+        chat_enabled=True,
+        chat_provider="openrouter",
+        openrouter_api_key="test-key",
+        openrouter_model="router-model",
+        vector_store_enabled=True,
+        qdrant_startup_max_attempts=1,
+        qdrant_startup_retry_delay_seconds=0,
+        embedding_enabled=True,
+        embedding_openai_api_key="embedding-key",
+        embedding_model="embedding-test",
+        embedding_dimensions=3,
+        rag_enabled=True,
+        rag_semantic_routing_enabled=True,
+        rag_semantic_high_threshold=0.95,
+        rag_semantic_medium_threshold=0.80,
+        _env_file=None,
+    )
+
+
 def test_messages_endpoint_returns_active_provider_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,6 +148,8 @@ def test_messages_endpoint_returns_active_provider_response(
         "module": None,
         "rag": {
             "status": "disabled",
+            "route": "disabled",
+            "topScore": None,
             "globalMatches": 0,
             "conversationMatches": 0,
             "memoryStored": False,
@@ -155,6 +180,8 @@ def test_escalated_message_returns_human_control_without_model() -> None:
         "module": None,
         "rag": {
             "status": "skipped",
+            "route": "skipped",
+            "topScore": None,
             "globalMatches": 0,
             "conversationMatches": 0,
             "memoryStored": False,
@@ -215,6 +242,8 @@ def test_rag_messages_isolate_memory_and_publish_globally_only_when_requested(
     assert private_response.status_code == 200
     assert private_response.json()["rag"] == {
         "status": "empty",
+        "route": "disabled",
+        "topScore": None,
         "globalMatches": 0,
         "conversationMatches": 0,
         "memoryStored": True,
@@ -236,6 +265,137 @@ def test_rag_messages_isolate_memory_and_publish_globally_only_when_requested(
     global_record = store.upsert_global.await_args.args[0][0]
     assert global_record.kind is GlobalKnowledgeKind.APPROVED_EXCHANGE
     assert global_record.source == "messages"
+
+
+def test_high_private_memory_replays_directly_without_model_or_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(generate=AsyncMock(), close=AsyncMock())
+    embedding = SimpleNamespace(
+        embed_query=AsyncMock(
+            return_value=EmbeddingResponse(
+                vectors=(EmbeddingVector((0.1, 0.2, 0.3)),),
+                provider=EmbeddingProvider.OPENAI,
+                model="embedding-test",
+                usage=EmbeddingUsage(input_tokens=2, total_tokens=2),
+            )
+        ),
+        embed_documents=AsyncMock(),
+        close=AsyncMock(),
+    )
+    memory = ConversationMemoryMatch(
+        point_id=UUID("9ba62b92-f8f4-40b4-8fb4-19696b288184"),
+        score=0.97,
+        question="Necesito información",
+        answer="Respuesta reutilizada",
+    )
+    store = SimpleNamespace(
+        check_health=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        search_global=AsyncMock(return_value=()),
+        search_conversation=AsyncMock(return_value=(memory,)),
+        remember=AsyncMock(),
+        upsert_global=AsyncMock(),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding)
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(semantic_rag_provider_settings())
+
+    with TestClient(app) as client:
+        first = client.post("/api/v1/messages", json=payload())
+        replay = client.post("/api/v1/messages", json=payload())
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert first.json() == {
+        "message": "Respuesta reutilizada",
+        "conversationId": CONVERSATION_ID,
+        "correlationId": CORRELATION_ID,
+        "responseType": "retrieved",
+        "provider": None,
+        "model": None,
+        "usage": None,
+        "module": None,
+        "rag": {
+            "status": "used",
+            "route": "direct",
+            "topScore": 0.97,
+            "globalMatches": 0,
+            "conversationMatches": 1,
+            "memoryStored": False,
+            "knowledgePublished": False,
+        },
+    }
+    assert first.headers["Idempotency-Replayed"] == "false"
+    assert replay.headers["Idempotency-Replayed"] == "true"
+    embedding.embed_query.assert_awaited_once()
+    store.search_global.assert_awaited_once()
+    store.search_conversation.assert_awaited_once()
+    model.generate.assert_not_awaited()
+    store.remember.assert_not_awaited()
+    store.upsert_global.assert_not_awaited()
+
+
+def test_high_document_uses_contextual_model_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=ChatResponse(
+                text="Respuesta sustentada",
+                provider=ModelProvider.OPENROUTER,
+                model="router-model",
+            )
+        ),
+        close=AsyncMock(),
+    )
+    embedding = SimpleNamespace(
+        embed_query=AsyncMock(
+            return_value=EmbeddingResponse(
+                vectors=(EmbeddingVector((0.1, 0.2, 0.3)),),
+                provider=EmbeddingProvider.OPENAI,
+                model="embedding-test",
+                usage=EmbeddingUsage(input_tokens=2, total_tokens=2),
+            )
+        ),
+        embed_documents=AsyncMock(),
+        close=AsyncMock(),
+    )
+    document = GlobalKnowledgeMatch(
+        point_id=UUID("40c2580b-e2f4-4323-9d27-51b4dfbfc7ab"),
+        score=0.99,
+        content="Las vacunas requieren valoración veterinaria.",
+        document_id=UUID("55af1547-6e88-467c-8c60-cbeb1e5e704e"),
+        title="Guía preventiva",
+        source="manual",
+        kind=GlobalKnowledgeKind.DOCUMENT_CHUNK,
+    )
+    store = SimpleNamespace(
+        check_health=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        search_global=AsyncMock(return_value=(document,)),
+        search_conversation=AsyncMock(return_value=()),
+        remember=AsyncMock(),
+        upsert_global=AsyncMock(),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding)
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(semantic_rag_provider_settings())
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/messages", json=payload(idempotency_key="document-001"))
+
+    assert response.status_code == 200
+    assert response.json()["rag"]["route"] == "contextual"
+    assert response.json()["rag"]["topScore"] == 0.99
+    request = model.generate.await_args.args[0]
+    assert "<global_knowledge>" in request.messages[0].content
+    assert "Las vacunas requieren valoración veterinaria." in request.messages[0].content
+    store.remember.assert_awaited_once()
 
 
 def test_repeated_message_replays_without_duplicate_rag_or_provider_effects(

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.orchestration.rag_contracts import RagStatus
+from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import MessageResponseType
 
@@ -18,6 +18,8 @@ class RagResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     status: RagStatus
+    route: SemanticRoute
+    top_score: float | None = Field(alias="topScore", ge=-1, le=1)
     global_matches: int = Field(alias="globalMatches", ge=0)
     conversation_matches: int = Field(alias="conversationMatches", ge=0)
     memory_stored: bool = Field(alias="memoryStored")

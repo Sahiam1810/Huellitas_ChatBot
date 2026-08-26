@@ -89,6 +89,8 @@ async def create_message(
         module=result.module,
         rag=RagResponse(
             status=result.rag.status,
+            route=result.rag.route,
+            top_score=result.rag.top_score,
             global_matches=result.rag.global_matches,
             conversation_matches=result.rag.conversation_matches,
             memory_stored=result.rag.memory_stored,
