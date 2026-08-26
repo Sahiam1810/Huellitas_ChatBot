@@ -4,7 +4,7 @@
 
 Aprobado el 26 de agosto de 2026.
 
-Este documento conserva el alcance histórico del incremento de mensajes. La administración documental fue implementada posteriormente según `2026-08-26-rag-knowledge-documents-design.md`, sin exponer endpoints técnicos de vectores.
+Este documento conserva el alcance histórico del incremento de mensajes. La administración documental fue implementada posteriormente según `2026-08-26-rag-knowledge-documents-design.md`, sin exponer endpoints técnicos de vectores. El routing semántico adaptativo se incorporó después según `2026-08-26-adaptive-rag-routing-design.md`; reemplaza el uso incondicional del contexto por una decisión `direct`, `contextual` o `general`.
 
 ## Objetivo
 
@@ -67,6 +67,8 @@ La respuesta conserva compatibilidad aditiva y agrega:
 {
   "rag": {
     "status": "used",
+    "route": "contextual",
+    "topScore": 0.91,
     "globalMatches": 2,
     "conversationMatches": 1,
     "memoryStored": true,
@@ -97,6 +99,8 @@ Para una conversación no escalada:
 6. `ChatModel` genera la respuesta.
 7. `ConversationMemoryWriter` reutiliza el vector de la pregunta y guarda la pareja pregunta/respuesta en la colección privada.
 8. Si `publishAsGlobalKnowledge=true`, intenta guardar también un registro `approved_exchange` en conocimiento global.
+
+La evolución posterior de routing conserva los pasos 1 y 2, pero antes de generar aplica umbrales configurables. Una memoria privada o un intercambio global aprobado con similitud alta puede devolver su respuesta sin LLM ni nueva escritura; una coincidencia media construye el contexto anterior; una coincidencia baja genera sin contexto. Los documentos ordinarios nunca se devuelven directamente.
 
 El conocimiento global prevalece sobre la memoria si existe contradicción. El contenido recuperado no puede confirmar operaciones de negocio ni reemplazar datos autorizados de .NET.
 

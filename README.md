@@ -128,6 +128,9 @@ HUELLITAS_RAG_SCORE_THRESHOLD=""
 HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS="6000"
 HUELLITAS_RAG_CHUNK_MAX_CHARACTERS="1200"
 HUELLITAS_RAG_CHUNK_OVERLAP_CHARACTERS="200"
+HUELLITAS_RAG_SEMANTIC_ROUTING_ENABLED="true"
+HUELLITAS_RAG_SEMANTIC_HIGH_THRESHOLD="0.95"
+HUELLITAS_RAG_SEMANTIC_MEDIUM_THRESHOLD="0.80"
 ```
 
 Durante startup se crean solamente las colecciones ausentes y sus índices de payload. Si una colección existente no coincide exactamente en dimensiones o distancia, no se modifica ni se elimina: readiness permanece en `503` para exigir una migración administrada. Si el provisioning inicial falla por indisponibilidad de Qdrant, debe reiniciarse FastAPI después de recuperar la dependencia.
@@ -135,6 +138,18 @@ Durante startup se crean solamente las colecciones ausentes y sus índices de pa
 El arranque no genera embeddings ni consume créditos. En cada mensaje no escalado se genera una sola representación de la pregunta, se consulta en paralelo conocimiento global y memoria filtrada exactamente por `conversationId`, y se incorpora un contexto acotado como dato no confiable. El mismo vector se reutiliza al guardar la pregunta y respuesta en memoria privada. Un fallo neutral de recuperación o persistencia no descarta una respuesta válida del chat y se informa mediante el estado `degraded`.
 
 Esto es recuperación aumentada (`RAG`), no entrenamiento ni modificación de los pesos del modelo. Los documentos se fragmentan de forma determinista, se versionan y se administran sin exponer sus vectores. El borrado es lógico y una restauración siempre deja el documento inactivo hasta una activación explícita.
+
+### Enrutamiento semántico adaptativo
+
+Con `HUELLITAS_RAG_SEMANTIC_ROUTING_ENABLED=true`, la similitud coseno decide cómo continuar después de generar un único embedding y consultar una vez cada colección:
+
+- `direct`: una memoria del mismo `conversationId` o un `approved_exchange` global alcanza el umbral alto. Se reutiliza su respuesta sin invocar el LLM ni crear otro punto.
+- `contextual`: no hay respuesta directa autorizada y el mejor resultado alcanza el umbral medio. Los resultados relevantes se entregan al LLM como contexto RAG.
+- `general`: no hay resultados o su puntaje es inferior al umbral medio. El LLM responde sin contexto vectorial.
+
+Un documento global ordinario nunca se devuelve directamente, incluso con similitud alta. `publishAsGlobalKnowledge=true` también deshabilita la ruta directa para esa solicitud, de modo que la publicación explícita se procese normalmente. Una recuperación parcial o fallida informa `degraded` y nunca reutiliza una respuesta de manera directa.
+
+Los valores `0.95` y `0.80` son puntos iniciales, no certezas universales; deben calibrarse con preguntas reales para el modelo de embeddings activo. Esta optimización puede ahorrar generación y tokens del LLM, pero siempre requiere el embedding y la consulta a Qdrant. El routing actual requiere distancia `cosine`; el clasificador de complejidad, reranking y búsqueda híbrida permanecen fuera de alcance.
 
 ## Idempotencia temporal de mensajes
 
@@ -148,7 +163,7 @@ HUELLITAS_IDEMPOTENCY_MAX_ENTRIES="10000"
 
 Una repetición con la misma identidad y el mismo contenido devuelve exactamente el cuerpo original sin volver a ejecutar el proveedor, la recuperación RAG ni las escrituras vectoriales. La respuesta inicial incluye `Idempotency-Replayed: false` y una repetición incluye `Idempotency-Replayed: true`. Reutilizar la identidad con contenido diferente devuelve `409 idempotency_key_conflict`; una nueva interacción debe usar una clave nueva.
 
-Este almacenamiento vive únicamente en la memoria del proceso: se pierde al reiniciar y no coordina réplicas. Es una protección local para el desarrollo actual, no la idempotencia durable de producción. Antes de desplegar varias réplicas deberá sustituirse el adaptador por coordinación persistente en .NET/Oracle o Redis sin cambiar el caso de uso. El enrutamiento semántico de RAG es otra capacidad y continúa pendiente.
+Este almacenamiento vive únicamente en la memoria del proceso: se pierde al reiniciar y no coordina réplicas. Es una protección local para el desarrollo actual, no la idempotencia durable de producción. Antes de desplegar varias réplicas deberá sustituirse el adaptador por coordinación persistente en .NET/Oracle o Redis sin cambiar el caso de uso. La idempotencia exacta se ejecuta antes del enrutamiento semántico: un reintento idéntico reproduce el resultado sin volver a consultar Qdrant.
 
 ## Endpoints disponibles
 
@@ -233,6 +248,8 @@ La respuesta incluye el resultado operativo sin exponer vectores ni detalles de 
 {
   "rag": {
     "status": "used",
+    "route": "contextual",
+    "topScore": 0.91,
     "globalMatches": 2,
     "conversationMatches": 1,
     "memoryStored": true,
@@ -241,7 +258,7 @@ La respuesta incluye el resultado operativo sin exponer vectores ni detalles de 
 }
 ```
 
-Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`.
+Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`. Las rutas observables son `direct`, `contextual`, `general`, `disabled`, `skipped` y `degraded`; `topScore` es `null` cuando no existe un puntaje seguro.
 
 ## Administración de conocimiento global
 

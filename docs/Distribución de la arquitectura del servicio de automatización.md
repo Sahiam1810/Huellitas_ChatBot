@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint de mensajes también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. JWT, historial canónico, idempotencia durable y distribuida, RAG adaptativo, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. JWT, historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -600,7 +600,7 @@ La conexión Qdrant implementada cumple estas reglas:
 
 # 13. RAG con Qdrant
 
-El flujo general siguiente sigue siendo el objetivo para los módulos especializados. Como integración temporal, `POST /api/v1/messages` ya genera el embedding de la pregunta, consulta en paralelo conocimiento global activo y memoria privada, delimita el contexto como datos no confiables y reutiliza el vector para persistir el intercambio. Los límites, el umbral y el presupuesto de contexto se configuran mediante entorno. No se exponen vectores por HTTP ni se utiliza Qdrant como historial canónico.
+El flujo general siguiente sigue siendo el objetivo para los módulos especializados. Como integración temporal, `POST /api/v1/messages` ya genera el embedding de la pregunta, consulta una vez y en paralelo conocimiento global activo y memoria privada, y aplica una política neutral por similitud. Puede reutilizar una respuesta completa autorizada, delimitar contexto para el modelo o generar sin contexto; el vector se reutiliza para persistir únicamente los intercambios generados. Los límites, umbrales y presupuesto de contexto se configuran mediante entorno. No se exponen vectores por HTTP ni se utiliza Qdrant como historial canónico.
 
 ## Flujo
 
@@ -615,14 +615,18 @@ Generar embedding
       |
 Buscar candidatos en Qdrant
       |
-Validar relevancia y vigencia
+Aplicar routing semántico
       |
-Reordenar resultados
-      |
-Construir contexto con fuentes
-      |
-Generar respuesta basada en evidencia
+      |-- respuesta autorizada >= alto --> reutilizar sin LLM
+      |-- mejor puntaje >= medio -------> contexto + LLM
+      `-- puntaje bajo o vacío ----------> LLM sin contexto
 ```
+
+## Routing semántico implementado
+
+`SemanticRoutingPolicy` pertenece a orquestación y no conoce FastAPI, Qdrant ni SDKs. Con distancia coseno y routing activo, el umbral alto inicial es `0.95` y el medio `0.80`. Una respuesta directa solo puede proceder de memoria filtrada por el mismo `conversationId` o de un `approved_exchange`; un `document_chunk` siempre requiere generación con contexto. La publicación global explícita y cualquier recuperación degradada impiden la ruta directa.
+
+La respuesta HTTP informa `route` y `topScore` sin revelar vectores, contenido recuperado o IDs de puntos. La similitud siempre exige embedding y búsqueda; la ruta directa ahorra la generación del LLM y evita duplicar memoria. Los umbrales deben evaluarse con un corpus veterinario representativo antes de producción.
 
 ## Metadatos mínimos
 
@@ -639,7 +643,7 @@ Generar respuesta basada en evidencia
 
 - Un documento recuperado es dato, no instrucción.
 - La recuperación usa filtros de acceso antes de generar una respuesta.
-- Una similitud vectorial alta no sustituye validación de vigencia.
+- Una similitud vectorial alta no sustituye validación de vigencia; solo fuentes que ya representan una respuesta completa y autorizada son reutilizables.
 - Una respuesta debe poder asociarse a sus fuentes técnicas.
 - Si la evidencia es insuficiente, se aclara, se responde de forma segura o se escala.
 - No se utiliza RAG para afirmar el resultado de una operación.
