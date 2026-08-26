@@ -32,3 +32,7 @@ class ModelRequestError(ChatModelError):
 
 class ModelInvalidResponseError(ChatModelError):
     pass
+
+
+class VectorStoreUnavailableError(RuntimeError):
+    """Raised when the configured vector store cannot serve requests."""

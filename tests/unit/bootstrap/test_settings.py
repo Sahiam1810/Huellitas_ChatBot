@@ -33,10 +33,19 @@ PROVIDER_ENV_KEYS = (
     "HUELLITAS_GEMINI_TIMEOUT_SECONDS",
 )
 
+VECTOR_STORE_ENV_KEYS = (
+    "HUELLITAS_VECTOR_STORE_ENABLED",
+    "HUELLITAS_QDRANT_URL",
+    "HUELLITAS_QDRANT_API_KEY",
+    "HUELLITAS_QDRANT_TIMEOUT_SECONDS",
+    "HUELLITAS_QDRANT_STARTUP_MAX_ATTEMPTS",
+    "HUELLITAS_QDRANT_STARTUP_RETRY_DELAY_SECONDS",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    for key in (*HUELLITAS_ENV_KEYS, *PROVIDER_ENV_KEYS):
+    for key in (*HUELLITAS_ENV_KEYS, *PROVIDER_ENV_KEYS, *VECTOR_STORE_ENV_KEYS):
         monkeypatch.delenv(key, raising=False)
     yield
 
@@ -242,3 +251,61 @@ def test_chat_output_limit_reads_environment(monkeypatch: pytest.MonkeyPatch) ->
 def test_chat_output_limit_rejects_values_outside_bounds(limit: int) -> None:
     with pytest.raises(ValidationError):
         Settings(chat_max_output_tokens=limit, _env_file=None)
+
+
+def test_disabled_vector_store_has_no_active_configuration() -> None:
+    settings = Settings(vector_store_enabled=False, _env_file=None)
+
+    assert settings.active_vector_store_configuration() is None
+
+
+def test_enabled_vector_store_returns_typed_configuration() -> None:
+    settings = Settings(
+        vector_store_enabled=True,
+        qdrant_url="http://qdrant:6333",
+        qdrant_api_key="qdrant-secret",
+        qdrant_timeout_seconds=7,
+        qdrant_startup_max_attempts=5,
+        qdrant_startup_retry_delay_seconds=0.5,
+        _env_file=None,
+    )
+
+    active = settings.active_vector_store_configuration()
+
+    assert active is not None
+    assert str(active.url) == "http://qdrant:6333/"
+    assert active.api_key is not None
+    assert active.api_key.get_secret_value() == "qdrant-secret"
+    assert active.timeout_seconds == 7
+    assert active.startup_max_attempts == 5
+    assert active.startup_retry_delay_seconds == 0.5
+
+
+def test_blank_qdrant_api_key_is_treated_as_absent() -> None:
+    settings = Settings(vector_store_enabled=True, qdrant_api_key="   ", _env_file=None)
+
+    active = settings.active_vector_store_configuration()
+
+    assert active is not None
+    assert active.api_key is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("qdrant_timeout_seconds", 0),
+        ("qdrant_timeout_seconds", 301),
+        ("qdrant_startup_max_attempts", 0),
+        ("qdrant_startup_retry_delay_seconds", -1),
+    ],
+)
+def test_vector_store_rejects_invalid_connection_policy(field: str, value: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
+
+
+def test_qdrant_secret_is_masked() -> None:
+    settings = Settings(qdrant_api_key="qdrant-secret", _env_file=None)
+
+    assert isinstance(settings.qdrant_api_key, SecretStr)
+    assert "qdrant-secret" not in repr(settings)

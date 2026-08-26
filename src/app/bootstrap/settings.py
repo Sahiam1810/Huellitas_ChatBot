@@ -32,6 +32,16 @@ class ActiveModelConfiguration(BaseModel):
     base_url: AnyHttpUrl | None = None
 
 
+class ActiveVectorStoreConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: AnyHttpUrl
+    api_key: SecretStr | None
+    timeout_seconds: float
+    startup_max_attempts: int
+    startup_retry_delay_seconds: float
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HUELLITAS_",
@@ -67,6 +77,13 @@ class Settings(BaseSettings):
     gemini_model: str | None = "gemini-3.5-flash"
     gemini_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
+    vector_store_enabled: bool = False
+    qdrant_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:6333")
+    qdrant_api_key: SecretStr | None = None
+    qdrant_timeout_seconds: float = Field(default=5.0, gt=0, le=300)
+    qdrant_startup_max_attempts: int = Field(default=5, ge=1, le=20)
+    qdrant_startup_retry_delay_seconds: float = Field(default=1.0, ge=0, le=60)
+
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
         if not self.chat_enabled:
@@ -92,6 +109,21 @@ class Settings(BaseSettings):
             model=model,
             timeout_seconds=timeout_seconds,
             base_url=base_url,
+        )
+
+    def active_vector_store_configuration(self) -> ActiveVectorStoreConfiguration | None:
+        if not self.vector_store_enabled:
+            return None
+
+        api_key = self.qdrant_api_key
+        if api_key is not None and not api_key.get_secret_value().strip():
+            api_key = None
+        return ActiveVectorStoreConfiguration(
+            url=self.qdrant_url,
+            api_key=api_key,
+            timeout_seconds=self.qdrant_timeout_seconds,
+            startup_max_attempts=self.qdrant_startup_max_attempts,
+            startup_retry_delay_seconds=self.qdrant_startup_retry_delay_seconds,
         )
 
     def _selected_values(
