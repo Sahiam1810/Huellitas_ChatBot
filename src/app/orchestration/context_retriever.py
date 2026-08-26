@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from collections.abc import Sequence
 from html import escape
 from uuid import UUID
 
-from app.orchestration.rag_contracts import RagStatus, RetrievedRagContext
+from app.orchestration.rag_contracts import RagStatus, RetrievedRagContext, SemanticRoute
+from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.conversation_memory_store import (
     ConversationMemoryMatch,
     ConversationMemoryQuery,
@@ -17,6 +19,8 @@ from app.ports.global_knowledge_store import (
 )
 from app.shared.exceptions import EmbeddingModelError, VectorStoreError
 
+logger = logging.getLogger(__name__)
+
 
 class ContextRetriever:
     def __init__(
@@ -29,6 +33,7 @@ class ContextRetriever:
         conversation_limit: int,
         score_threshold: float | None,
         max_context_characters: int,
+        semantic_routing_policy: SemanticRoutingPolicy | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._global_store = global_store
@@ -37,20 +42,35 @@ class ContextRetriever:
         self._conversation_limit = conversation_limit
         self._score_threshold = score_threshold
         self._max_context_characters = max_context_characters
+        self._semantic_routing_policy = semantic_routing_policy
 
-    async def retrieve(self, message: str, conversation_id: UUID) -> RetrievedRagContext:
+    async def retrieve(
+        self,
+        message: str,
+        conversation_id: UUID,
+        *,
+        allow_direct: bool = True,
+    ) -> RetrievedRagContext:
         try:
             embedding = await self._embedding_model.embed_query(message)
         except EmbeddingModelError:
-            return RetrievedRagContext(status=RagStatus.DEGRADED)
+            route = (
+                SemanticRoute.DEGRADED
+                if self._semantic_routing_policy is not None
+                else SemanticRoute.DISABLED
+            )
+            return RetrievedRagContext(status=RagStatus.DEGRADED, route=route)
 
         query_vector = embedding.vectors[0].values
+        score_threshold = (
+            None if self._semantic_routing_policy is not None else self._score_threshold
+        )
         global_result, conversation_result = await asyncio.gather(
             self._global_store.search_global(
                 GlobalKnowledgeQuery(
                     vector=query_vector,
                     limit=self._global_limit,
-                    score_threshold=self._score_threshold,
+                    score_threshold=score_threshold,
                 )
             ),
             self._memory_store.search_conversation(
@@ -58,7 +78,7 @@ class ContextRetriever:
                     conversation_id=conversation_id,
                     vector=query_vector,
                     limit=self._conversation_limit,
-                    score_threshold=self._score_threshold,
+                    score_threshold=score_threshold,
                 )
             ),
             return_exceptions=True,
@@ -81,6 +101,44 @@ class ContextRetriever:
         else:
             conversation_matches = conversation_result
 
+        if self._semantic_routing_policy is not None:
+            decision = self._semantic_routing_policy.decide(
+                global_matches=global_matches,
+                conversation_matches=conversation_matches,
+                degraded=degraded,
+                allow_direct=allow_direct,
+            )
+            prompt_context = None
+            if decision.route in (SemanticRoute.CONTEXTUAL, SemanticRoute.DEGRADED):
+                prompt_context = self._build_prompt_context(
+                    decision.global_matches,
+                    decision.conversation_matches,
+                )
+            status = {
+                SemanticRoute.DIRECT: RagStatus.USED,
+                SemanticRoute.CONTEXTUAL: RagStatus.USED,
+                SemanticRoute.GENERAL: RagStatus.EMPTY,
+                SemanticRoute.DEGRADED: RagStatus.DEGRADED,
+            }[decision.route]
+            logger.info(
+                "semantic_route_selected route=%s top_score=%s global_matches=%s "
+                "conversation_matches=%s",
+                decision.route.value,
+                decision.top_score,
+                len(global_matches),
+                len(conversation_matches),
+            )
+            return RetrievedRagContext(
+                status=status,
+                query_vector=query_vector,
+                prompt_context=prompt_context,
+                global_matches=len(global_matches),
+                conversation_matches=len(conversation_matches),
+                route=decision.route,
+                top_score=decision.top_score,
+                direct_answer=decision.direct_answer,
+            )
+
         prompt_context = self._build_prompt_context(global_matches, conversation_matches)
         if degraded:
             status = RagStatus.DEGRADED
@@ -94,6 +152,7 @@ class ContextRetriever:
             prompt_context=prompt_context,
             global_matches=len(global_matches),
             conversation_matches=len(conversation_matches),
+            route=SemanticRoute.DISABLED,
         )
 
     def _build_prompt_context(
