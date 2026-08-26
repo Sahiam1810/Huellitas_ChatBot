@@ -18,6 +18,7 @@ from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.message_processor import MessageProcessor
+from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.vector_store import VectorCollectionDefinition, VectorStore
 from app.shared.exceptions import VectorStoreError, VectorStoreUnavailableError
 
@@ -95,6 +96,12 @@ def build_lifespan(
                 and app.state.dependencies.global_knowledge_store is not None
                 and app.state.dependencies.conversation_memory_store is not None
             ):
+                semantic_routing_policy = None
+                if rag_configuration.semantic_routing_enabled:
+                    semantic_routing_policy = SemanticRoutingPolicy(
+                        high_threshold=rag_configuration.semantic_high_threshold,
+                        medium_threshold=rag_configuration.semantic_medium_threshold,
+                    )
                 context_retriever = ContextRetriever(
                     embedding_model,
                     app.state.dependencies.global_knowledge_store,
@@ -103,6 +110,7 @@ def build_lifespan(
                     conversation_limit=rag_configuration.conversation_limit,
                     score_threshold=rag_configuration.score_threshold,
                     max_context_characters=rag_configuration.max_context_characters,
+                    semantic_routing_policy=semantic_routing_policy,
                 )
                 memory_writer = ConversationMemoryWriter(
                     app.state.dependencies.conversation_memory_store,

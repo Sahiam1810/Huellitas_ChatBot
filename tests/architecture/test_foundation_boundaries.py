@@ -169,6 +169,24 @@ def test_idempotency_adapter_does_not_import_http_model_or_vector_sdks() -> None
     assert violations == {}
 
 
+def test_semantic_routing_policy_is_independent_from_http_and_sdks() -> None:
+    policy = Path("src/app/orchestration/semantic_routing_policy.py")
+    forbidden_prefixes = (
+        "fastapi",
+        "app.api",
+        "app.adapters",
+        "qdrant_client",
+        "openai",
+        "google",
+    )
+
+    forbidden = sorted(
+        name for name in imported_names(policy) if name.startswith(forbidden_prefixes)
+    )
+
+    assert forbidden == []
+
+
 def test_provider_secret_is_absent_from_http_metadata() -> None:
     secret = "must-never-be-exposed"
     app = create_application(

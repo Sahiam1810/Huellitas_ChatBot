@@ -456,6 +456,9 @@ def test_rag_is_disabled_by_default() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.rag_enabled is False
+    assert settings.rag_semantic_routing_enabled is False
+    assert settings.rag_semantic_high_threshold == 0.95
+    assert settings.rag_semantic_medium_threshold == 0.80
     assert settings.active_rag_configuration() is None
 
 
@@ -486,6 +489,32 @@ def test_enabled_rag_exposes_validated_configuration() -> None:
     assert configuration.max_context_characters == 6000
     assert configuration.chunk_max_characters == 1200
     assert configuration.chunk_overlap_characters == 200
+    assert configuration.semantic_routing_enabled is False
+    assert configuration.semantic_high_threshold == 0.95
+    assert configuration.semantic_medium_threshold == 0.80
+
+
+def test_enabled_semantic_routing_exposes_configured_thresholds() -> None:
+    settings = Settings(
+        rag_enabled=True,
+        rag_semantic_routing_enabled=True,
+        rag_semantic_high_threshold=0.96,
+        rag_semantic_medium_threshold=0.81,
+        vector_store_enabled=True,
+        embedding_enabled=True,
+        embedding_openai_api_key="secret",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=1536,
+        qdrant_vector_distance="cosine",
+        _env_file=None,
+    )
+
+    configuration = settings.active_rag_configuration()
+
+    assert configuration is not None
+    assert configuration.semantic_routing_enabled is True
+    assert configuration.semantic_high_threshold == 0.96
+    assert configuration.semantic_medium_threshold == 0.81
 
 
 def test_rag_retrieval_configuration_reads_environment(
@@ -497,6 +526,15 @@ def test_rag_retrieval_configuration_reads_environment(
     monkeypatch.setenv("HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS", "8000")
     monkeypatch.setenv("HUELLITAS_RAG_CHUNK_MAX_CHARACTERS", "1600")
     monkeypatch.setenv("HUELLITAS_RAG_CHUNK_OVERLAP_CHARACTERS", "300")
+    monkeypatch.setenv("HUELLITAS_RAG_SEMANTIC_ROUTING_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_RAG_SEMANTIC_HIGH_THRESHOLD", "0.97")
+    monkeypatch.setenv("HUELLITAS_RAG_SEMANTIC_MEDIUM_THRESHOLD", "0.82")
+    monkeypatch.setenv("HUELLITAS_RAG_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_VECTOR_STORE_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_MODEL", "embedding-test")
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_DIMENSIONS", "3")
 
     settings = Settings(_env_file=None)
 
@@ -506,6 +544,56 @@ def test_rag_retrieval_configuration_reads_environment(
     assert settings.rag_max_context_characters == 8000
     assert settings.rag_chunk_max_characters == 1600
     assert settings.rag_chunk_overlap_characters == 300
+    assert settings.rag_semantic_routing_enabled is True
+    assert settings.rag_semantic_high_threshold == 0.97
+    assert settings.rag_semantic_medium_threshold == 0.82
+
+
+@pytest.mark.parametrize(
+    ("medium", "high"),
+    [(0.80, 0.80), (0.90, 0.80)],
+)
+def test_semantic_routing_requires_ordered_thresholds(medium: float, high: float) -> None:
+    with pytest.raises(ValidationError, match="semantic"):
+        Settings(
+            rag_semantic_medium_threshold=medium,
+            rag_semantic_high_threshold=high,
+            _env_file=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rag_semantic_medium_threshold", -0.01),
+        ("rag_semantic_medium_threshold", 1.01),
+        ("rag_semantic_high_threshold", -0.01),
+        ("rag_semantic_high_threshold", 1.01),
+    ],
+)
+def test_semantic_routing_rejects_thresholds_outside_cosine_range(field: str, value: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
+
+
+def test_semantic_routing_requires_enabled_rag() -> None:
+    with pytest.raises(ValidationError, match="RAG"):
+        Settings(rag_semantic_routing_enabled=True, _env_file=None)
+
+
+def test_semantic_routing_requires_cosine_distance() -> None:
+    with pytest.raises(ValidationError, match="cosine"):
+        Settings(
+            rag_enabled=True,
+            rag_semantic_routing_enabled=True,
+            vector_store_enabled=True,
+            embedding_enabled=True,
+            embedding_openai_api_key="secret",
+            embedding_model="embedding-test",
+            embedding_dimensions=3,
+            qdrant_vector_distance="dot",
+            _env_file=None,
+        )
 
 
 @pytest.mark.parametrize(

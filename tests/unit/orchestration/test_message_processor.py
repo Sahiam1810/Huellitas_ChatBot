@@ -10,6 +10,7 @@ from app.orchestration.rag_contracts import (
     RagStatus,
     RagWriteResult,
     RetrievedRagContext,
+    SemanticRoute,
 )
 from app.ports.chat_model import ChatResponse, ChatRole, ModelProvider
 from app.shared.enums import MessageResponseType
@@ -74,6 +75,7 @@ async def test_processor_sends_only_current_user_message_to_model() -> None:
     assert result.input_tokens == 8
     assert result.output_tokens == 3
     assert result.rag.status is RagStatus.DISABLED
+    assert result.rag.route is SemanticRoute.DISABLED
     assert result.idempotency_replayed is False
     assert isinstance(processor, MessageHandler)
 
@@ -101,6 +103,7 @@ async def test_escalated_conversation_never_invokes_model() -> None:
     assert result.provider is None
     assert result.model is None
     assert result.rag.status is RagStatus.SKIPPED
+    assert result.rag.route is SemanticRoute.SKIPPED
 
 
 @pytest.mark.anyio
@@ -121,15 +124,60 @@ async def test_non_escalated_conversation_requires_configured_model() -> None:
 
 
 @pytest.mark.anyio
+async def test_direct_route_reuses_answer_without_model_or_new_vector_write() -> None:
+    retriever = SimpleNamespace(
+        retrieve=AsyncMock(
+            return_value=RetrievedRagContext(
+                status=RagStatus.USED,
+                route=SemanticRoute.DIRECT,
+                query_vector=(0.1, 0.2, 0.3),
+                direct_answer="Respuesta reutilizada",
+                top_score=0.97,
+                conversation_matches=1,
+            )
+        )
+    )
+    writer = SimpleNamespace(write=AsyncMock())
+    processor = MessageProcessor(
+        chat_model=None,
+        max_output_tokens=1024,
+        rag_enabled=True,
+        context_retriever=retriever,
+        memory_writer=writer,
+    )
+
+    result = await processor.process(command())
+
+    assert result.message == "Respuesta reutilizada"
+    assert result.response_type is MessageResponseType.RETRIEVED
+    assert result.provider is None
+    assert result.model is None
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+    assert result.rag.status is RagStatus.USED
+    assert result.rag.route is SemanticRoute.DIRECT
+    assert result.rag.top_score == 0.97
+    assert result.rag.conversation_matches == 1
+    retriever.retrieve.assert_awaited_once_with(
+        "Necesito información",
+        CONVERSATION_ID,
+        allow_direct=True,
+    )
+    writer.write.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_processor_adds_retrieved_context_as_untrusted_system_data() -> None:
     model = chat_model()
     retriever = SimpleNamespace(
         retrieve=AsyncMock(
             return_value=RetrievedRagContext(
                 status=RagStatus.USED,
+                route=SemanticRoute.CONTEXTUAL,
                 query_vector=(0.1, 0.2, 0.3),
                 prompt_context="<global_knowledge>\nDato\n</global_knowledge>",
                 global_matches=1,
+                top_score=0.91,
             )
         )
     )
@@ -152,6 +200,8 @@ async def test_processor_adds_retrieved_context_as_untrusted_system_data() -> No
     assert request.messages[1].role is ChatRole.USER
     assert request.messages[1].content == "Necesito información"
     assert result.rag.status is RagStatus.USED
+    assert result.rag.route is SemanticRoute.CONTEXTUAL
+    assert result.rag.top_score == 0.91
     assert result.rag.global_matches == 1
     assert result.rag.memory_stored is True
 
@@ -163,7 +213,9 @@ async def test_processor_reuses_query_vector_after_model_success() -> None:
         retrieve=AsyncMock(
             return_value=RetrievedRagContext(
                 status=RagStatus.EMPTY,
+                route=SemanticRoute.GENERAL,
                 query_vector=(0.1, 0.2, 0.3),
+                top_score=0.42,
             )
         )
     )
@@ -191,8 +243,15 @@ async def test_processor_reuses_query_vector_after_model_success() -> None:
     assert len(request.messages) == 1
     assert request.messages[0].role is ChatRole.USER
     assert result.rag.status is RagStatus.EMPTY
+    assert result.rag.route is SemanticRoute.GENERAL
+    assert result.rag.top_score == 0.42
     assert result.rag.memory_stored is True
     assert result.rag.knowledge_published is True
+    retriever.retrieve.assert_awaited_once_with(
+        "Necesito información",
+        CONVERSATION_ID,
+        allow_direct=False,
+    )
 
 
 @pytest.mark.anyio
@@ -208,6 +267,7 @@ async def test_enabled_rag_without_collaborators_generates_degraded_response() -
 
     assert result.message == "Respuesta"
     assert result.rag.status is RagStatus.DEGRADED
+    assert result.rag.route is SemanticRoute.DEGRADED
     assert len(model.generate.await_args.args[0].messages) == 1
 
 
@@ -218,6 +278,7 @@ async def test_model_failure_does_not_store_memory() -> None:
         retrieve=AsyncMock(
             return_value=RetrievedRagContext(
                 status=RagStatus.EMPTY,
+                route=SemanticRoute.GENERAL,
                 query_vector=(0.1, 0.2, 0.3),
             )
         )
@@ -244,6 +305,7 @@ async def test_write_failure_marks_otherwise_used_response_as_degraded() -> None
         retrieve=AsyncMock(
             return_value=RetrievedRagContext(
                 status=RagStatus.USED,
+                route=SemanticRoute.CONTEXTUAL,
                 query_vector=(0.1, 0.2, 0.3),
                 prompt_context="<global_knowledge>\nDato\n</global_knowledge>",
                 global_matches=1,
@@ -263,4 +325,5 @@ async def test_write_failure_marks_otherwise_used_response_as_degraded() -> None
 
     assert result.message == "Respuesta"
     assert result.rag.status is RagStatus.DEGRADED
+    assert result.rag.route is SemanticRoute.DEGRADED
     assert result.rag.global_matches == 1

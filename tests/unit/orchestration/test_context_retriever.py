@@ -6,7 +6,8 @@ from uuid import UUID
 import pytest
 
 from app.orchestration.context_retriever import ContextRetriever
-from app.orchestration.rag_contracts import RagStatus
+from app.orchestration.rag_contracts import RagStatus, SemanticRoute
+from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.conversation_memory_store import ConversationMemoryMatch
 from app.ports.embedding_model import (
     EmbeddingProvider,
@@ -35,22 +36,25 @@ def embedding_response() -> EmbeddingResponse:
 
 def global_match(
     content: str = "Las vacunas deben seguir el plan veterinario.",
+    *,
+    score: float = 0.91,
+    kind: GlobalKnowledgeKind = GlobalKnowledgeKind.DOCUMENT_CHUNK,
 ) -> GlobalKnowledgeMatch:
     return GlobalKnowledgeMatch(
         point_id=GLOBAL_POINT_ID,
-        score=0.91,
+        score=score,
         content=content,
         document_id=GLOBAL_DOCUMENT_ID,
         title="Guía preventiva",
         source="manual",
-        kind=GlobalKnowledgeKind.DOCUMENT_CHUNK,
+        kind=kind,
     )
 
 
-def memory_match() -> ConversationMemoryMatch:
+def memory_match(*, score: float = 0.87) -> ConversationMemoryMatch:
     return ConversationMemoryMatch(
         point_id=MEMORY_POINT_ID,
-        score=0.87,
+        score=score,
         question="¿Qué edad tiene Luna?",
         answer="Luna tiene dos años.",
     )
@@ -62,6 +66,7 @@ def make_retriever(
     global_store: object | None = None,
     memory_store: object | None = None,
     max_context_characters: int = 6000,
+    semantic_routing_policy: SemanticRoutingPolicy | None = None,
 ) -> tuple[ContextRetriever, object, object, object]:
     embedding = embedding or SimpleNamespace(
         embed_query=AsyncMock(return_value=embedding_response())
@@ -81,6 +86,7 @@ def make_retriever(
             conversation_limit=3,
             score_threshold=0.7,
             max_context_characters=max_context_characters,
+            semantic_routing_policy=semantic_routing_policy,
         ),
         embedding,
         global_store,
@@ -108,6 +114,125 @@ async def test_retriever_embeds_once_and_scopes_memory_query_to_conversation() -
     assert result.query_vector == QUERY_VECTOR
     assert result.global_matches == 1
     assert result.conversation_matches == 1
+    assert result.route is SemanticRoute.DISABLED
+    assert result.top_score is None
+
+
+@pytest.mark.anyio
+async def test_semantic_retriever_uses_one_unfiltered_parallel_search_per_scope() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, embedding, global_store, memory_store = make_retriever(
+        semantic_routing_policy=policy
+    )
+
+    await retriever.retrieve("¿Cuándo vacuno a Luna?", CONVERSATION_ID)
+
+    embedding.embed_query.assert_awaited_once_with("¿Cuándo vacuno a Luna?")
+    global_store.search_global.assert_awaited_once()
+    memory_store.search_conversation.assert_awaited_once()
+    assert global_store.search_global.await_args.args[0].score_threshold is None
+    assert memory_store.search_conversation.await_args.args[0].score_threshold is None
+
+
+@pytest.mark.anyio
+async def test_high_private_memory_returns_direct_route_without_prompt() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, _, _, _ = make_retriever(
+        global_store=SimpleNamespace(search_global=AsyncMock(return_value=())),
+        memory_store=SimpleNamespace(
+            search_conversation=AsyncMock(return_value=(memory_match(score=0.97),))
+        ),
+        semantic_routing_policy=policy,
+    )
+
+    result = await retriever.retrieve("¿Qué edad tiene Luna?", CONVERSATION_ID)
+
+    assert result.status is RagStatus.USED
+    assert result.route is SemanticRoute.DIRECT
+    assert result.direct_answer == "Luna tiene dos años."
+    assert result.prompt_context is None
+    assert result.top_score == 0.97
+
+
+@pytest.mark.anyio
+async def test_high_document_remains_contextual() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, _, _, _ = make_retriever(
+        global_store=SimpleNamespace(
+            search_global=AsyncMock(return_value=(global_match(score=0.99),))
+        ),
+        memory_store=SimpleNamespace(search_conversation=AsyncMock(return_value=())),
+        semantic_routing_policy=policy,
+    )
+
+    result = await retriever.retrieve("Pregunta", CONVERSATION_ID)
+
+    assert result.route is SemanticRoute.CONTEXTUAL
+    assert result.direct_answer is None
+    assert result.prompt_context is not None
+    assert "Las vacunas" in result.prompt_context
+    assert result.top_score == 0.99
+
+
+@pytest.mark.anyio
+async def test_low_similarity_uses_general_route_without_prompt_context() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, _, _, _ = make_retriever(
+        global_store=SimpleNamespace(
+            search_global=AsyncMock(return_value=(global_match(score=0.79),))
+        ),
+        memory_store=SimpleNamespace(
+            search_conversation=AsyncMock(return_value=(memory_match(score=0.70),))
+        ),
+        semantic_routing_policy=policy,
+    )
+
+    result = await retriever.retrieve("Pregunta", CONVERSATION_ID)
+
+    assert result.status is RagStatus.EMPTY
+    assert result.route is SemanticRoute.GENERAL
+    assert result.prompt_context is None
+    assert result.top_score == 0.79
+
+
+@pytest.mark.anyio
+async def test_retriever_can_disable_direct_route_for_explicit_publication() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, _, _, _ = make_retriever(
+        global_store=SimpleNamespace(search_global=AsyncMock(return_value=())),
+        memory_store=SimpleNamespace(
+            search_conversation=AsyncMock(return_value=(memory_match(score=0.97),))
+        ),
+        semantic_routing_policy=policy,
+    )
+
+    result = await retriever.retrieve("Pregunta", CONVERSATION_ID, allow_direct=False)
+
+    assert result.route is SemanticRoute.CONTEXTUAL
+    assert result.direct_answer is None
+    assert result.prompt_context is not None
+
+
+@pytest.mark.anyio
+async def test_partial_failure_suppresses_direct_route_and_keeps_safe_context() -> None:
+    policy = SemanticRoutingPolicy(high_threshold=0.95, medium_threshold=0.80)
+    retriever, _, _, _ = make_retriever(
+        global_store=SimpleNamespace(
+            search_global=AsyncMock(side_effect=VectorStoreUnavailableError("secret"))
+        ),
+        memory_store=SimpleNamespace(
+            search_conversation=AsyncMock(return_value=(memory_match(score=0.99),))
+        ),
+        semantic_routing_policy=policy,
+    )
+
+    result = await retriever.retrieve("Pregunta", CONVERSATION_ID)
+
+    assert result.status is RagStatus.DEGRADED
+    assert result.route is SemanticRoute.DEGRADED
+    assert result.direct_answer is None
+    assert result.prompt_context is not None
+    assert "Luna tiene dos años." in result.prompt_context
 
 
 @pytest.mark.anyio
