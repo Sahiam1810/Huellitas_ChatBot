@@ -76,6 +76,9 @@ class ActiveRagConfiguration(BaseModel):
     max_context_characters: int
     chunk_max_characters: int
     chunk_overlap_characters: int
+    semantic_routing_enabled: bool
+    semantic_high_threshold: float
+    semantic_medium_threshold: float
 
 
 class Settings(BaseSettings):
@@ -144,11 +147,21 @@ class Settings(BaseSettings):
     rag_max_context_characters: int = Field(default=6000, ge=500, le=20000)
     rag_chunk_max_characters: int = Field(default=1200, ge=200, le=8000)
     rag_chunk_overlap_characters: int = Field(default=200, ge=0, le=2000)
+    rag_semantic_routing_enabled: bool = False
+    rag_semantic_high_threshold: float = Field(default=0.95, ge=0, le=1)
+    rag_semantic_medium_threshold: float = Field(default=0.80, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
         if self.rag_chunk_overlap_characters >= self.rag_chunk_max_characters:
             raise ValueError("RAG chunk overlap must be smaller than its maximum")
+        if self.rag_semantic_medium_threshold >= self.rag_semantic_high_threshold:
+            raise ValueError("RAG semantic medium threshold must be smaller than high threshold")
+        if self.rag_semantic_routing_enabled:
+            if not self.rag_enabled:
+                raise ValueError("RAG must be enabled when semantic routing is enabled")
+            if self.qdrant_vector_distance is not VectorDistance.COSINE:
+                raise ValueError("RAG semantic routing requires cosine distance")
         if self.chat_enabled:
             api_key, model, _, _ = self._selected_values()
             if api_key is None or not api_key.get_secret_value().strip():
@@ -248,6 +261,9 @@ class Settings(BaseSettings):
             max_context_characters=self.rag_max_context_characters,
             chunk_max_characters=self.rag_chunk_max_characters,
             chunk_overlap_characters=self.rag_chunk_overlap_characters,
+            semantic_routing_enabled=self.rag_semantic_routing_enabled,
+            semantic_high_threshold=self.rag_semantic_high_threshold,
+            semantic_medium_threshold=self.rag_semantic_medium_threshold,
         )
 
     def _selected_values(
