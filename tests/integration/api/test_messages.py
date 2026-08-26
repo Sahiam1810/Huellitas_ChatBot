@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,13 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.ports.chat_model import ChatResponse, ModelProvider
+from app.ports.embedding_model import (
+    EmbeddingProvider,
+    EmbeddingResponse,
+    EmbeddingUsage,
+    EmbeddingVector,
+)
+from app.ports.global_knowledge_store import GlobalKnowledgeKind
 from app.shared.exceptions import (
     ModelAuthenticationError,
     ModelInvalidResponseError,
@@ -20,12 +28,18 @@ from app.shared.exceptions import (
 CONVERSATION_ID = "bda5a441-e907-4781-bca6-44c25a73255a"
 USER_ID = "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9"
 CORRELATION_ID = "8dd1b2d9-4812-463a-87a4-eb6346cb2f83"
+OTHER_CONVERSATION_ID = "ea4e90b7-a58d-4f85-944a-1fc1bc6f484c"
 
 
-def payload(*, is_escalated: bool = False) -> dict[str, object]:
-    return {
+def payload(
+    *,
+    is_escalated: bool = False,
+    conversation_id: str = CONVERSATION_ID,
+    publish_as_global_knowledge: bool = False,
+) -> dict[str, object]:
+    result: dict[str, object] = {
         "message": "Necesito información",
-        "conversationId": CONVERSATION_ID,
+        "conversationId": conversation_id,
         "userId": USER_ID,
         "petId": None,
         "channel": "whatsapp",
@@ -35,6 +49,9 @@ def payload(*, is_escalated: bool = False) -> dict[str, object]:
         "correlationId": CORRELATION_ID,
         "idempotencyKey": "message-001",
     }
+    if publish_as_global_knowledge:
+        result["publishAsGlobalKnowledge"] = True
+    return result
 
 
 def provider_settings() -> Settings:
@@ -44,6 +61,25 @@ def provider_settings() -> Settings:
         chat_provider="openrouter",
         openrouter_api_key="test-key",
         openrouter_model="router-model",
+        _env_file=None,
+    )
+
+
+def rag_provider_settings() -> Settings:
+    return Settings(
+        environment="test",
+        chat_enabled=True,
+        chat_provider="openrouter",
+        openrouter_api_key="test-key",
+        openrouter_model="router-model",
+        vector_store_enabled=True,
+        qdrant_startup_max_attempts=1,
+        qdrant_startup_retry_delay_seconds=0,
+        embedding_enabled=True,
+        embedding_openai_api_key="embedding-key",
+        embedding_model="embedding-test",
+        embedding_dimensions=3,
+        rag_enabled=True,
         _env_file=None,
     )
 
@@ -80,6 +116,13 @@ def test_messages_endpoint_returns_active_provider_response(
         "model": "router-model",
         "usage": {"inputTokens": 8, "outputTokens": 3},
         "module": None,
+        "rag": {
+            "status": "disabled",
+            "globalMatches": 0,
+            "conversationMatches": 0,
+            "memoryStored": False,
+            "knowledgePublished": False,
+        },
     }
     model.generate.assert_awaited_once()
 
@@ -103,7 +146,89 @@ def test_escalated_message_returns_human_control_without_model() -> None:
         "model": None,
         "usage": None,
         "module": None,
+        "rag": {
+            "status": "skipped",
+            "globalMatches": 0,
+            "conversationMatches": 0,
+            "memoryStored": False,
+            "knowledgePublished": False,
+        },
     }
+
+
+def test_rag_messages_isolate_memory_and_publish_globally_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=ChatResponse(
+                text="Respuesta",
+                provider=ModelProvider.OPENROUTER,
+                model="router-model",
+            )
+        ),
+        close=AsyncMock(),
+    )
+    embedding = SimpleNamespace(
+        embed_query=AsyncMock(
+            return_value=EmbeddingResponse(
+                vectors=(EmbeddingVector((0.1, 0.2, 0.3)),),
+                provider=EmbeddingProvider.OPENAI,
+                model="embedding-test",
+                usage=EmbeddingUsage(input_tokens=2, total_tokens=2),
+            )
+        ),
+        embed_documents=AsyncMock(),
+        close=AsyncMock(),
+    )
+    store = SimpleNamespace(
+        check_health=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        search_global=AsyncMock(return_value=()),
+        search_conversation=AsyncMock(return_value=()),
+        remember=AsyncMock(),
+        upsert_global=AsyncMock(),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding)
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(rag_provider_settings())
+
+    with TestClient(app) as client:
+        private_response = client.post("/api/v1/messages", json=payload())
+        global_response = client.post(
+            "/api/v1/messages",
+            json=payload(
+                conversation_id=OTHER_CONVERSATION_ID,
+                publish_as_global_knowledge=True,
+            ),
+        )
+
+    assert private_response.status_code == 200
+    assert private_response.json()["rag"] == {
+        "status": "empty",
+        "globalMatches": 0,
+        "conversationMatches": 0,
+        "memoryStored": True,
+        "knowledgePublished": False,
+    }
+    assert global_response.status_code == 200
+    assert global_response.json()["rag"]["knowledgePublished"] is True
+    conversation_queries = [item.args[0] for item in store.search_conversation.await_args_list]
+    assert [query.conversation_id for query in conversation_queries] == [
+        UUID(CONVERSATION_ID),
+        UUID(OTHER_CONVERSATION_ID),
+    ]
+    private_records = [item.args[0] for item in store.remember.await_args_list]
+    assert [record.conversation_id for record in private_records] == [
+        UUID(CONVERSATION_ID),
+        UUID(OTHER_CONVERSATION_ID),
+    ]
+    assert store.upsert_global.await_count == 1
+    global_record = store.upsert_global.await_args.args[0][0]
+    assert global_record.kind is GlobalKnowledgeKind.APPROVED_EXCHANGE
+    assert global_record.source == "messages"
 
 
 def test_non_escalated_message_requires_enabled_chat() -> None:

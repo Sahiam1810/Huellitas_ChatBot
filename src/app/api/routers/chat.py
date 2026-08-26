@@ -7,6 +7,7 @@ from app.api.schemas.requests import MessageRequest
 from app.api.schemas.responses import (
     MessageProblemDetail,
     MessageResponse,
+    RagResponse,
     TokenUsageResponse,
 )
 from app.orchestration.message_processor import MessageCommand, MessageProcessor
@@ -50,6 +51,7 @@ async def create_message(
             is_escalated=payload.is_escalated,
             correlation_id=payload.correlation_id,
             idempotency_key=payload.idempotency_key,
+            publish_as_global_knowledge=payload.publish_as_global_knowledge,
         )
     )
     usage = None
@@ -67,4 +69,11 @@ async def create_message(
         model=result.model,
         usage=usage,
         module=result.module,
+        rag=RagResponse(
+            status=result.rag.status,
+            global_matches=result.rag.global_matches,
+            conversation_matches=result.rag.conversation_matches,
+            memory_stored=result.rag.memory_stored,
+            knowledge_published=result.rag.knowledge_published,
+        ),
     )
