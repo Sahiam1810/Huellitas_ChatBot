@@ -12,6 +12,7 @@ from app.ports.conversation_memory_store import (
     ConversationMemoryRecord,
 )
 from app.ports.global_knowledge_store import (
+    GlobalKnowledgeDocumentQuery,
     GlobalKnowledgeKind,
     GlobalKnowledgeQuery,
     GlobalKnowledgeRecord,
@@ -76,9 +77,36 @@ def global_record(**overrides: object) -> GlobalKnowledgeRecord:
         "deleted": False,
         "created_at": NOW,
         "updated_at": NOW,
+        "current": True,
+        "document_content": "Authorized vaccination guidance.",
+        "chunk_count": 1,
     }
     values.update(overrides)
     return GlobalKnowledgeRecord(**values)
+
+
+def provider_document_record(**overrides: object) -> SimpleNamespace:
+    record = global_record()
+    payload = {
+        "kind": record.kind.value,
+        "document_id": str(record.document_id),
+        "external_id": record.external_id,
+        "version": record.version,
+        "chunk_index": record.chunk_index,
+        "content": record.content,
+        "document_content": record.document_content,
+        "title": record.title,
+        "source": record.source,
+        "tags": list(record.tags),
+        "chunk_count": record.chunk_count,
+        "current": record.current,
+        "active": record.active,
+        "deleted": record.deleted,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+    }
+    payload.update(overrides)
+    return SimpleNamespace(id=record.point_id, payload=payload)
 
 
 def memory_record(**overrides: object) -> ConversationMemoryRecord:
@@ -161,6 +189,11 @@ async def test_ensure_collection_creates_missing_global_collection_and_indexes()
         ("document_id", models.PayloadSchemaType.UUID),
         ("source", models.PayloadSchemaType.KEYWORD),
         ("tags", models.PayloadSchemaType.KEYWORD),
+        ("kind", models.PayloadSchemaType.KEYWORD),
+        ("external_id", models.PayloadSchemaType.KEYWORD),
+        ("version", models.PayloadSchemaType.INTEGER),
+        ("chunk_index", models.PayloadSchemaType.INTEGER),
+        ("current", models.PayloadSchemaType.BOOL),
     ]
     assert all(call.kwargs["collection_name"] == GLOBAL_COLLECTION for call in index_calls)
     assert all(call.kwargs["wait"] is True for call in index_calls)
@@ -300,6 +333,9 @@ async def test_upsert_global_maps_records_without_exposing_port_types() -> None:
                 "deleted": False,
                 "created_at": "2026-08-26T12:00:00+00:00",
                 "updated_at": "2026-08-26T12:00:00+00:00",
+                "current": True,
+                "document_content": "Authorized vaccination guidance.",
+                "chunk_count": 1,
             },
         )
     ]
@@ -338,13 +374,24 @@ async def test_search_global_applies_visibility_source_and_all_tag_filters() -> 
     assert call.kwargs["score_threshold"] == 0.7
     assert call.kwargs["with_payload"] is True
     assert call.kwargs["with_vectors"] is False
-    conditions = call.kwargs["query_filter"].must
+    query_filter = call.kwargs["query_filter"]
+    conditions = query_filter.must
     assert [(condition.key, condition.match.value) for condition in conditions] == [
         ("active", True),
         ("deleted", False),
         ("source", "manual"),
         ("tags", "vaccination"),
         ("tags", "prevention"),
+    ]
+    assert len(query_filter.should) == 2
+    document_branch = query_filter.should[0].must
+    approved_branch = query_filter.should[1].must
+    assert [(condition.key, condition.match.value) for condition in document_branch] == [
+        ("kind", "document_chunk"),
+        ("current", True),
+    ]
+    assert [(condition.key, condition.match.value) for condition in approved_branch] == [
+        ("kind", "approved_exchange")
     ]
 
 
@@ -392,80 +439,149 @@ async def test_search_global_rejects_malformed_provider_points(point: object) ->
 
 
 @pytest.mark.anyio
-async def test_list_global_excludes_deleted_and_encodes_next_cursor() -> None:
-    record = global_record()
-    provider_record = SimpleNamespace(
-        id=record.point_id,
-        vector=list(record.vector),
-        payload={
-            "kind": record.kind.value,
-            "document_id": str(record.document_id),
-            "external_id": record.external_id,
-            "version": record.version,
-            "chunk_index": record.chunk_index,
-            "content": record.content,
-            "title": record.title,
-            "source": record.source,
-            "tags": list(record.tags),
-            "active": record.active,
-            "deleted": record.deleted,
-            "created_at": record.created_at.isoformat(),
-            "updated_at": record.updated_at.isoformat(),
-        },
-    )
-    next_id = UUID("4e4a8aaf-70b6-4949-bf16-6b22b6b4610e")
-    client = qdrant_client(scroll=AsyncMock(return_value=([provider_record], next_id)))
+async def test_get_document_filters_the_current_representative() -> None:
+    client = qdrant_client(scroll=AsyncMock(return_value=([provider_document_record()], None)))
     store = adapter(client)
 
-    page = await store.list_global(limit=20, cursor=None, include_deleted=False)
+    document = await store.get_document(DOCUMENT_ID, include_deleted=False)
 
-    assert page.records == (record,)
-    assert page.next_cursor is not None
+    assert document is not None
+    assert document.document_id == DOCUMENT_ID
+    assert document.content == "Authorized vaccination guidance."
     call = client.scroll.await_args
-    assert call.kwargs["scroll_filter"].must[0].key == "deleted"
-    assert call.kwargs["scroll_filter"].must[0].match.value is False
-    assert call.kwargs["with_vectors"] is True
-
-    await store.list_global(limit=20, cursor=page.next_cursor, include_deleted=True)
-
-    second_call = client.scroll.await_args
-    assert second_call.kwargs["offset"] == next_id
-    assert second_call.kwargs["scroll_filter"] is None
+    assert call.kwargs["limit"] == 2
+    assert call.kwargs["with_vectors"] is False
+    assert [
+        (condition.key, condition.match.value) for condition in call.kwargs["scroll_filter"].must
+    ] == [
+        ("kind", "document_chunk"),
+        ("document_id", str(DOCUMENT_ID)),
+        ("current", True),
+        ("chunk_index", 0),
+        ("deleted", False),
+    ]
 
 
 @pytest.mark.anyio
-async def test_list_global_rejects_invalid_cursor_before_sdk_call() -> None:
+async def test_find_document_uses_normalized_external_id() -> None:
+    client = qdrant_client(scroll=AsyncMock(return_value=([provider_document_record()], None)))
+    store = adapter(client)
+
+    await store.find_document_by_external_id("  vaccination-guide  ", include_deleted=True)
+
+    conditions = client.scroll.await_args.kwargs["scroll_filter"].must
+    assert [(condition.key, condition.match.value) for condition in conditions] == [
+        ("kind", "document_chunk"),
+        ("external_id", "vaccination-guide"),
+        ("current", True),
+        ("chunk_index", 0),
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_documents_applies_filters_and_round_trips_cursor() -> None:
+    next_id = UUID("4e4a8aaf-70b6-4949-bf16-6b22b6b4610e")
+    client = qdrant_client(scroll=AsyncMock(return_value=([provider_document_record()], next_id)))
+    store = adapter(client)
+
+    page = await store.list_documents(
+        GlobalKnowledgeDocumentQuery(
+            limit=20,
+            active=True,
+            source="manual",
+            tags=("vaccination", "prevention"),
+        )
+    )
+
+    assert len(page.documents) == 1
+    assert page.next_cursor is not None
+    call = client.scroll.await_args
+    assert [
+        (condition.key, condition.match.value) for condition in call.kwargs["scroll_filter"].must
+    ] == [
+        ("kind", "document_chunk"),
+        ("current", True),
+        ("chunk_index", 0),
+        ("deleted", False),
+        ("active", True),
+        ("source", "manual"),
+        ("tags", "vaccination"),
+        ("tags", "prevention"),
+    ]
+
+    await store.list_documents(
+        GlobalKnowledgeDocumentQuery(cursor=page.next_cursor, include_deleted=True)
+    )
+    assert client.scroll.await_args.kwargs["offset"] == next_id
+
+
+@pytest.mark.anyio
+async def test_document_operations_reject_invalid_provider_representatives() -> None:
+    malformed = provider_document_record(kind="approved_exchange")
+    client = qdrant_client(scroll=AsyncMock(return_value=([malformed], None)))
+    store = adapter(client)
+
+    with pytest.raises(VectorStoreInvalidResponseError):
+        await store.get_document(DOCUMENT_ID, include_deleted=True)
+
+
+@pytest.mark.anyio
+async def test_document_lookup_rejects_multiple_representatives() -> None:
+    representative = provider_document_record()
+    client = qdrant_client(scroll=AsyncMock(return_value=([representative, representative], None)))
+    store = adapter(client)
+
+    with pytest.raises(VectorStoreInvalidResponseError):
+        await store.get_document(DOCUMENT_ID, include_deleted=True)
+
+
+@pytest.mark.anyio
+async def test_list_documents_rejects_invalid_cursor_before_sdk_call() -> None:
     client = qdrant_client()
     store = adapter(client)
 
     with pytest.raises(VectorStoreInvalidResponseError, match="cursor"):
-        await store.list_global(limit=20, cursor="not-a-cursor", include_deleted=False)
+        await store.list_documents(GlobalKnowledgeDocumentQuery(cursor="not-a-cursor"))
 
     client.scroll.assert_not_awaited()
 
 
 @pytest.mark.anyio
-async def test_set_document_state_uses_document_filter() -> None:
+async def test_set_document_version_state_uses_exact_version_filter() -> None:
     client = qdrant_client()
     store = adapter(client)
 
-    await store.set_document_state(DOCUMENT_ID, active=False, deleted=True)
+    await store.set_document_version_state(
+        DOCUMENT_ID, 2, current=False, active=False, deleted=True
+    )
 
     call = client.set_payload.await_args
-    assert call.kwargs["collection_name"] == GLOBAL_COLLECTION
-    assert call.kwargs["payload"] == {"active": False, "deleted": True}
-    assert call.kwargs["points"].must[0].key == "document_id"
-    assert call.kwargs["points"].must[0].match.value == str(DOCUMENT_ID)
-    assert call.kwargs["wait"] is True
+    assert call.kwargs["payload"] == {"current": False, "active": False, "deleted": True}
+    assert [(condition.key, condition.match.value) for condition in call.kwargs["points"].must] == [
+        ("document_id", str(DOCUMENT_ID)),
+        ("version", 2),
+    ]
 
 
 @pytest.mark.anyio
-async def test_set_document_state_requires_a_change() -> None:
+@pytest.mark.parametrize("version", [0, -1])
+async def test_set_document_version_state_validates_before_sdk_call(version: int) -> None:
+    client = qdrant_client()
+    store = adapter(client)
+
+    with pytest.raises(ValueError):
+        await store.set_document_version_state(DOCUMENT_ID, version)
+
+    client.set_payload.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_set_document_version_state_requires_a_change() -> None:
     client = qdrant_client()
     store = adapter(client)
 
     with pytest.raises(ValueError, match="state"):
-        await store.set_document_state(DOCUMENT_ID)
+        await store.set_document_version_state(DOCUMENT_ID, 1)
 
     client.set_payload.assert_not_awaited()
 

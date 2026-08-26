@@ -11,9 +11,11 @@ from app.ports.conversation_memory_store import (
     ConversationMemoryStore,
 )
 from app.ports.global_knowledge_store import (
+    GlobalKnowledgeDocument,
+    GlobalKnowledgeDocumentPage,
+    GlobalKnowledgeDocumentQuery,
     GlobalKnowledgeKind,
     GlobalKnowledgeMatch,
-    GlobalKnowledgePage,
     GlobalKnowledgeQuery,
     GlobalKnowledgeRecord,
     GlobalKnowledgeStore,
@@ -100,6 +102,81 @@ def test_global_knowledge_kinds_are_stable_contract_values() -> None:
     assert GlobalKnowledgeKind.APPROVED_EXCHANGE.value == "approved_exchange"
 
 
+def test_global_record_uses_backward_compatible_document_defaults() -> None:
+    record = global_record()
+
+    assert record.current is True
+    assert record.document_content is None
+    assert record.chunk_count == 1
+
+
+def test_global_document_normalizes_its_metadata() -> None:
+    document = GlobalKnowledgeDocument(
+        document_id=DOCUMENT_ID,
+        external_id="  vaccination-guide  ",
+        version=1,
+        content="  Complete vaccination guidance.  ",
+        title="  Vaccination guide  ",
+        source="  manual  ",
+        tags=("  vaccination  ",),
+        chunk_count=2,
+        active=True,
+        deleted=False,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    assert document.external_id == "vaccination-guide"
+    assert document.content == "Complete vaccination guidance."
+    assert document.title == "Vaccination guide"
+    assert document.source == "manual"
+    assert document.tags == ("vaccination",)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"external_id": " "},
+        {"content": " "},
+        {"version": 0},
+        {"chunk_count": 0},
+        {"tags": ("valid", " ")},
+    ],
+)
+def test_global_document_rejects_invalid_metadata(overrides: dict[str, object]) -> None:
+    values = {
+        "document_id": DOCUMENT_ID,
+        "external_id": "vaccination-guide",
+        "version": 1,
+        "content": "Complete vaccination guidance.",
+        "title": "Vaccination guide",
+        "source": "manual",
+        "tags": ("vaccination",),
+        "chunk_count": 2,
+        "active": True,
+        "deleted": False,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError):
+        GlobalKnowledgeDocument(**values)
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_global_document_query_rejects_invalid_limits(limit: int) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        GlobalKnowledgeDocumentQuery(limit=limit)
+
+
+def test_global_document_query_normalizes_optional_filters() -> None:
+    query = GlobalKnowledgeDocumentQuery(source="  manual  ", tags=("  vaccination  ",))
+
+    assert query.source == "manual"
+    assert query.tags == ("vaccination",)
+
+
 def test_conversation_record_normalizes_text() -> None:
     record = ConversationMemoryRecord(
         point_id=POINT_ID,
@@ -133,14 +210,24 @@ def test_store_protocols_are_runtime_checkable() -> None:
             self, query: GlobalKnowledgeQuery
         ) -> tuple[GlobalKnowledgeMatch, ...]: ...
 
-        async def list_global(
-            self, *, limit: int, cursor: str | None, include_deleted: bool
-        ) -> GlobalKnowledgePage: ...
+        async def get_document(
+            self, document_id: UUID, *, include_deleted: bool
+        ) -> GlobalKnowledgeDocument | None: ...
 
-        async def set_document_state(
+        async def find_document_by_external_id(
+            self, external_id: str, *, include_deleted: bool
+        ) -> GlobalKnowledgeDocument | None: ...
+
+        async def list_documents(
+            self, query: GlobalKnowledgeDocumentQuery
+        ) -> GlobalKnowledgeDocumentPage: ...
+
+        async def set_document_version_state(
             self,
             document_id: UUID,
+            version: int,
             *,
+            current: bool | None = None,
             active: bool | None = None,
             deleted: bool | None = None,
         ) -> None: ...

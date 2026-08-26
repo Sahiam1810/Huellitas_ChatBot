@@ -21,6 +21,10 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert set(schema["paths"]) == {
         "/api/v1/info",
         "/api/v1/messages",
+        "/api/v1/knowledge/documents",
+        "/api/v1/knowledge/documents/{documentId}",
+        "/api/v1/knowledge/documents/{documentId}/status",
+        "/api/v1/knowledge/documents/{documentId}/restore",
         "/health/live",
         "/health/ready",
     }
@@ -29,6 +33,28 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert set(message_operation["responses"]) >= {"200", "422", "502", "503", "504"}
     request_schema = message_operation["requestBody"]["content"]["application/json"]["schema"]
     assert request_schema["$ref"].endswith("/MessageRequest")
+    request_component = schema["components"]["schemas"]["MessageRequest"]
+    publication = request_component["properties"]["publishAsGlobalKnowledge"]
+    assert publication["default"] is False
+    assert "publishAsGlobalKnowledge" not in request_component["required"]
+    response_schema = message_operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema["$ref"].endswith("/MessageResponse")
+    message_response = schema["components"]["schemas"]["MessageResponse"]
+    assert message_response["properties"]["rag"]["$ref"].endswith("/RagResponse")
+    assert set(schema["components"]["schemas"]["RagStatus"]["enum"]) == {
+        "disabled",
+        "skipped",
+        "empty",
+        "used",
+        "degraded",
+    }
+    documents = schema["paths"]["/api/v1/knowledge/documents"]
+    assert set(documents) == {"get", "post"}
+    assert set(documents["post"]["responses"]) >= {"201", "409", "422", "502", "503", "504"}
+    item = schema["paths"]["/api/v1/knowledge/documents/{documentId}"]
+    assert set(item) == {"get", "put", "delete"}
+    assert "204" in item["delete"]["responses"]
+    assert all("embeddings" not in path for path in schema["paths"])
 
 
 def test_documentation_routes_are_absent_when_disabled() -> None:

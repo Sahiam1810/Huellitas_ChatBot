@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para preparar dos colecciones, almacenar y consultar conocimiento global y aislar memoria por conversación. El flujo de mensajes todavía no utiliza esas capacidades: invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, servicios de indexación y recuperación, RAG en mensajes, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. JWT, historial canónico, semántica de idempotencia, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -575,7 +575,7 @@ La base de embeddings implementada cumple estas reglas:
 La conexión Qdrant implementada cumple estas reglas:
 
 - `VectorStore` contiene disponibilidad, creación o validación de colecciones y cierre.
-- `GlobalKnowledgeStore` expone upsert, búsqueda filtrada, listado por cursor y actualización de estado documental sin tipos del SDK.
+- `GlobalKnowledgeStore` expone upsert, búsqueda filtrada, snapshots documentales, listado por cursor y actualización de estado limitada a una versión exacta, sin tipos del SDK.
 - `ConversationMemoryStore` expone escritura y búsqueda con filtro obligatorio por `conversationId`.
 - `QdrantVectorStore` encapsula `AsyncQdrantClient`; el SDK no sale de `adapters/vector_store`.
 - `vector_store_factory.py` crea el adaptador únicamente cuando la capacidad está habilitada.
@@ -584,11 +584,20 @@ La conexión Qdrant implementada cumple estas reglas:
 - Conocimiento global y memoria conversacional utilizan colecciones físicas distintas configuradas mediante entorno.
 - Las respuestas de Qdrant se validan y sus cursores se traducen a valores opacos antes de cruzar el puerto.
 - La API, la orquestación y los módulos dependen del puerto abstracto y nunca del adaptador concreto.
-- Este incremento no conecta todavía estos puertos con endpoints, embeddings ni `MessageProcessor`.
+- `MessageProcessor` usa colaboradores de orquestación separados para recuperar contexto y persistir intercambios; no conoce el SDK ni los nombres físicos de las colecciones.
+- La memoria se consulta con filtro exacto por `conversationId` y cada intercambio generado por IA se intenta guardar de forma privada.
+- La publicación `approved_exchange` requiere `publishAsGlobalKnowledge=true` en esa solicitud y nunca ocurre para una conversación escalada.
+- La API administrativa registra, lista, consulta, reemplaza, activa o desactiva, elimina lógicamente y restaura documentos globales.
+- El servicio de aplicación conserva `documentId` y `externalId`, crea versiones `N+1`, fragmenta con límites configurables y genera embeddings en lote detrás del puerto neutral.
+- Solo el chunk cero vigente representa el documento durante la administración; todos los chunks vigentes y activos participan en RAG.
+- La restauración siempre establece `active=false`; la reactivación requiere una solicitud de estado separada.
+- La exclusión de escrituras y la unicidad de `externalId` son locales al proceso. Un despliegue con varias réplicas requerirá coordinación distribuida.
 
 ---
 
 # 13. RAG con Qdrant
+
+El flujo general siguiente sigue siendo el objetivo para los módulos especializados. Como integración temporal, `POST /api/v1/messages` ya genera el embedding de la pregunta, consulta en paralelo conocimiento global activo y memoria privada, delimita el contexto como datos no confiables y reutiliza el vector para persistir el intercambio. Los límites, el umbral y el presupuesto de contexto se configuran mediante entorno. No se exponen vectores por HTTP ni se utiliza Qdrant como historial canónico.
 
 ## Flujo
 
@@ -735,7 +744,7 @@ Si cambian los datos relevantes, la confirmación se invalida. El agente nunca a
 
 # 17. Fallbacks y resiliencia
 
-El endpoint implementado devuelve Problem Details seguros: `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Estos errores técnicos todavía no producen una respuesta conversacional de fallback.
+El endpoint implementado devuelve Problem Details seguros: `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Un fallo neutral de embeddings, recuperación o persistencia RAG produce estado `degraded`: el chat continúa sin el contexto no disponible o conserva la respuesta ya generada. Un fallo del modelo mantiene el Problem Details correspondiente y no guarda memoria.
 
 ## Categorías
 
@@ -924,9 +933,6 @@ El incremento actual no implementa:
 - `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
-- Fragmentación e indexación de documentos mediante servicios de aplicación.
-- Recuperación RAG y persistencia de memoria desde `POST /api/v1/messages`.
-- Endpoints administrativos de conocimiento global.
 - Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 

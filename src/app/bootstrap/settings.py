@@ -63,6 +63,12 @@ class ActiveRagConfiguration(BaseModel):
     conversation_memory_collection: str
     dimensions: int
     distance: VectorDistance
+    global_limit: int
+    conversation_limit: int
+    score_threshold: float | None
+    max_context_characters: int
+    chunk_max_characters: int
+    chunk_overlap_characters: int
 
 
 class Settings(BaseSettings):
@@ -121,9 +127,17 @@ class Settings(BaseSettings):
     qdrant_global_knowledge_collection: str = Field(default="knowledge_global", min_length=1)
     qdrant_conversation_memory_collection: str = Field(default="conversation_memory", min_length=1)
     qdrant_vector_distance: VectorDistance = VectorDistance.COSINE
+    rag_global_limit: int = Field(default=4, ge=1, le=20)
+    rag_conversation_limit: int = Field(default=4, ge=1, le=20)
+    rag_score_threshold: float | None = Field(default=None, ge=0, le=1)
+    rag_max_context_characters: int = Field(default=6000, ge=500, le=20000)
+    rag_chunk_max_characters: int = Field(default=1200, ge=200, le=8000)
+    rag_chunk_overlap_characters: int = Field(default=200, ge=0, le=2000)
 
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
+        if self.rag_chunk_overlap_characters >= self.rag_chunk_max_characters:
+            raise ValueError("RAG chunk overlap must be smaller than its maximum")
         if self.chat_enabled:
             api_key, model, _, _ = self._selected_values()
             if api_key is None or not api_key.get_secret_value().strip():
@@ -207,6 +221,12 @@ class Settings(BaseSettings):
             conversation_memory_collection=self.qdrant_conversation_memory_collection.strip(),
             dimensions=self.embedding_dimensions,
             distance=self.qdrant_vector_distance,
+            global_limit=self.rag_global_limit,
+            conversation_limit=self.rag_conversation_limit,
+            score_threshold=self.rag_score_threshold,
+            max_context_characters=self.rag_max_context_characters,
+            chunk_max_characters=self.rag_chunk_max_characters,
+            chunk_overlap_characters=self.rag_chunk_overlap_characters,
         )
 
     def _selected_values(

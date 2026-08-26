@@ -101,6 +101,10 @@ def test_api_exposes_only_approved_foundation_routes() -> None:
         "/health/ready",
         "/api/v1/info",
         "/api/v1/messages",
+        "/api/v1/knowledge/documents",
+        "/api/v1/knowledge/documents/{documentId}",
+        "/api/v1/knowledge/documents/{documentId}/status",
+        "/api/v1/knowledge/documents/{documentId}/restore",
     }
 
 
@@ -122,6 +126,32 @@ def test_api_layer_does_not_import_concrete_adapters() -> None:
                 adapter_imports.append(node.module)
         if adapter_imports:
             violations[str(path)] = sorted(adapter_imports)
+
+    assert violations == {}
+
+
+def test_orchestration_depends_on_ports_not_provider_or_storage_adapters() -> None:
+    forbidden_prefixes = ("app.adapters", "openai", "qdrant_client")
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app/orchestration").rglob("*.py"):
+        forbidden = sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            violations[str(path)] = forbidden
+
+    assert violations == {}
+
+
+def test_knowledge_capability_depends_only_on_neutral_layers() -> None:
+    forbidden_prefixes = ("app.api", "app.adapters", "openai", "qdrant_client")
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app/knowledge").rglob("*.py"):
+        forbidden = sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            violations[str(path)] = forbidden
 
     assert violations == {}
 

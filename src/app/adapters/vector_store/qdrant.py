@@ -13,6 +13,9 @@ from app.ports.conversation_memory_store import (
     ConversationMemoryRecord,
 )
 from app.ports.global_knowledge_store import (
+    GlobalKnowledgeDocument,
+    GlobalKnowledgeDocumentPage,
+    GlobalKnowledgeDocumentQuery,
     GlobalKnowledgeKind,
     GlobalKnowledgeMatch,
     GlobalKnowledgePage,
@@ -77,6 +80,11 @@ class QdrantVectorStore:
         ("document_id", models.PayloadSchemaType.UUID),
         ("source", models.PayloadSchemaType.KEYWORD),
         ("tags", models.PayloadSchemaType.KEYWORD),
+        ("kind", models.PayloadSchemaType.KEYWORD),
+        ("external_id", models.PayloadSchemaType.KEYWORD),
+        ("version", models.PayloadSchemaType.INTEGER),
+        ("chunk_index", models.PayloadSchemaType.INTEGER),
+        ("current", models.PayloadSchemaType.BOOL),
     )
     _MEMORY_INDEXES = (("conversation_id", models.PayloadSchemaType.UUID),)
 
@@ -189,7 +197,26 @@ class QdrantVectorStore:
             response = await self._client.query_points(
                 collection_name=self._global_collection,
                 query=list(query.vector),
-                query_filter=models.Filter(must=conditions),
+                query_filter=models.Filter(
+                    must=conditions,
+                    should=[
+                        models.Filter(
+                            must=[
+                                self._match_condition(
+                                    "kind", GlobalKnowledgeKind.DOCUMENT_CHUNK.value
+                                ),
+                                self._match_condition("current", True),
+                            ]
+                        ),
+                        models.Filter(
+                            must=[
+                                self._match_condition(
+                                    "kind", GlobalKnowledgeKind.APPROVED_EXCHANGE.value
+                                )
+                            ]
+                        ),
+                    ],
+                ),
                 limit=query.limit,
                 with_payload=True,
                 with_vectors=False,
@@ -247,6 +274,90 @@ class QdrantVectorStore:
         except Exception as exc:
             raise VectorStoreUnavailableError("Vector store is unavailable") from exc
 
+    async def get_document(
+        self, document_id: UUID, *, include_deleted: bool
+    ) -> GlobalKnowledgeDocument | None:
+        conditions = self._representative_conditions()
+        conditions.insert(1, self._match_condition("document_id", str(document_id)))
+        if not include_deleted:
+            conditions.append(self._match_condition("deleted", False))
+        return await self._find_document(conditions)
+
+    async def find_document_by_external_id(
+        self, external_id: str, *, include_deleted: bool
+    ) -> GlobalKnowledgeDocument | None:
+        normalized_external_id = external_id.strip()
+        if not normalized_external_id:
+            raise ValueError("external_id cannot be blank")
+        conditions = self._representative_conditions()
+        conditions.insert(1, self._match_condition("external_id", normalized_external_id))
+        if not include_deleted:
+            conditions.append(self._match_condition("deleted", False))
+        return await self._find_document(conditions)
+
+    async def _find_document(
+        self, conditions: list[models.Condition]
+    ) -> GlobalKnowledgeDocument | None:
+        self._ensure_open()
+        try:
+            records, _ = await self._client.scroll(
+                collection_name=self._global_collection,
+                scroll_filter=models.Filter(must=conditions),
+                limit=2,
+                offset=None,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not isinstance(records, list) or len(records) > 1:
+                raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+            return self._global_document(records[0]) if records else None
+        except VectorStoreInvalidResponseError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise VectorStoreInvalidResponseError(
+                "Vector store returned an invalid response"
+            ) from None
+        except Exception as exc:
+            raise VectorStoreUnavailableError("Vector store is unavailable") from exc
+
+    async def list_documents(
+        self, query: GlobalKnowledgeDocumentQuery
+    ) -> GlobalKnowledgeDocumentPage:
+        offset = self._decode_cursor(query.cursor) if query.cursor is not None else None
+        conditions = self._representative_conditions()
+        if not query.include_deleted:
+            conditions.append(self._match_condition("deleted", False))
+        if query.active is not None:
+            conditions.append(self._match_condition("active", query.active))
+        if query.source is not None:
+            conditions.append(self._match_condition("source", query.source))
+        conditions.extend(self._match_condition("tags", tag) for tag in query.tags)
+        self._ensure_open()
+        try:
+            records, next_offset = await self._client.scroll(
+                collection_name=self._global_collection,
+                scroll_filter=models.Filter(must=conditions),
+                limit=query.limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not isinstance(records, list):
+                raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+            next_cursor = self._encode_cursor(next_offset) if next_offset is not None else None
+            return GlobalKnowledgeDocumentPage(
+                documents=tuple(self._global_document(record) for record in records),
+                next_cursor=next_cursor,
+            )
+        except VectorStoreInvalidResponseError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise VectorStoreInvalidResponseError(
+                "Vector store returned an invalid response"
+            ) from None
+        except Exception as exc:
+            raise VectorStoreUnavailableError("Vector store is unavailable") from exc
+
     async def set_document_state(
         self,
         document_id: UUID,
@@ -267,6 +378,44 @@ class QdrantVectorStore:
                 collection_name=self._global_collection,
                 payload=payload,
                 points=models.Filter(must=[self._match_condition("document_id", str(document_id))]),
+                wait=True,
+            )
+        except Exception as exc:
+            raise VectorStoreUnavailableError("Vector store is unavailable") from exc
+
+    async def set_document_version_state(
+        self,
+        document_id: UUID,
+        version: int,
+        *,
+        current: bool | None = None,
+        active: bool | None = None,
+        deleted: bool | None = None,
+    ) -> None:
+        if version < 1:
+            raise ValueError("version must be greater than zero")
+        payload = {
+            key: value
+            for key, value in (
+                ("current", current),
+                ("active", active),
+                ("deleted", deleted),
+            )
+            if value is not None
+        }
+        if not payload:
+            raise ValueError("state change is required")
+        self._ensure_open()
+        try:
+            await self._client.set_payload(
+                collection_name=self._global_collection,
+                payload=payload,
+                points=models.Filter(
+                    must=[
+                        self._match_condition("document_id", str(document_id)),
+                        self._match_condition("version", version),
+                    ]
+                ),
                 wait=True,
             )
         except Exception as exc:
@@ -327,7 +476,7 @@ class QdrantVectorStore:
             raise VectorStoreUnavailableError("Vector store is unavailable")
 
     @staticmethod
-    def _match_condition(key: str, value: bool | str) -> models.FieldCondition:
+    def _match_condition(key: str, value: bool | int | str) -> models.FieldCondition:
         return models.FieldCondition(key=key, match=models.MatchValue(value=value))
 
     @staticmethod
@@ -346,7 +495,48 @@ class QdrantVectorStore:
             "deleted": record.deleted,
             "created_at": record.created_at.isoformat(),
             "updated_at": record.updated_at.isoformat(),
+            "current": record.current,
+            "document_content": record.document_content,
+            "chunk_count": record.chunk_count,
         }
+
+    @classmethod
+    def _representative_conditions(cls) -> list[models.Condition]:
+        return [
+            cls._match_condition("kind", GlobalKnowledgeKind.DOCUMENT_CHUNK.value),
+            cls._match_condition("current", True),
+            cls._match_condition("chunk_index", 0),
+        ]
+
+    @staticmethod
+    def _global_document(record: object) -> GlobalKnowledgeDocument:
+        payload = record.payload
+        if (
+            not isinstance(payload, dict)
+            or payload.get("kind") != GlobalKnowledgeKind.DOCUMENT_CHUNK.value
+            or payload.get("current") is not True
+            or payload.get("chunk_index") != 0
+            or isinstance(payload.get("chunk_index"), bool)
+            or not isinstance(payload.get("document_content"), str)
+        ):
+            raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+        tags = payload.get("tags")
+        if not isinstance(tags, list):
+            raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+        return GlobalKnowledgeDocument(
+            document_id=UUID(payload["document_id"]),
+            external_id=payload["external_id"],
+            version=payload["version"],
+            content=payload["document_content"],
+            title=payload["title"],
+            source=payload["source"],
+            tags=tuple(tags),
+            chunk_count=payload["chunk_count"],
+            active=payload["active"],
+            deleted=payload["deleted"],
+            created_at=datetime.fromisoformat(payload["created_at"]),
+            updated_at=datetime.fromisoformat(payload["updated_at"]),
+        )
 
     @staticmethod
     def _global_match(point: object) -> GlobalKnowledgeMatch:

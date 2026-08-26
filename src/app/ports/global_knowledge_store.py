@@ -38,6 +38,9 @@ class GlobalKnowledgeRecord:
     deleted: bool
     created_at: datetime
     updated_at: datetime
+    current: bool = True
+    document_content: str | None = None
+    chunk_count: int = 1
 
     def __post_init__(self) -> None:
         validate_vector(self.vector)
@@ -49,6 +52,62 @@ class GlobalKnowledgeRecord:
             raise ValueError("version must be greater than zero")
         if self.chunk_index < 0:
             raise ValueError("chunk_index cannot be negative")
+        if self.document_content is not None:
+            object.__setattr__(
+                self,
+                "document_content",
+                _normalize_text(self.document_content, "document_content"),
+            )
+        if self.chunk_count < 1:
+            raise ValueError("chunk_count must be greater than zero")
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalKnowledgeDocument:
+    document_id: UUID
+    external_id: str
+    version: int
+    content: str
+    title: str
+    source: str
+    tags: tuple[str, ...]
+    chunk_count: int
+    active: bool
+    deleted: bool
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        for field in ("external_id", "content", "title", "source"):
+            object.__setattr__(self, field, _normalize_text(getattr(self, field), field))
+        object.__setattr__(self, "tags", tuple(_normalize_text(tag, "tag") for tag in self.tags))
+        if self.version < 1:
+            raise ValueError("version must be greater than zero")
+        if self.chunk_count < 1:
+            raise ValueError("chunk_count must be greater than zero")
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalKnowledgeDocumentQuery:
+    limit: int = 20
+    cursor: str | None = None
+    active: bool | None = None
+    include_deleted: bool = False
+    source: str | None = None
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if self.source is not None:
+            object.__setattr__(self, "source", _normalize_text(self.source, "source"))
+        object.__setattr__(self, "tags", tuple(_normalize_text(tag, "tag") for tag in self.tags))
+
+
+@dataclass(frozen=True, slots=True)
+class GlobalKnowledgeDocumentPage:
+    documents: tuple[GlobalKnowledgeDocument, ...]
+    next_cursor: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,18 +168,24 @@ class GlobalKnowledgeStore(Protocol):
         self, query: GlobalKnowledgeQuery
     ) -> tuple[GlobalKnowledgeMatch, ...]: ...
 
-    async def list_global(
-        self,
-        *,
-        limit: int,
-        cursor: str | None,
-        include_deleted: bool,
-    ) -> GlobalKnowledgePage: ...
+    async def get_document(
+        self, document_id: UUID, *, include_deleted: bool
+    ) -> GlobalKnowledgeDocument | None: ...
 
-    async def set_document_state(
+    async def find_document_by_external_id(
+        self, external_id: str, *, include_deleted: bool
+    ) -> GlobalKnowledgeDocument | None: ...
+
+    async def list_documents(
+        self, query: GlobalKnowledgeDocumentQuery
+    ) -> GlobalKnowledgeDocumentPage: ...
+
+    async def set_document_version_state(
         self,
         document_id: UUID,
+        version: int,
         *,
+        current: bool | None = None,
         active: bool | None = None,
         deleted: bool | None = None,
     ) -> None: ...

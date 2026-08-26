@@ -4,7 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas.requests import MessageRequest
-from app.api.schemas.responses import MessageResponse, TokenUsageResponse
+from app.api.schemas.responses import MessageResponse, RagResponse, TokenUsageResponse
+from app.orchestration.rag_contracts import RagStatus
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import MessageResponseType
 
@@ -41,6 +42,16 @@ def test_message_request_accepts_complete_camel_case_payload() -> None:
     assert request.is_escalated is False
     assert request.correlation_id == UUID(CORRELATION_ID)
     assert request.idempotency_key == "message-001"
+    assert request.publish_as_global_knowledge is False
+
+
+def test_message_request_accepts_explicit_global_publication() -> None:
+    payload = valid_payload()
+    payload["publishAsGlobalKnowledge"] = True
+
+    request = MessageRequest.model_validate(payload)
+
+    assert request.publish_as_global_knowledge is True
 
 
 @pytest.mark.parametrize("field", ["message", "channel", "language", "idempotencyKey"])
@@ -78,6 +89,13 @@ def test_message_response_serializes_safe_camel_case_metadata() -> None:
         model="router-model",
         usage=TokenUsageResponse(input_tokens=8, output_tokens=3),
         module=None,
+        rag=RagResponse(
+            status=RagStatus.USED,
+            global_matches=2,
+            conversation_matches=1,
+            memory_stored=True,
+            knowledge_published=False,
+        ),
     )
 
     assert response.model_dump(mode="json", by_alias=True) == {
@@ -89,4 +107,11 @@ def test_message_response_serializes_safe_camel_case_metadata() -> None:
         "model": "router-model",
         "usage": {"inputTokens": 8, "outputTokens": 3},
         "module": None,
+        "rag": {
+            "status": "used",
+            "globalMatches": 2,
+            "conversationMatches": 1,
+            "memoryStored": True,
+            "knowledgePublished": False,
+        },
     }

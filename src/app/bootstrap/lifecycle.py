@@ -9,7 +9,12 @@ from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
+from app.knowledge.document_chunker import DocumentChunker
+from app.knowledge.document_lock import DocumentWriteLock
+from app.knowledge.management_service import KnowledgeManagementService
 from app.observability.logging import configure_logging
+from app.orchestration.context_retriever import ContextRetriever
+from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.message_processor import MessageProcessor
 from app.ports.vector_store import VectorCollectionDefinition, VectorStore
 from app.shared.exceptions import VectorStoreError, VectorStoreUnavailableError
@@ -78,10 +83,44 @@ def build_lifespan(
 
             chat_model = create_chat_model(settings)
             app.state.dependencies.chat_model = chat_model
-            app.state.dependencies.embedding_model = create_embedding_model(settings)
+            embedding_model = create_embedding_model(settings)
+            app.state.dependencies.embedding_model = embedding_model
+            context_retriever = None
+            memory_writer = None
+            if (
+                rag_configuration is not None
+                and embedding_model is not None
+                and app.state.dependencies.global_knowledge_store is not None
+                and app.state.dependencies.conversation_memory_store is not None
+            ):
+                context_retriever = ContextRetriever(
+                    embedding_model,
+                    app.state.dependencies.global_knowledge_store,
+                    app.state.dependencies.conversation_memory_store,
+                    global_limit=rag_configuration.global_limit,
+                    conversation_limit=rag_configuration.conversation_limit,
+                    score_threshold=rag_configuration.score_threshold,
+                    max_context_characters=rag_configuration.max_context_characters,
+                )
+                memory_writer = ConversationMemoryWriter(
+                    app.state.dependencies.conversation_memory_store,
+                    app.state.dependencies.global_knowledge_store,
+                )
+                app.state.dependencies.knowledge_management_service = KnowledgeManagementService(
+                    embedding_model,
+                    app.state.dependencies.global_knowledge_store,
+                    DocumentChunker(
+                        max_characters=rag_configuration.chunk_max_characters,
+                        overlap_characters=rag_configuration.chunk_overlap_characters,
+                    ),
+                    DocumentWriteLock(),
+                )
             app.state.dependencies.message_processor = MessageProcessor(
                 chat_model=chat_model,
                 max_output_tokens=settings.chat_max_output_tokens,
+                rag_enabled=settings.rag_enabled,
+                context_retriever=context_retriever,
+                memory_writer=memory_writer,
             )
             app.state.ready = True
             logger.info(
@@ -94,6 +133,7 @@ def build_lifespan(
         finally:
             app.state.ready = False
             app.state.dependencies.message_processor = None
+            app.state.dependencies.knowledge_management_service = None
             app.state.dependencies.global_knowledge_store = None
             app.state.dependencies.conversation_memory_store = None
             chat_model = app.state.dependencies.chat_model

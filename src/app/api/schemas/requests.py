@@ -19,3 +19,8 @@ class MessageRequest(BaseModel):
     is_escalated: bool = Field(alias="isEscalated")
     correlation_id: UUID = Field(alias="correlationId")
     idempotency_key: NonBlankText = Field(alias="idempotencyKey")
+    publish_as_global_knowledge: bool = Field(
+        default=False,
+        alias="publishAsGlobalKnowledge",
+        description="Explicitly publish this successful exchange as global knowledge.",
+    )
