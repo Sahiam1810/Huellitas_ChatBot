@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand, MessageProcessor
 from app.orchestration.rag_contracts import (
     RagStatus,
@@ -73,6 +74,8 @@ async def test_processor_sends_only_current_user_message_to_model() -> None:
     assert result.input_tokens == 8
     assert result.output_tokens == 3
     assert result.rag.status is RagStatus.DISABLED
+    assert result.idempotency_replayed is False
+    assert isinstance(processor, MessageHandler)
 
 
 @pytest.mark.anyio

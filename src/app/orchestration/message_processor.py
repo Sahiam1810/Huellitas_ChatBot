@@ -47,6 +47,7 @@ class MessageResult:
     output_tokens: int | None = None
     module: str | None = None
     rag: RagMessageResult = field(default_factory=RagMessageResult.disabled)
+    idempotency_replayed: bool = False
 
 
 class MessageProcessor:
