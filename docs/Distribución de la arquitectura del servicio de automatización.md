@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y la conexión Python opcional con Qdrant mediante un puerto neutral. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para preparar dos colecciones, almacenar y consultar conocimiento global y aislar memoria por conversación. El flujo de mensajes todavía no utiliza esas capacidades: invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, servicios de indexación y recuperación, RAG en mensajes, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -249,7 +249,7 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado, el modelo de embeddings opcional, el procesador de mensajes y el puerto opcional del almacén vectorial. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
+Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado, el modelo de embeddings opcional, el procesador de mensajes, el puerto de conexión vectorial y, cuando las colecciones RAG son válidas, los puertos semánticos de conocimiento global y memoria conversacional. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
@@ -259,11 +259,11 @@ Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrar
 
 ## `bootstrap/lifecycle.py`
 
-Coordina inicialización, readiness y cierre ordenado. Construye el modelo conversacional, el modelo de embeddings y el `MessageProcessor` sin invocar a los proveedores; cuando Qdrant está habilitado, construye `VectorStore`, realiza intentos acotados de conexión y conserva FastAPI vivo en estado degradado si la dependencia no responde. Los embeddings no condicionan readiness porque comprobarlos requeriría una operación facturable. Durante shutdown libera ambos modelos y el cliente vectorial incluso si el cierre de uno de ellos falla.
+Coordina inicialización, readiness y cierre ordenado. Construye el modelo conversacional, el modelo de embeddings y el `MessageProcessor` sin invocar a los proveedores; cuando Qdrant está habilitado, construye `VectorStore`, realiza intentos acotados de conexión y conserva FastAPI vivo en estado degradado si la dependencia no responde. Si RAG está habilitado, crea colecciones ausentes, valida dimensiones y distancia de las existentes y solo después publica los puertos semánticos. Una incompatibilidad nunca provoca recreación automática y mantiene readiness en `503`. Los embeddings no se invocan porque comprobarlos sería facturable. Durante shutdown libera ambos modelos y el cliente vectorial una sola vez incluso si el cierre de otro recurso falla.
 
 ## `bootstrap/settings.py`
 
-Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos, embeddings y conexión Qdrant. `HUELLITAS_CHAT_ENABLED=false`, `HUELLITAS_EMBEDDING_ENABLED=false` y `HUELLITAS_VECTOR_STORE_ENABLED=false` permiten activar cada capacidad de forma independiente. Si embeddings está habilitado exige proveedor, API key propia, modelo y dimensiones explícitas. Ningún router de API lee directamente el entorno del proceso.
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos, embeddings, conexión Qdrant y colecciones RAG. `HUELLITAS_RAG_ENABLED=false` es el valor predeterminado; al activarlo exige embeddings y vector store habilitados, nombres distintos para ambas colecciones, dimensiones explícitas y distancia vectorial. Ningún router de API lee directamente el entorno del proceso.
 
 ---
 
@@ -574,11 +574,17 @@ La base de embeddings implementada cumple estas reglas:
 
 La conexión Qdrant implementada cumple estas reglas:
 
-- `VectorStore` contiene solamente las operaciones asíncronas de disponibilidad y cierre.
+- `VectorStore` contiene disponibilidad, creación o validación de colecciones y cierre.
+- `GlobalKnowledgeStore` expone upsert, búsqueda filtrada, listado por cursor y actualización de estado documental sin tipos del SDK.
+- `ConversationMemoryStore` expone escritura y búsqueda con filtro obligatorio por `conversationId`.
 - `QdrantVectorStore` encapsula `AsyncQdrantClient`; el SDK no sale de `adapters/vector_store`.
 - `vector_store_factory.py` crea el adaptador únicamente cuando la capacidad está habilitada.
-- La comprobación lista colecciones sin crearlas ni modificarlas y traduce cualquier error a `VectorStoreUnavailableError` sin detalles internos.
+- Con RAG deshabilitado, la comprobación de conexión continúa siendo no destructiva.
+- Con RAG habilitado, las colecciones ausentes y los índices de payload se crean idempotentemente; una colección incompatible produce un error neutral y no se modifica.
+- Conocimiento global y memoria conversacional utilizan colecciones físicas distintas configuradas mediante entorno.
+- Las respuestas de Qdrant se validan y sus cursores se traducen a valores opacos antes de cruzar el puerto.
 - La API, la orquestación y los módulos dependen del puerto abstracto y nunca del adaptador concreto.
+- Este incremento no conecta todavía estos puertos con endpoints, embeddings ni `MessageProcessor`.
 
 ---
 
@@ -918,7 +924,9 @@ El incremento actual no implementa:
 - `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
-- Colecciones Qdrant, operaciones vectoriales, indexación, recuperación y RAG.
+- Fragmentación e indexación de documentos mediante servicios de aplicación.
+- Recuperación RAG y persistencia de memoria desde `POST /api/v1/messages`.
+- Endpoints administrativos de conocimiento global.
 - Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 

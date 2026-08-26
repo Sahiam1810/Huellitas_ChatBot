@@ -55,6 +55,17 @@ def test_readiness_reports_problem_when_lifespan_has_not_started() -> None:
     }
 
 
+def test_readiness_reports_problem_when_rag_collections_are_not_ready() -> None:
+    app = build_test_app()
+
+    with TestClient(app) as client:
+        app.state.rag_collections_ready = False
+        response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Application is not ready"
+
+
 def test_readiness_recovers_after_vector_store_becomes_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

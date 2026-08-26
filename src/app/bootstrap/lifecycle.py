@@ -11,8 +11,8 @@ from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
 from app.observability.logging import configure_logging
 from app.orchestration.message_processor import MessageProcessor
-from app.ports.vector_store import VectorStore
-from app.shared.exceptions import VectorStoreUnavailableError
+from app.ports.vector_store import VectorCollectionDefinition, VectorStore
+from app.shared.exceptions import VectorStoreError, VectorStoreUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +46,35 @@ def build_lifespan(
         app.state.dependencies.vector_store = vector_store
         try:
             vector_configuration = settings.active_vector_store_configuration()
+            vector_available = vector_store is None
             if vector_store is not None and vector_configuration is not None:
-                available = await _wait_for_vector_store(vector_store, vector_configuration)
-                logger.info("vector_store_ready" if available else "vector_store_degraded")
+                vector_available = await _wait_for_vector_store(vector_store, vector_configuration)
+                logger.info("vector_store_ready" if vector_available else "vector_store_degraded")
+
+            rag_configuration = settings.active_rag_configuration()
+            if rag_configuration is not None and vector_store is not None and vector_available:
+                try:
+                    await vector_store.ensure_collection(
+                        VectorCollectionDefinition(
+                            rag_configuration.global_knowledge_collection,
+                            rag_configuration.dimensions,
+                            rag_configuration.distance,
+                        )
+                    )
+                    await vector_store.ensure_collection(
+                        VectorCollectionDefinition(
+                            rag_configuration.conversation_memory_collection,
+                            rag_configuration.dimensions,
+                            rag_configuration.distance,
+                        )
+                    )
+                except VectorStoreError:
+                    logger.warning("rag_collections_degraded")
+                else:
+                    app.state.dependencies.global_knowledge_store = vector_store
+                    app.state.dependencies.conversation_memory_store = vector_store
+                    app.state.rag_collections_ready = True
+                    logger.info("rag_collections_ready")
 
             chat_model = create_chat_model(settings)
             app.state.dependencies.chat_model = chat_model
@@ -68,6 +94,8 @@ def build_lifespan(
         finally:
             app.state.ready = False
             app.state.dependencies.message_processor = None
+            app.state.dependencies.global_knowledge_store = None
+            app.state.dependencies.conversation_memory_store = None
             chat_model = app.state.dependencies.chat_model
             app.state.dependencies.chat_model = None
             embedding_model = app.state.dependencies.embedding_model

@@ -2,14 +2,14 @@
 
 Monolito modular de automatización conversacional para una plataforma veterinaria.
 
-El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutrales para modelos conversacionales y embeddings, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles para conversación; OpenAI directo está disponible como primer proveedor de embeddings. El procesador actual envía el mensaje al proveedor conversacional activo o conserva el control humano cuando .NET informa que la conversación está escalada. La ejecución y el routing de módulos veterinarios, las colecciones vectoriales, la indexación, RAG y las operaciones externas permanecen sin implementar.
+El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutrales para modelos conversacionales, embeddings y almacenamiento RAG, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles para conversación; OpenAI directo está disponible como primer proveedor de embeddings. Qdrant puede preparar colecciones separadas para conocimiento global y memoria conversacional. El procesador actual todavía no recupera ni almacena contexto: envía el mensaje al proveedor conversacional activo o conserva el control humano cuando .NET informa que la conversación está escalada.
 
 ## Responsabilidades
 
 - El backend .NET controla canales, reglas de negocio y Oracle Database 26ai.
 - .NET conserva el historial canónico y el estado de escalamiento.
 - Python coordinará conversación, módulos, modelos y RAG.
-- Qdrant será la base vectorial cuando se implemente su incremento.
+- Qdrant contiene las colecciones vectoriales y permanece detrás de puertos neutrales.
 - Redis se incorporará posteriormente para estado técnico temporal.
 - Python nunca accederá directamente a Oracle Database 26ai.
 
@@ -58,7 +58,7 @@ docker compose down
 
 El volumen `huellitas-chatbot_qdrant_storage` conserva los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente el almacenamiento local de Qdrant.
 
-Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. La capacidad de embeddings no se habilita desde Compose y todavía no existen colecciones, indexación, recuperación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
 
 ## Conexión con Qdrant
 
@@ -107,6 +107,26 @@ HUELLITAS_EMBEDDING_DIMENSIONS=""
 Al habilitarla son obligatorios una API key exclusiva, el modelo y sus dimensiones. La credencial no reutiliza `HUELLITAS_OPENAI_API_KEY`: esto permite cambiar el proveedor conversacional sin afectar la futura indexación. El timeout y el límite de lote se controlan con `HUELLITAS_EMBEDDING_TIMEOUT_SECONDS` y `HUELLITAS_EMBEDDING_MAX_BATCH_SIZE`.
 
 El arranque solo construye y registra el adaptador detrás de `EmbeddingModel`; no solicita vectores, no consume créditos y no altera readiness. Las operaciones `embed_query` y `embed_documents` quedan disponibles para futuros servicios de indexación y recuperación, no como endpoints HTTP. Los reintentos automáticos del SDK están deshabilitados y sus errores se traducen a categorías neutrales.
+
+## Colecciones para RAG
+
+La preparación vectorial está deshabilitada por defecto. Requiere habilitar conjuntamente Qdrant, embeddings y RAG:
+
+```dotenv
+HUELLITAS_VECTOR_STORE_ENABLED="true"
+HUELLITAS_EMBEDDING_ENABLED="true"
+HUELLITAS_EMBEDDING_OPENAI_API_KEY="tu-api-key"
+HUELLITAS_EMBEDDING_MODEL="text-embedding-3-small"
+HUELLITAS_EMBEDDING_DIMENSIONS="1536"
+HUELLITAS_RAG_ENABLED="true"
+HUELLITAS_QDRANT_GLOBAL_KNOWLEDGE_COLLECTION="knowledge_global"
+HUELLITAS_QDRANT_CONVERSATION_MEMORY_COLLECTION="conversation_memory"
+HUELLITAS_QDRANT_VECTOR_DISTANCE="cosine"
+```
+
+Durante startup se crean solamente las colecciones ausentes y sus índices de payload. Si una colección existente no coincide exactamente en dimensiones o distancia, no se modifica ni se elimina: readiness permanece en `503` para exigir una migración administrada. Si el provisioning inicial falla por indisponibilidad de Qdrant, debe reiniciarse FastAPI después de recuperar la dependencia.
+
+El arranque no genera embeddings ni consume créditos. Los puertos internos ya permiten upsert, búsqueda, listado por cursor y cambios de estado para conocimiento global, además de escritura y búsqueda estrictamente filtrada por conversación. Ninguna de estas operaciones está conectada todavía a `/messages` ni expuesta como endpoint administrativo.
 
 ## Endpoints disponibles
 
@@ -166,3 +186,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de la base del registro modular](docs/plans/2026-08-25-module-registry-foundation-design.md)
 - [Diseño de la base Docker](docs/plans/2026-08-26-docker-runtime-foundation-design.md)
 - [Diseño de la base de embeddings](docs/plans/2026-08-26-embeddings-foundation-design.md)
+- [Diseño de RAG y conocimiento](docs/plans/2026-08-26-rag-knowledge-foundation-design.md)

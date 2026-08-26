@@ -5,6 +5,7 @@ from pydantic import SecretStr, ValidationError
 
 from app.bootstrap.settings import Environment, LogLevel, Settings, load_settings
 from app.ports.chat_model import ModelProvider
+from app.ports.vector_store import VectorDistance
 
 HUELLITAS_ENV_KEYS = (
     "HUELLITAS_APP_NAME",
@@ -53,6 +54,13 @@ EMBEDDING_ENV_KEYS = (
     "HUELLITAS_EMBEDDING_MAX_BATCH_SIZE",
 )
 
+RAG_ENV_KEYS = (
+    "HUELLITAS_RAG_ENABLED",
+    "HUELLITAS_QDRANT_GLOBAL_KNOWLEDGE_COLLECTION",
+    "HUELLITAS_QDRANT_CONVERSATION_MEMORY_COLLECTION",
+    "HUELLITAS_QDRANT_VECTOR_DISTANCE",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -61,6 +69,7 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *PROVIDER_ENV_KEYS,
         *VECTOR_STORE_ENV_KEYS,
         *EMBEDDING_ENV_KEYS,
+        *RAG_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
@@ -386,3 +395,71 @@ def test_empty_optional_embedding_environment_values_are_ignored(
     settings = Settings(_env_file=None)
 
     assert settings.embedding_dimensions is None
+
+
+def test_rag_is_disabled_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.rag_enabled is False
+    assert settings.active_rag_configuration() is None
+
+
+def test_enabled_rag_exposes_validated_configuration() -> None:
+    settings = Settings(
+        rag_enabled=True,
+        vector_store_enabled=True,
+        embedding_enabled=True,
+        embedding_openai_api_key="secret",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=1536,
+        qdrant_global_knowledge_collection="global_v1",
+        qdrant_conversation_memory_collection="memory_v1",
+        qdrant_vector_distance="dot",
+        _env_file=None,
+    )
+
+    configuration = settings.active_rag_configuration()
+
+    assert configuration is not None
+    assert configuration.global_knowledge_collection == "global_v1"
+    assert configuration.conversation_memory_collection == "memory_v1"
+    assert configuration.dimensions == 1536
+    assert configuration.distance is VectorDistance.DOT
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"embedding_enabled": False}, "embeddings"),
+        ({"vector_store_enabled": False}, "vector store"),
+    ],
+)
+def test_rag_requires_enabled_dependencies(overrides: dict[str, object], message: str) -> None:
+    values: dict[str, object] = {
+        "rag_enabled": True,
+        "embedding_enabled": True,
+        "embedding_openai_api_key": "secret",
+        "embedding_model": "text-embedding-3-small",
+        "embedding_dimensions": 1536,
+        "vector_store_enabled": True,
+        "_env_file": None,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(**values)
+
+
+def test_rag_rejects_equal_collection_names() -> None:
+    with pytest.raises(ValidationError, match="different"):
+        Settings(
+            rag_enabled=True,
+            vector_store_enabled=True,
+            embedding_enabled=True,
+            embedding_openai_api_key="secret",
+            embedding_model="text-embedding-3-small",
+            embedding_dimensions=1536,
+            qdrant_global_knowledge_collection="same",
+            qdrant_conversation_memory_collection="same",
+            _env_file=None,
+        )

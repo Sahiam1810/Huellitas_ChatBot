@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ports.chat_model import ModelProvider
 from app.ports.embedding_model import EmbeddingProvider
+from app.ports.vector_store import VectorDistance
 
 
 class Environment(StrEnum):
@@ -53,6 +54,15 @@ class ActiveEmbeddingConfiguration(BaseModel):
     dimensions: int
     timeout_seconds: float
     max_batch_size: int
+
+
+class ActiveRagConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    global_knowledge_collection: str
+    conversation_memory_collection: str
+    dimensions: int
+    distance: VectorDistance
 
 
 class Settings(BaseSettings):
@@ -107,6 +117,11 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     embedding_max_batch_size: int = Field(default=64, ge=1, le=2048)
 
+    rag_enabled: bool = False
+    qdrant_global_knowledge_collection: str = Field(default="knowledge_global", min_length=1)
+    qdrant_conversation_memory_collection: str = Field(default="conversation_memory", min_length=1)
+    qdrant_vector_distance: VectorDistance = VectorDistance.COSINE
+
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
         if self.chat_enabled:
@@ -125,6 +140,16 @@ class Settings(BaseSettings):
                 raise ValueError("Model is required for embeddings")
             if self.embedding_dimensions is None:
                 raise ValueError("Dimensions are required for embeddings")
+        if self.rag_enabled:
+            if not self.embedding_enabled:
+                raise ValueError("embeddings must be enabled when RAG is enabled")
+            if not self.vector_store_enabled:
+                raise ValueError("vector store must be enabled when RAG is enabled")
+            if (
+                self.qdrant_global_knowledge_collection.strip()
+                == self.qdrant_conversation_memory_collection.strip()
+            ):
+                raise ValueError("RAG collection names must be different")
         return self
 
     def active_model_configuration(self) -> ActiveModelConfiguration | None:
@@ -171,6 +196,17 @@ class Settings(BaseSettings):
             dimensions=self.embedding_dimensions,
             timeout_seconds=self.embedding_timeout_seconds,
             max_batch_size=self.embedding_max_batch_size,
+        )
+
+    def active_rag_configuration(self) -> ActiveRagConfiguration | None:
+        if not self.rag_enabled:
+            return None
+        assert self.embedding_dimensions is not None
+        return ActiveRagConfiguration(
+            global_knowledge_collection=self.qdrant_global_knowledge_collection.strip(),
+            conversation_memory_collection=self.qdrant_conversation_memory_collection.strip(),
+            dimensions=self.embedding_dimensions,
+            distance=self.qdrant_vector_distance,
         )
 
     def _selected_values(

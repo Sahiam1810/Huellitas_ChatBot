@@ -34,8 +34,20 @@ class ModelInvalidResponseError(ChatModelError):
     pass
 
 
-class VectorStoreUnavailableError(RuntimeError):
+class VectorStoreError(RuntimeError):
+    """Base error for provider-neutral vector store failures."""
+
+
+class VectorStoreUnavailableError(VectorStoreError):
     """Raised when the configured vector store cannot serve requests."""
+
+
+class VectorStoreConfigurationError(VectorStoreError):
+    """Raised when vector storage is incompatible with active configuration."""
+
+
+class VectorStoreInvalidResponseError(VectorStoreError):
+    """Raised when vector storage returns an invalid response."""
 
 
 class EmbeddingModelError(RuntimeError):
