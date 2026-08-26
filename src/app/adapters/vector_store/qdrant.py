@@ -7,6 +7,11 @@ from uuid import UUID
 
 from qdrant_client.http import models
 
+from app.ports.conversation_memory_store import (
+    ConversationMemoryMatch,
+    ConversationMemoryQuery,
+    ConversationMemoryRecord,
+)
 from app.ports.global_knowledge_store import (
     GlobalKnowledgeKind,
     GlobalKnowledgeMatch,
@@ -267,6 +272,56 @@ class QdrantVectorStore:
         except Exception as exc:
             raise VectorStoreUnavailableError("Vector store is unavailable") from exc
 
+    async def remember(self, record: ConversationMemoryRecord) -> None:
+        self._ensure_open()
+        point = models.PointStruct(
+            id=record.point_id,
+            vector=list(record.vector),
+            payload={
+                "conversation_id": str(record.conversation_id),
+                "question": record.question,
+                "answer": record.answer,
+                "created_at": record.created_at.isoformat(),
+            },
+        )
+        try:
+            await self._client.upsert(
+                collection_name=self._memory_collection,
+                points=[point],
+                wait=True,
+            )
+        except Exception as exc:
+            raise VectorStoreUnavailableError("Vector store is unavailable") from exc
+
+    async def search_conversation(
+        self, query: ConversationMemoryQuery
+    ) -> tuple[ConversationMemoryMatch, ...]:
+        self._ensure_open()
+        try:
+            response = await self._client.query_points(
+                collection_name=self._memory_collection,
+                query=list(query.vector),
+                query_filter=models.Filter(
+                    must=[self._match_condition("conversation_id", str(query.conversation_id))]
+                ),
+                limit=query.limit,
+                with_payload=True,
+                with_vectors=False,
+                score_threshold=query.score_threshold,
+            )
+            points = response.points
+            if not isinstance(points, list):
+                raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+            return tuple(self._conversation_match(point, query.conversation_id) for point in points)
+        except VectorStoreInvalidResponseError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise VectorStoreInvalidResponseError(
+                "Vector store returned an invalid response"
+            ) from None
+        except Exception as exc:
+            raise VectorStoreUnavailableError("Vector store is unavailable") from exc
+
     def _ensure_open(self) -> None:
         if self._closed:
             raise VectorStoreUnavailableError("Vector store is unavailable")
@@ -332,6 +387,23 @@ class QdrantVectorStore:
             deleted=payload["deleted"],
             created_at=datetime.fromisoformat(payload["created_at"]),
             updated_at=datetime.fromisoformat(payload["updated_at"]),
+        )
+
+    @staticmethod
+    def _conversation_match(
+        point: object, expected_conversation_id: UUID
+    ) -> ConversationMemoryMatch:
+        payload = point.payload
+        if (
+            not isinstance(payload, dict)
+            or UUID(payload["conversation_id"]) != expected_conversation_id
+        ):
+            raise VectorStoreInvalidResponseError("Vector store returned an invalid response")
+        return ConversationMemoryMatch(
+            point_id=UUID(str(point.id)),
+            score=point.score,
+            question=payload["question"],
+            answer=payload["answer"],
         )
 
     @staticmethod

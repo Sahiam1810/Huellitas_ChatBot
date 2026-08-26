@@ -7,6 +7,10 @@ import pytest
 from qdrant_client.http import models
 
 from app.adapters.vector_store.qdrant import QdrantVectorStore
+from app.ports.conversation_memory_store import (
+    ConversationMemoryQuery,
+    ConversationMemoryRecord,
+)
 from app.ports.global_knowledge_store import (
     GlobalKnowledgeKind,
     GlobalKnowledgeQuery,
@@ -51,6 +55,7 @@ def collection_info(size: int, distance: models.Distance) -> SimpleNamespace:
 
 POINT_ID = UUID("4b9bdb7f-9bb7-4f5a-b234-f164269f9e89")
 DOCUMENT_ID = UUID("0b4889ae-ddb6-428b-8833-7f14c499779d")
+CONVERSATION_ID = UUID("616360aa-fbda-4386-928b-41227f6e8f45")
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
 
@@ -74,6 +79,19 @@ def global_record(**overrides: object) -> GlobalKnowledgeRecord:
     }
     values.update(overrides)
     return GlobalKnowledgeRecord(**values)
+
+
+def memory_record(**overrides: object) -> ConversationMemoryRecord:
+    values = {
+        "point_id": POINT_ID,
+        "conversation_id": CONVERSATION_ID,
+        "vector": (0.1, 0.2),
+        "question": "What vaccines are due?",
+        "answer": "Consult the authorized schedule.",
+        "created_at": NOW,
+    }
+    values.update(overrides)
+    return ConversationMemoryRecord(**values)
 
 
 @pytest.mark.anyio
@@ -459,6 +477,115 @@ async def test_global_operations_translate_sdk_failures() -> None:
 
     with pytest.raises(VectorStoreUnavailableError) as captured:
         await store.upsert_global((global_record(),))
+
+    assert str(captured.value) == "Vector store is unavailable"
+    assert "secret" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_remember_maps_one_private_conversation_point() -> None:
+    client = qdrant_client()
+    store = adapter(client)
+
+    await store.remember(memory_record())
+
+    call = client.upsert.await_args
+    assert call.kwargs == {
+        "collection_name": MEMORY_COLLECTION,
+        "points": [
+            models.PointStruct(
+                id=POINT_ID,
+                vector=[0.1, 0.2],
+                payload={
+                    "conversation_id": str(CONVERSATION_ID),
+                    "question": "What vaccines are due?",
+                    "answer": "Consult the authorized schedule.",
+                    "created_at": "2026-08-26T12:00:00+00:00",
+                },
+            )
+        ],
+        "wait": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_search_conversation_always_filters_exact_conversation() -> None:
+    client = qdrant_client()
+    store = adapter(client)
+
+    await store.search_conversation(
+        ConversationMemoryQuery(
+            conversation_id=CONVERSATION_ID,
+            vector=(0.1, 0.2),
+            limit=3,
+            score_threshold=0.6,
+        )
+    )
+
+    call = client.query_points.await_args
+    assert call.kwargs["collection_name"] == MEMORY_COLLECTION
+    assert call.kwargs["query"] == [0.1, 0.2]
+    assert call.kwargs["limit"] == 3
+    assert call.kwargs["score_threshold"] == 0.6
+    assert call.kwargs["with_payload"] is True
+    assert call.kwargs["with_vectors"] is False
+    conditions = call.kwargs["query_filter"].must
+    assert len(conditions) == 1
+    assert conditions[0].key == "conversation_id"
+    assert conditions[0].match.value == str(CONVERSATION_ID)
+
+
+@pytest.mark.anyio
+async def test_search_conversation_maps_only_private_memory_fields() -> None:
+    point = SimpleNamespace(
+        id=str(POINT_ID),
+        score=0.88,
+        payload={
+            "conversation_id": str(CONVERSATION_ID),
+            "question": "What vaccines are due?",
+            "answer": "Consult the authorized schedule.",
+            "secret_extra": "must not escape",
+        },
+    )
+    client = qdrant_client(query_points=AsyncMock(return_value=SimpleNamespace(points=[point])))
+    store = adapter(client)
+
+    matches = await store.search_conversation(
+        ConversationMemoryQuery(CONVERSATION_ID, (0.1, 0.2), 3)
+    )
+
+    assert len(matches) == 1
+    assert matches[0].point_id == POINT_ID
+    assert matches[0].score == 0.88
+    assert matches[0].question == "What vaccines are due?"
+    assert matches[0].answer == "Consult the authorized schedule."
+    assert not hasattr(matches[0], "secret_extra")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "point",
+    [
+        SimpleNamespace(id="invalid", score=0.8, payload={}),
+        SimpleNamespace(id=str(POINT_ID), score=float("inf"), payload={}),
+        SimpleNamespace(id=str(POINT_ID), score=0.8, payload={"question": "missing answer"}),
+    ],
+)
+async def test_search_conversation_rejects_malformed_points(point: object) -> None:
+    client = qdrant_client(query_points=AsyncMock(return_value=SimpleNamespace(points=[point])))
+    store = adapter(client)
+
+    with pytest.raises(VectorStoreInvalidResponseError):
+        await store.search_conversation(ConversationMemoryQuery(CONVERSATION_ID, (0.1, 0.2), 3))
+
+
+@pytest.mark.anyio
+async def test_memory_operations_translate_sdk_failures() -> None:
+    client = qdrant_client(query_points=AsyncMock(side_effect=RuntimeError("secret")))
+    store = adapter(client)
+
+    with pytest.raises(VectorStoreUnavailableError) as captured:
+        await store.search_conversation(ConversationMemoryQuery(CONVERSATION_ID, (0.1, 0.2), 3))
 
     assert str(captured.value) == "Vector store is unavailable"
     assert "secret" not in str(captured.value)
