@@ -42,10 +42,26 @@ VECTOR_STORE_ENV_KEYS = (
     "HUELLITAS_QDRANT_STARTUP_RETRY_DELAY_SECONDS",
 )
 
+EMBEDDING_ENV_KEYS = (
+    "HUELLITAS_EMBEDDING_ENABLED",
+    "HUELLITAS_EMBEDDING_PROVIDER",
+    "HUELLITAS_EMBEDDING_OPENAI_API_KEY",
+    "HUELLITAS_EMBEDDING_OPENAI_BASE_URL",
+    "HUELLITAS_EMBEDDING_MODEL",
+    "HUELLITAS_EMBEDDING_DIMENSIONS",
+    "HUELLITAS_EMBEDDING_TIMEOUT_SECONDS",
+    "HUELLITAS_EMBEDDING_MAX_BATCH_SIZE",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    for key in (*HUELLITAS_ENV_KEYS, *PROVIDER_ENV_KEYS, *VECTOR_STORE_ENV_KEYS):
+    for key in (
+        *HUELLITAS_ENV_KEYS,
+        *PROVIDER_ENV_KEYS,
+        *VECTOR_STORE_ENV_KEYS,
+        *EMBEDDING_ENV_KEYS,
+    ):
         monkeypatch.delenv(key, raising=False)
     yield
 
@@ -309,3 +325,64 @@ def test_qdrant_secret_is_masked() -> None:
 
     assert isinstance(settings.qdrant_api_key, SecretStr)
     assert "qdrant-secret" not in repr(settings)
+
+
+def test_disabled_embeddings_have_no_active_configuration() -> None:
+    assert Settings(_env_file=None).active_embedding_configuration() is None
+
+
+def test_enabled_embeddings_return_independent_configuration() -> None:
+    settings = Settings(
+        embedding_enabled=True,
+        embedding_openai_api_key="embedding-secret",
+        embedding_model="embedding-test",
+        embedding_dimensions=3,
+        embedding_timeout_seconds=7,
+        embedding_max_batch_size=8,
+        openai_api_key="chat-secret",
+        _env_file=None,
+    )
+    active = settings.active_embedding_configuration()
+    assert active is not None
+    assert active.api_key.get_secret_value() == "embedding-secret"
+    assert active.model == "embedding-test"
+    assert active.dimensions == 3
+    assert active.max_batch_size == 8
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"embedding_openai_api_key": "", "embedding_model": "m", "embedding_dimensions": 3},
+        {"embedding_openai_api_key": "k", "embedding_model": "", "embedding_dimensions": 3},
+        {"embedding_openai_api_key": "k", "embedding_model": "m", "embedding_dimensions": None},
+    ],
+)
+def test_enabled_embeddings_require_key_model_and_dimensions(values: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(embedding_enabled=True, **values, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("embedding_dimensions", 0),
+        ("embedding_timeout_seconds", 0),
+        ("embedding_timeout_seconds", 301),
+        ("embedding_max_batch_size", 0),
+        ("embedding_max_batch_size", 2049),
+    ],
+)
+def test_embeddings_reject_invalid_limits(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
+
+
+def test_empty_optional_embedding_environment_values_are_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_DIMENSIONS", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_dimensions is None

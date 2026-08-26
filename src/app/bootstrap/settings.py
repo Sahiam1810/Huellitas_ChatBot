@@ -5,6 +5,7 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, SecretStr, model_
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ports.chat_model import ModelProvider
+from app.ports.embedding_model import EmbeddingProvider
 
 
 class Environment(StrEnum):
@@ -42,11 +43,24 @@ class ActiveVectorStoreConfiguration(BaseModel):
     startup_retry_delay_seconds: float
 
 
+class ActiveEmbeddingConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    provider: EmbeddingProvider
+    api_key: SecretStr
+    base_url: AnyHttpUrl
+    model: str
+    dimensions: int
+    timeout_seconds: float
+    max_batch_size: int
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HUELLITAS_",
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
         frozen=True,
     )
@@ -84,16 +98,33 @@ class Settings(BaseSettings):
     qdrant_startup_max_attempts: int = Field(default=5, ge=1, le=20)
     qdrant_startup_retry_delay_seconds: float = Field(default=1.0, ge=0, le=60)
 
+    embedding_enabled: bool = False
+    embedding_provider: EmbeddingProvider = EmbeddingProvider.OPENAI
+    embedding_openai_api_key: SecretStr | None = None
+    embedding_openai_base_url: AnyHttpUrl = AnyHttpUrl("https://api.openai.com/v1")
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = Field(default=None, ge=1)
+    embedding_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    embedding_max_batch_size: int = Field(default=64, ge=1, le=2048)
+
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
-        if not self.chat_enabled:
-            return self
-
-        api_key, model, _, _ = self._selected_values()
-        if api_key is None or not api_key.get_secret_value().strip():
-            raise ValueError(f"API key is required for {self.chat_provider.value}")
-        if model is None or not model.strip():
-            raise ValueError(f"Model is required for {self.chat_provider.value}")
+        if self.chat_enabled:
+            api_key, model, _, _ = self._selected_values()
+            if api_key is None or not api_key.get_secret_value().strip():
+                raise ValueError(f"API key is required for {self.chat_provider.value}")
+            if model is None or not model.strip():
+                raise ValueError(f"Model is required for {self.chat_provider.value}")
+        if self.embedding_enabled:
+            if (
+                self.embedding_openai_api_key is None
+                or not self.embedding_openai_api_key.get_secret_value().strip()
+            ):
+                raise ValueError("API key is required for embeddings")
+            if self.embedding_model is None or not self.embedding_model.strip():
+                raise ValueError("Model is required for embeddings")
+            if self.embedding_dimensions is None:
+                raise ValueError("Dimensions are required for embeddings")
         return self
 
     def active_model_configuration(self) -> ActiveModelConfiguration | None:
@@ -124,6 +155,22 @@ class Settings(BaseSettings):
             timeout_seconds=self.qdrant_timeout_seconds,
             startup_max_attempts=self.qdrant_startup_max_attempts,
             startup_retry_delay_seconds=self.qdrant_startup_retry_delay_seconds,
+        )
+
+    def active_embedding_configuration(self) -> ActiveEmbeddingConfiguration | None:
+        if not self.embedding_enabled:
+            return None
+        assert self.embedding_openai_api_key is not None
+        assert self.embedding_model is not None
+        assert self.embedding_dimensions is not None
+        return ActiveEmbeddingConfiguration(
+            provider=self.embedding_provider,
+            api_key=self.embedding_openai_api_key,
+            base_url=self.embedding_openai_base_url,
+            model=self.embedding_model,
+            dimensions=self.embedding_dimensions,
+            timeout_seconds=self.embedding_timeout_seconds,
+            max_batch_size=self.embedding_max_batch_size,
         )
 
     def _selected_values(

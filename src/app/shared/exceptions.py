@@ -36,3 +36,35 @@ class ModelInvalidResponseError(ChatModelError):
 
 class VectorStoreUnavailableError(RuntimeError):
     """Raised when the configured vector store cannot serve requests."""
+
+
+class EmbeddingModelError(RuntimeError):
+    """Base error for provider-neutral embedding failures."""
+
+
+class EmbeddingConfigurationError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingAuthenticationError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingRateLimitError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingTimeoutError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingUnavailableError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingRequestError(EmbeddingModelError):
+    pass
+
+
+class EmbeddingInvalidResponseError(EmbeddingModelError):
+    pass

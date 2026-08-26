@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y la conexión Python opcional con Qdrant mediante un puerto neutral. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, embeddings, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y la conexión Python opcional con Qdrant mediante un puerto neutral. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -249,7 +249,7 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado, el procesador de mensajes y el puerto opcional del almacén vectorial. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
+Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado, el modelo de embeddings opcional, el procesador de mensajes y el puerto opcional del almacén vectorial. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
@@ -259,11 +259,11 @@ Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrar
 
 ## `bootstrap/lifecycle.py`
 
-Coordina inicialización, readiness y cierre ordenado. Construye el modelo seleccionado y el `MessageProcessor` sin invocar al proveedor; cuando Qdrant está habilitado, construye `VectorStore`, realiza intentos acotados de conexión y conserva FastAPI vivo en estado degradado si la dependencia no responde. Durante shutdown libera el modelo y el cliente vectorial incluso si el cierre de uno de ellos falla.
+Coordina inicialización, readiness y cierre ordenado. Construye el modelo conversacional, el modelo de embeddings y el `MessageProcessor` sin invocar a los proveedores; cuando Qdrant está habilitado, construye `VectorStore`, realiza intentos acotados de conexión y conserva FastAPI vivo en estado degradado si la dependencia no responde. Los embeddings no condicionan readiness porque comprobarlos requeriría una operación facturable. Durante shutdown libera ambos modelos y el cliente vectorial incluso si el cierre de uno de ellos falla.
 
 ## `bootstrap/settings.py`
 
-Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos y conexión Qdrant. `HUELLITAS_CHAT_ENABLED=false` permite arrancar sin credenciales de modelo y `HUELLITAS_VECTOR_STORE_ENABLED=false` evita construir el cliente vectorial. Ningún router de API lee directamente el entorno del proceso.
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos, embeddings y conexión Qdrant. `HUELLITAS_CHAT_ENABLED=false`, `HUELLITAS_EMBEDDING_ENABLED=false` y `HUELLITAS_VECTOR_STORE_ENABLED=false` permiten activar cada capacidad de forma independiente. Si embeddings está habilitado exige proveedor, API key propia, modelo y dimensiones explícitas. Ningún router de API lee directamente el entorno del proceso.
 
 ---
 
@@ -538,6 +538,8 @@ adapters/
 |   |-- openai.py
 |   `-- gemini.py
 |-- embeddings/
+|   |-- embedding_factory.py
+|   `-- openai.py
 |-- vector_store/
 |   |-- qdrant.py
 |   `-- vector_store_factory.py
@@ -559,6 +561,16 @@ La base multiproveedor implementada cumple estas reglas:
 - No existe fallback entre proveedores ni selección por módulo en esta fase.
 
 No existe adaptador de Oracle en Python.
+
+La base de embeddings implementada cumple estas reglas:
+
+- `EmbeddingModel` expone dimensiones y operaciones asíncronas separadas para consultas y lotes documentales.
+- `embedding_factory.py` construye el adaptador solamente cuando `HUELLITAS_EMBEDDING_ENABLED=true`.
+- OpenAI directo es el único proveedor de embeddings de esta fase y utiliza una credencial independiente del chat.
+- El SDK permanece dentro de `adapters/embeddings`; la orquestación y los módulos futuros solo conocerán `EmbeddingModel`.
+- El tamaño de lote se limita antes de llamar al proveedor y cada vector se valida contra las dimensiones configuradas.
+- Los reintentos automáticos están deshabilitados y los errores externos se traducen a categorías neutrales.
+- Construir el adaptador no llama al proveedor, no consume créditos y no crea colecciones en Qdrant.
 
 La conexión Qdrant implementada cumple estas reglas:
 
@@ -892,7 +904,7 @@ No se agregan condiciones específicas del nuevo módulo en `main_graph.py`, `in
 
 El incremento actual no implementa:
 
-- Proveedor definitivo de embeddings.
+- Proveedores alternativos de embeddings ni selección dinámica por operación.
 - Esquemas HTTP finales de .NET.
 - Contenido veterinario definitivo.
 - Prompts clínicos o conversacionales.
@@ -907,7 +919,7 @@ El incremento actual no implementa:
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
 - Colecciones Qdrant, operaciones vectoriales, indexación, recuperación y RAG.
-- Embeddings y Redis.
+- Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
 La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.

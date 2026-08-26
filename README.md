@@ -2,7 +2,7 @@
 
 Monolito modular de automatización conversacional para una plataforma veterinaria.
 
-El proyecto implementa actualmente su base operativa de FastAPI, la frontera neutral para modelos conversacionales, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles mediante configuración; el procesador actual envía el mensaje al proveedor activo o conserva el control humano cuando .NET informa que la conversación está escalada. La ejecución y el routing de módulos veterinarios, RAG y operaciones externas permanecen sin implementar.
+El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutrales para modelos conversacionales y embeddings, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles para conversación; OpenAI directo está disponible como primer proveedor de embeddings. El procesador actual envía el mensaje al proveedor conversacional activo o conserva el control humano cuando .NET informa que la conversación está escalada. La ejecución y el routing de módulos veterinarios, las colecciones vectoriales, la indexación, RAG y las operaciones externas permanecen sin implementar.
 
 ## Responsabilidades
 
@@ -58,7 +58,7 @@ docker compose down
 
 El volumen `huellitas-chatbot_qdrant_storage` conserva los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente el almacenamiento local de Qdrant.
 
-Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. No existen todavía colecciones, embeddings, indexación, recuperación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. La capacidad de embeddings no se habilita desde Compose y todavía no existen colecciones, indexación, recuperación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
 
 ## Conexión con Qdrant
 
@@ -91,6 +91,22 @@ HUELLITAS_CHAT_PROVIDER="openrouter"
 - Gemini directo utiliza `HUELLITAS_GEMINI_*`; Gemini 3.5 Flash se identifica como `gemini-3.5-flash`.
 
 Los valores disponibles están documentados en `.env.example`. Construir el servicio no llama al proveedor. La suite automatizada sustituye los clientes externos por dobles controlados, por lo que no usa red ni consume créditos.
+
+## Proveedor de embeddings
+
+Embeddings es una capacidad independiente del chat y está deshabilitada por defecto. Para preparar el adaptador de OpenAI directo configura:
+
+```dotenv
+HUELLITAS_EMBEDDING_ENABLED="true"
+HUELLITAS_EMBEDDING_PROVIDER="openai"
+HUELLITAS_EMBEDDING_OPENAI_API_KEY=""
+HUELLITAS_EMBEDDING_MODEL=""
+HUELLITAS_EMBEDDING_DIMENSIONS=""
+```
+
+Al habilitarla son obligatorios una API key exclusiva, el modelo y sus dimensiones. La credencial no reutiliza `HUELLITAS_OPENAI_API_KEY`: esto permite cambiar el proveedor conversacional sin afectar la futura indexación. El timeout y el límite de lote se controlan con `HUELLITAS_EMBEDDING_TIMEOUT_SECONDS` y `HUELLITAS_EMBEDDING_MAX_BATCH_SIZE`.
+
+El arranque solo construye y registra el adaptador detrás de `EmbeddingModel`; no solicita vectores, no consume créditos y no altera readiness. Las operaciones `embed_query` y `embed_documents` quedan disponibles para futuros servicios de indexación y recuperación, no como endpoints HTTP. Los reintentos automáticos del SDK están deshabilitados y sus errores se traducen a categorías neutrales.
 
 ## Endpoints disponibles
 
@@ -149,3 +165,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de la base multiproveedor](docs/plans/2026-08-25-multi-provider-model-foundation-design.md)
 - [Diseño de la base del registro modular](docs/plans/2026-08-25-module-registry-foundation-design.md)
 - [Diseño de la base Docker](docs/plans/2026-08-26-docker-runtime-foundation-design.md)
+- [Diseño de la base de embeddings](docs/plans/2026-08-26-embeddings-foundation-design.md)

@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
@@ -51,6 +52,7 @@ def build_lifespan(
 
             chat_model = create_chat_model(settings)
             app.state.dependencies.chat_model = chat_model
+            app.state.dependencies.embedding_model = create_embedding_model(settings)
             app.state.dependencies.message_processor = MessageProcessor(
                 chat_model=chat_model,
                 max_output_tokens=settings.chat_max_output_tokens,
@@ -68,6 +70,8 @@ def build_lifespan(
             app.state.dependencies.message_processor = None
             chat_model = app.state.dependencies.chat_model
             app.state.dependencies.chat_model = None
+            embedding_model = app.state.dependencies.embedding_model
+            app.state.dependencies.embedding_model = None
             vector_store = app.state.dependencies.vector_store
             app.state.dependencies.vector_store = None
             try:
@@ -75,9 +79,13 @@ def build_lifespan(
                     await chat_model.close()
             finally:
                 try:
-                    if vector_store is not None:
-                        await vector_store.close()
+                    if embedding_model is not None:
+                        await embedding_model.close()
                 finally:
-                    logger.info("application_stopped name=%s", settings.app_name)
+                    try:
+                        if vector_store is not None:
+                            await vector_store.close()
+                    finally:
+                        logger.info("application_stopped name=%s", settings.app_name)
 
     return lifespan
