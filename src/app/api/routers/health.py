@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request
 
 from app.api.schemas.health import HealthResponse, ProblemDetail
-from app.shared.exceptions import ServiceNotReadyError
+from app.shared.exceptions import ServiceNotReadyError, VectorStoreUnavailableError
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -29,4 +29,11 @@ async def live() -> HealthResponse:
 async def ready(request: Request) -> HealthResponse:
     if not request.app.state.ready:
         raise ServiceNotReadyError
+
+    vector_store = request.app.state.dependencies.vector_store
+    if vector_store is not None:
+        try:
+            await vector_store.check_health()
+        except VectorStoreUnavailableError:
+            raise ServiceNotReadyError from None
     return HealthResponse(status="ready")

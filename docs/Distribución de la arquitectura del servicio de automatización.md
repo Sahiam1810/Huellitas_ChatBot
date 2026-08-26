@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío y el runtime local de Docker Compose con Qdrant persistente. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, integración Python con Qdrant, embeddings, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y la conexión Python opcional con Qdrant mediante un puerto neutral. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, embeddings, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -166,7 +166,7 @@ Qdrant no es fuente de:
 
 El entorno de desarrollo ejecuta `qdrant/qdrant:v1.18.2` mediante Docker Compose. Los puertos REST y gRPC se publican únicamente en localhost y `/qdrant/storage` utiliza un volumen nombrado persistente para evitar acoplar el almacenamiento al sistema de archivos de Windows.
 
-La disponibilidad del contenedor no implica integración RAG. FastAPI todavía no crea un cliente Qdrant, no incorpora su estado a readiness y no administra colecciones ni vectores.
+FastAPI crea un cliente asíncrono REST solamente cuando `HUELLITAS_VECTOR_STORE_ENABLED=true`. La disponibilidad se comprueba con una operación autenticada y no destructiva a través del puerto `VectorStore`; readiness devuelve `503` mientras Qdrant no responda y se recupera sin reiniciar el proceso. Esta conexión no implica integración RAG: FastAPI no administra colecciones ni vectores.
 
 ## Redis
 
@@ -249,7 +249,7 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado y el procesador de mensajes. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
+Es la raíz de composición. Actualmente conserva el registro modular vacío, el modelo conversacional opcional seleccionado, el procesador de mensajes y el puerto opcional del almacén vectorial. Incorporará los demás adaptadores, servicios técnicos y módulos ejecutables únicamente cuando sus cortes verticales sean aprobados.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
@@ -259,13 +259,11 @@ Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrar
 
 ## `bootstrap/lifecycle.py`
 
-Coordina inicialización, readiness y cierre ordenado. Actualmente construye el modelo seleccionado y el `MessageProcessor`, sin invocar al proveedor durante el arranque, y libera ambas dependencias durante el shutdown.
-
-El contenedor Qdrant permanece fuera de este lifecycle hasta que exista un adaptador Python aprobado; su healthcheck de Compose no modifica `/health/ready`.
+Coordina inicialización, readiness y cierre ordenado. Construye el modelo seleccionado y el `MessageProcessor` sin invocar al proveedor; cuando Qdrant está habilitado, construye `VectorStore`, realiza intentos acotados de conexión y conserva FastAPI vivo en estado degradado si la dependencia no responde. Durante shutdown libera el modelo y el cliente vectorial incluso si el cierre de uno de ellos falla.
 
 ## `bootstrap/settings.py`
 
-Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto y proveedores de modelos. `HUELLITAS_CHAT_ENABLED=false` permite arrancar sin credenciales; cuando está habilitado, solo se exige la configuración del proveedor seleccionado. Ningún router de API lee directamente el entorno del proceso.
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos y conexión Qdrant. `HUELLITAS_CHAT_ENABLED=false` permite arrancar sin credenciales de modelo y `HUELLITAS_VECTOR_STORE_ENABLED=false` evita construir el cliente vectorial. Ningún router de API lee directamente el entorno del proceso.
 
 ---
 
@@ -541,7 +539,8 @@ adapters/
 |   `-- gemini.py
 |-- embeddings/
 |-- vector_store/
-|   `-- qdrant.py
+|   |-- qdrant.py
+|   `-- vector_store_factory.py
 `-- cache/
     `-- redis.py
 ```
@@ -560,6 +559,14 @@ La base multiproveedor implementada cumple estas reglas:
 - No existe fallback entre proveedores ni selección por módulo en esta fase.
 
 No existe adaptador de Oracle en Python.
+
+La conexión Qdrant implementada cumple estas reglas:
+
+- `VectorStore` contiene solamente las operaciones asíncronas de disponibilidad y cierre.
+- `QdrantVectorStore` encapsula `AsyncQdrantClient`; el SDK no sale de `adapters/vector_store`.
+- `vector_store_factory.py` crea el adaptador únicamente cuando la capacidad está habilitada.
+- La comprobación lista colecciones sin crearlas ni modificarlas y traduce cualquier error a `VectorStoreUnavailableError` sin detalles internos.
+- La API, la orquestación y los módulos dependen del puerto abstracto y nunca del adaptador concreto.
 
 ---
 
@@ -845,6 +852,8 @@ En la base multiproveedor y el endpoint de mensajes actuales, todas las pruebas 
 
 La base Docker se valida construyendo la imagen real, comprobando el UID no privilegiado del agente, iniciando FastAPI y Qdrant hasta estado saludable, consultando ambos endpoints de salud y verificando la red y el volumen persistente. Detener la prueba no elimina el volumen de Qdrant.
 
+La conexión Qdrant se prueba con clientes controlados para disponibilidad, errores y cierre; el lifecycle cubre reintentos y limpieza. La prueba Docker confirma que readiness pasa de `200` a `503` cuando Qdrant se detiene y vuelve a `200` cuando se recupera, sin reiniciar FastAPI.
+
 ## Pruebas end-to-end
 
 Casos mínimos:
@@ -897,7 +906,7 @@ El incremento actual no implementa:
 - `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
-- Cliente Python de Qdrant, colecciones, indexación, recuperación y RAG.
+- Colecciones Qdrant, operaciones vectoriales, indexación, recuperación y RAG.
 - Embeddings y Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
