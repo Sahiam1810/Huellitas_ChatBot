@@ -7,6 +7,13 @@ from fastapi.testclient import TestClient
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.ports.chat_model import ChatResponse, ModelProvider
+from app.ports.embedding_model import (
+    EmbeddingProvider,
+    EmbeddingResponse,
+    EmbeddingUsage,
+    EmbeddingVector,
+)
 from app.ports.vector_store import VectorCollectionDefinition, VectorDistance
 from app.shared.exceptions import (
     VectorStoreConfigurationError,
@@ -125,6 +132,81 @@ def test_rag_lifespan_provisions_and_exposes_neutral_stores(
     assert app.state.dependencies.global_knowledge_store is None
     assert app.state.dependencies.conversation_memory_store is None
     store.close.assert_awaited_once_with()
+
+
+def test_rag_lifespan_composes_message_retrieval_and_private_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat_model = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=ChatResponse(
+                text="Respuesta",
+                provider=ModelProvider.OPENAI,
+                model="chat-test",
+            )
+        ),
+        close=AsyncMock(),
+    )
+    embedding_model = SimpleNamespace(
+        embed_query=AsyncMock(
+            return_value=EmbeddingResponse(
+                vectors=(EmbeddingVector((0.1, 0.2, 0.3)),),
+                provider=EmbeddingProvider.OPENAI,
+                model="embedding-test",
+                usage=EmbeddingUsage(input_tokens=2, total_tokens=2),
+            )
+        ),
+        embed_documents=AsyncMock(),
+        close=AsyncMock(),
+    )
+    store = SimpleNamespace(
+        check_health=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        search_global=AsyncMock(return_value=()),
+        search_conversation=AsyncMock(return_value=()),
+        remember=AsyncMock(),
+        upsert_global=AsyncMock(),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: chat_model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding_model)
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(
+        rag_settings(
+            chat_enabled=True,
+            chat_provider="openai",
+            openai_api_key="chat-key",
+            openai_model="chat-test",
+            embedding_dimensions=3,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/messages",
+            json={
+                "message": "Pregunta",
+                "conversationId": "bda5a441-e907-4781-bca6-44c25a73255a",
+                "userId": "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9",
+                "petId": None,
+                "channel": "web",
+                "language": "es-CO",
+                "roles": ["customer"],
+                "isEscalated": False,
+                "correlationId": "8dd1b2d9-4812-463a-87a4-eb6346cb2f83",
+                "idempotencyKey": "message-001",
+            },
+        )
+
+    assert response.status_code == 200
+    embedding_model.embed_query.assert_awaited_once_with("Pregunta")
+    global_query = store.search_global.await_args.args[0]
+    memory_query = store.search_conversation.await_args.args[0]
+    assert global_query.vector == (0.1, 0.2, 0.3)
+    assert memory_query.conversation_id.hex == "bda5a441e9074781bca644c25a73255a"
+    private_record = store.remember.await_args.args[0]
+    assert private_record.conversation_id == memory_query.conversation_id
+    store.upsert_global.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
