@@ -80,3 +80,27 @@ class EmbeddingRequestError(EmbeddingModelError):
 
 class EmbeddingInvalidResponseError(EmbeddingModelError):
     pass
+
+
+class KnowledgeError(RuntimeError):
+    """Base error for global knowledge document operations."""
+
+
+class KnowledgeNotConfiguredError(KnowledgeError):
+    pass
+
+
+class KnowledgeDocumentNotFoundError(KnowledgeError):
+    pass
+
+
+class KnowledgeExternalIdConflictError(KnowledgeError):
+    pass
+
+
+class KnowledgeDocumentDeletedError(KnowledgeError):
+    pass
+
+
+class KnowledgeDocumentConsistencyError(KnowledgeError):
+    pass
