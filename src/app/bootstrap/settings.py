@@ -34,6 +34,13 @@ class ActiveModelConfiguration(BaseModel):
     base_url: AnyHttpUrl | None = None
 
 
+class ActiveIdempotencyConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ttl_seconds: float
+    max_entries: int
+
+
 class ActiveVectorStoreConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -92,6 +99,10 @@ class Settings(BaseSettings):
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER
     chat_max_output_tokens: int = Field(default=1024, ge=1, le=32768)
+
+    idempotency_enabled: bool = True
+    idempotency_ttl_seconds: float = Field(default=86400, ge=1, le=604800)
+    idempotency_max_entries: int = Field(default=10000, ge=1, le=1000000)
 
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: AnyHttpUrl = AnyHttpUrl("https://openrouter.ai/api/v1")
@@ -179,6 +190,16 @@ class Settings(BaseSettings):
             model=model,
             timeout_seconds=timeout_seconds,
             base_url=base_url,
+        )
+
+    def active_idempotency_configuration(
+        self,
+    ) -> ActiveIdempotencyConfiguration | None:
+        if not self.idempotency_enabled:
+            return None
+        return ActiveIdempotencyConfiguration(
+            ttl_seconds=self.idempotency_ttl_seconds,
+            max_entries=self.idempotency_max_entries,
         )
 
     def active_vector_store_configuration(self) -> ActiveVectorStoreConfiguration | None:
