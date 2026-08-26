@@ -9,6 +9,9 @@ from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
+from app.knowledge.document_chunker import DocumentChunker
+from app.knowledge.document_lock import DocumentWriteLock
+from app.knowledge.management_service import KnowledgeManagementService
 from app.observability.logging import configure_logging
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
@@ -103,6 +106,15 @@ def build_lifespan(
                     app.state.dependencies.conversation_memory_store,
                     app.state.dependencies.global_knowledge_store,
                 )
+                app.state.dependencies.knowledge_management_service = KnowledgeManagementService(
+                    embedding_model,
+                    app.state.dependencies.global_knowledge_store,
+                    DocumentChunker(
+                        max_characters=rag_configuration.chunk_max_characters,
+                        overlap_characters=rag_configuration.chunk_overlap_characters,
+                    ),
+                    DocumentWriteLock(),
+                )
             app.state.dependencies.message_processor = MessageProcessor(
                 chat_model=chat_model,
                 max_output_tokens=settings.chat_max_output_tokens,
@@ -121,6 +133,7 @@ def build_lifespan(
         finally:
             app.state.ready = False
             app.state.dependencies.message_processor = None
+            app.state.dependencies.knowledge_management_service = None
             app.state.dependencies.global_knowledge_store = None
             app.state.dependencies.conversation_memory_store = None
             chat_model = app.state.dependencies.chat_model

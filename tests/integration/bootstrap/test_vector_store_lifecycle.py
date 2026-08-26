@@ -122,6 +122,10 @@ def test_rag_lifespan_provisions_and_exposes_neutral_stores(
         assert app.state.rag_collections_ready is True
         assert app.state.dependencies.global_knowledge_store is store
         assert app.state.dependencies.conversation_memory_store is store
+        management = app.state.dependencies.knowledge_management_service
+        assert management is not None
+        assert management._chunker.max_characters == 1200
+        assert management._chunker.overlap_characters == 200
         assert store.ensure_collection.await_args_list == [
             call(VectorCollectionDefinition("knowledge_global", 1536, VectorDistance.COSINE)),
             call(VectorCollectionDefinition("conversation_memory", 1536, VectorDistance.COSINE)),
@@ -131,6 +135,7 @@ def test_rag_lifespan_provisions_and_exposes_neutral_stores(
 
     assert app.state.dependencies.global_knowledge_store is None
     assert app.state.dependencies.conversation_memory_store is None
+    assert app.state.dependencies.knowledge_management_service is None
     store.close.assert_awaited_once_with()
 
 
@@ -229,6 +234,7 @@ def test_rag_provisioning_failure_keeps_semantic_stores_unavailable(
         assert app.state.rag_collections_ready is False
         assert app.state.dependencies.global_knowledge_store is None
         assert app.state.dependencies.conversation_memory_store is None
+        assert app.state.dependencies.knowledge_management_service is None
 
 
 def test_disabled_rag_does_not_provision_collections(
@@ -244,5 +250,6 @@ def test_disabled_rag_does_not_provision_collections(
         assert app.state.rag_collections_ready is True
         assert app.state.dependencies.global_knowledge_store is None
         assert app.state.dependencies.conversation_memory_store is None
+        assert app.state.dependencies.knowledge_management_service is None
 
     store.ensure_collection.assert_not_awaited()

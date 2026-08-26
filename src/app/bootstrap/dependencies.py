@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from app.knowledge.management_service import KnowledgeManagementService
 from app.orchestration.message_processor import MessageProcessor
 from app.orchestration.module_registry import ModuleRegistry
 from app.ports.chat_model import ChatModel
@@ -18,3 +19,4 @@ class ApplicationDependencies:
     vector_store: VectorStore | None = None
     global_knowledge_store: GlobalKnowledgeStore | None = None
     conversation_memory_store: ConversationMemoryStore | None = None
+    knowledge_management_service: KnowledgeManagementService | None = None

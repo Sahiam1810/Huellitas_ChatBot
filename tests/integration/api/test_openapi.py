@@ -21,6 +21,10 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert set(schema["paths"]) == {
         "/api/v1/info",
         "/api/v1/messages",
+        "/api/v1/knowledge/documents",
+        "/api/v1/knowledge/documents/{documentId}",
+        "/api/v1/knowledge/documents/{documentId}/status",
+        "/api/v1/knowledge/documents/{documentId}/restore",
         "/health/live",
         "/health/ready",
     }
@@ -44,6 +48,13 @@ def test_documentation_routes_exist_when_enabled() -> None:
         "used",
         "degraded",
     }
+    documents = schema["paths"]["/api/v1/knowledge/documents"]
+    assert set(documents) == {"get", "post"}
+    assert set(documents["post"]["responses"]) >= {"201", "409", "422", "502", "503", "504"}
+    item = schema["paths"]["/api/v1/knowledge/documents/{documentId}"]
+    assert set(item) == {"get", "put", "delete"}
+    assert "204" in item["delete"]["responses"]
+    assert all("embeddings" not in path for path in schema["paths"])
 
 
 def test_documentation_routes_are_absent_when_disabled() -> None:

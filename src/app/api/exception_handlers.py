@@ -8,6 +8,20 @@ from app.api.schemas.health import ProblemDetail
 from app.api.schemas.responses import MessageProblemDetail
 from app.shared.exceptions import (
     ChatModelError,
+    EmbeddingAuthenticationError,
+    EmbeddingConfigurationError,
+    EmbeddingInvalidResponseError,
+    EmbeddingModelError,
+    EmbeddingRateLimitError,
+    EmbeddingRequestError,
+    EmbeddingTimeoutError,
+    EmbeddingUnavailableError,
+    KnowledgeDocumentConsistencyError,
+    KnowledgeDocumentDeletedError,
+    KnowledgeDocumentNotFoundError,
+    KnowledgeError,
+    KnowledgeExternalIdConflictError,
+    KnowledgeNotConfiguredError,
     ModelAuthenticationError,
     ModelConfigurationError,
     ModelInvalidResponseError,
@@ -16,6 +30,10 @@ from app.shared.exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     ServiceNotReadyError,
+    VectorStoreConfigurationError,
+    VectorStoreError,
+    VectorStoreInvalidResponseError,
+    VectorStoreUnavailableError,
 )
 
 
@@ -69,6 +87,72 @@ MODEL_PROBLEMS: dict[type[ChatModelError], ProblemSpec] = {
         status=502,
         detail="Provider returned an invalid response",
         code="provider_invalid_response",
+    ),
+}
+
+KNOWLEDGE_PROBLEMS: dict[type[KnowledgeError], ProblemSpec] = {
+    KnowledgeNotConfiguredError: ProblemSpec(
+        "Service Unavailable",
+        503,
+        "Knowledge management is not configured",
+        "knowledge_not_configured",
+    ),
+    KnowledgeDocumentNotFoundError: ProblemSpec(
+        "Not Found", 404, "Knowledge document was not found", "knowledge_document_not_found"
+    ),
+    KnowledgeExternalIdConflictError: ProblemSpec(
+        "Conflict", 409, "Knowledge external ID is already in use", "knowledge_external_id_conflict"
+    ),
+    KnowledgeDocumentDeletedError: ProblemSpec(
+        "Conflict", 409, "Knowledge document is deleted", "knowledge_document_deleted"
+    ),
+    KnowledgeDocumentConsistencyError: ProblemSpec(
+        "Service Unavailable",
+        503,
+        "Knowledge document state is inconsistent",
+        "knowledge_document_inconsistent",
+    ),
+}
+
+EMBEDDING_PROBLEMS: dict[type[EmbeddingModelError], ProblemSpec] = {
+    EmbeddingConfigurationError: ProblemSpec(
+        "Service Unavailable", 503, "Embedding model is not configured", "embedding_not_configured"
+    ),
+    EmbeddingAuthenticationError: ProblemSpec(
+        "Bad Gateway", 502, "Embedding authentication failed", "embedding_authentication_failed"
+    ),
+    EmbeddingRateLimitError: ProblemSpec(
+        "Service Unavailable", 503, "Embedding rate limit reached", "embedding_rate_limited"
+    ),
+    EmbeddingTimeoutError: ProblemSpec(
+        "Gateway Timeout", 504, "Embedding request timed out", "embedding_timeout"
+    ),
+    EmbeddingUnavailableError: ProblemSpec(
+        "Service Unavailable", 503, "Embedding provider is unavailable", "embedding_unavailable"
+    ),
+    EmbeddingRequestError: ProblemSpec(
+        "Bad Gateway", 502, "Embedding provider rejected the request", "embedding_request_rejected"
+    ),
+    EmbeddingInvalidResponseError: ProblemSpec(
+        "Bad Gateway",
+        502,
+        "Embedding provider returned an invalid response",
+        "embedding_invalid_response",
+    ),
+}
+
+VECTOR_PROBLEMS: dict[type[VectorStoreError], ProblemSpec] = {
+    VectorStoreConfigurationError: ProblemSpec(
+        "Service Unavailable", 503, "Vector store is not configured", "vector_store_not_configured"
+    ),
+    VectorStoreUnavailableError: ProblemSpec(
+        "Service Unavailable", 503, "Vector store is unavailable", "vector_store_unavailable"
+    ),
+    VectorStoreInvalidResponseError: ProblemSpec(
+        "Bad Gateway",
+        502,
+        "Vector store returned an invalid response",
+        "vector_store_invalid_response",
     ),
 }
 
@@ -129,8 +213,27 @@ async def chat_model_error_handler(
     )
 
 
+async def dependency_error_handler(
+    request: Request,
+    error: KnowledgeError | EmbeddingModelError | VectorStoreError,
+) -> JSONResponse:
+    problems = {**KNOWLEDGE_PROBLEMS, **EMBEDDING_PROBLEMS, **VECTOR_PROBLEMS}
+    spec = problems[type(error)]
+    return problem_response(
+        MessageProblemDetail(
+            title=spec.title,
+            status=spec.status,
+            detail=spec.detail,
+            instance=request.url.path,
+            code=spec.code,
+        )
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ServiceNotReadyError, service_not_ready_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     for error_type in MODEL_PROBLEMS:
         app.add_exception_handler(error_type, chat_model_error_handler)
+    for error_type in (*KNOWLEDGE_PROBLEMS, *EMBEDDING_PROBLEMS, *VECTOR_PROBLEMS):
+        app.add_exception_handler(error_type, dependency_error_handler)
