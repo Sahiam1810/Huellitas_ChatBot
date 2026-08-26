@@ -136,6 +136,20 @@ El arranque no genera embeddings ni consume créditos. En cada mensaje no escala
 
 Esto es recuperación aumentada (`RAG`), no entrenamiento ni modificación de los pesos del modelo. Los documentos se fragmentan de forma determinista, se versionan y se administran sin exponer sus vectores. El borrado es lógico y una restauración siempre deja el documento inactivo hasta una activación explícita.
 
+## Idempotencia temporal de mensajes
+
+El agente coordina temporalmente los reintentos de `POST /api/v1/messages` mediante la identidad compuesta por `conversationId` e `idempotencyKey`. Está habilitada por defecto y se configura con:
+
+```dotenv
+HUELLITAS_IDEMPOTENCY_ENABLED="true"
+HUELLITAS_IDEMPOTENCY_TTL_SECONDS="86400"
+HUELLITAS_IDEMPOTENCY_MAX_ENTRIES="10000"
+```
+
+Una repetición con la misma identidad y el mismo contenido devuelve exactamente el cuerpo original sin volver a ejecutar el proveedor, la recuperación RAG ni las escrituras vectoriales. La respuesta inicial incluye `Idempotency-Replayed: false` y una repetición incluye `Idempotency-Replayed: true`. Reutilizar la identidad con contenido diferente devuelve `409 idempotency_key_conflict`; una nueva interacción debe usar una clave nueva.
+
+Este almacenamiento vive únicamente en la memoria del proceso: se pierde al reiniciar y no coordina réplicas. Es una protección local para el desarrollo actual, no la idempotencia durable de producción. Antes de desplegar varias réplicas deberá sustituirse el adaptador por coordinación persistente en .NET/Oracle o Redis sin cambiar el caso de uso. El enrutamiento semántico de RAG es otra capacidad y continúa pendiente.
+
 ## Endpoints disponibles
 
 | Método | Ruta | Propósito |
@@ -174,12 +188,24 @@ $body = @{
     publishAsGlobalKnowledge = $false
 } | ConvertTo-Json
 
-Invoke-RestMethod `
+$first = Invoke-WebRequest `
     -Method Post `
     -Uri "http://127.0.0.1:8000/api/v1/messages" `
     -ContentType "application/json" `
     -Body $body
+
+$replay = Invoke-WebRequest `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -ContentType "application/json" `
+    -Body $body
+
+$first.Headers["Idempotency-Replayed"]
+$replay.Headers["Idempotency-Replayed"]
+$first.Content -eq $replay.Content
 ```
+
+El resultado esperado es `false`, `true` y `True`. `correlationId` puede cambiar en un reintento técnico y no altera la identidad; los datos funcionales sí deben permanecer iguales.
 
 `publishAsGlobalKnowledge` es opcional y vale `false` por defecto. Con ese valor el intercambio solo se guarda en la memoria privada de la conversación. Usa `true` únicamente cuando el intercambio haya sido aprobado para convertirse también en conocimiento global; la aprobación aplica a una sola solicitud.
 

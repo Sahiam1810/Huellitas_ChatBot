@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. JWT, historial canónico, semántica de idempotencia, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint de mensajes también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. JWT, historial canónico, idempotencia durable y distribuida, RAG adaptativo, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -282,7 +282,7 @@ api/routers/
 `-- info.py
 ```
 
-- `chat.py`: actualmente expone `POST /api/v1/messages`, valida exclusivamente el transporte y delega al `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
+- `chat.py`: actualmente expone `POST /api/v1/messages`, valida exclusivamente el transporte y delega al contrato `MessageHandler`; la composición aplica idempotencia antes del `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
 - `conversations.py`: contexto permitido y estado técnico requerido para coordinar una conversación.
 - `internal.py`: indexación, sincronización y preparación opcional de contenido interno.
 - `health.py`: expone `GET /health/live` y `GET /health/ready` fuera de la API de negocio versionada.
@@ -337,7 +337,9 @@ El token nunca se entrega al modelo, prompts o Qdrant, y debe redactarse de logs
 
 ```text
 orchestration/
+|-- message_handler.py
 |-- message_processor.py
+|-- idempotent_message_processor.py
 |-- main_graph.py
 |-- state.py
 |-- intent_router.py
@@ -356,7 +358,7 @@ orchestration/
     `-- safety_policy.py
 ```
 
-`message_processor.py` es el corte vertical previo a los módulos disponible actualmente. Recibe un comando neutral, interrumpe la generación si la conversación está escalada y, en caso contrario, solicita una respuesta al puerto `ChatModel`. No contiene reglas veterinarias, persistencia ni selección de módulos.
+`message_handler.py` define la frontera neutral consumida por HTTP. `idempotent_message_processor.py` la decora y coordina reintentos mediante el puerto `IdempotencyStore`; `message_processor.py` conserva el corte vertical previo a los módulos. Este último interrumpe la generación si la conversación está escalada y, en caso contrario, coordina RAG y solicita una respuesta al puerto `ChatModel`. Ninguno conoce FastAPI, SDKs ni nombres físicos de almacenamiento.
 
 `module_manifest.py` y `module_registry.py` forman el plano de descubrimiento implementado. El manifiesto declara identidad y capacidades inmutables; el registro permite consultar por identificador o intención y rechaza conflictos antes de modificar sus índices. Todavía no conserva ejecutores ni participa en el flujo HTTP.
 
@@ -592,6 +594,7 @@ La conexión Qdrant implementada cumple estas reglas:
 - Solo el chunk cero vigente representa el documento durante la administración; todos los chunks vigentes y activos participan en RAG.
 - La restauración siempre establece `active=false`; la reactivación requiere una solicitud de estado separada.
 - La exclusión de escrituras y la unicidad de `externalId` son locales al proceso. Un despliegue con varias réplicas requerirá coordinación distribuida.
+- La idempotencia de mensajes depende de un puerto neutral y actualmente usa un adaptador en memoria; Qdrant no se utiliza como almacén de idempotencia.
 
 ---
 
@@ -711,6 +714,14 @@ Solo .NET reactiva la IA. La solicitud posterior incluye el nuevo estado y el co
 
 # 16. Confirmaciones e idempotencia
 
+## Reintentos del endpoint de mensajes
+
+La implementación actual utiliza `(conversationId, idempotencyKey)` como identidad. La primera solicitud es propietaria de la ejecución; las repeticiones simultáneas con el mismo contenido esperan su resultado y las posteriores reproducen exactamente el cuerpo completado sin repetir modelo, RAG ni escrituras. `correlationId` se excluye de la huella para permitir un nuevo identificador técnico durante el reintento. Reutilizar la misma identidad con datos funcionales diferentes devuelve `409 idempotency_key_conflict`.
+
+El adaptador actual vive en memoria, aplica TTL y capacidad acotada y elimina la entrada si la ejecución propietaria falla para permitir un reintento real. Su estado desaparece al reiniciar y no se comparte entre réplicas. La idempotencia durable de operaciones y mensajes seguirá perteneciendo a .NET/Oracle o a una infraestructura distribuida como Redis; la frontera `IdempotencyStore` permite sustituir el adaptador sin acoplar el flujo conversacional.
+
+La similitud vectorial no define idempotencia. El Query Routing o RAG adaptativo se diseñará como un incremento independiente para decidir cuándo reutilizar una respuesta de alta confianza, recuperar contexto o recurrir al modelo general.
+
 Las operaciones con efectos siguen este flujo:
 
 ```text
@@ -744,7 +755,7 @@ Si cambian los datos relevantes, la confirmación se invalida. El agente nunca a
 
 # 17. Fallbacks y resiliencia
 
-El endpoint implementado devuelve Problem Details seguros: `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Un fallo neutral de embeddings, recuperación o persistencia RAG produce estado `degraded`: el chat continúa sin el contexto no disponible o conserva la respuesta ya generada. Un fallo del modelo mantiene el Problem Details correspondiente y no guarda memoria.
+El endpoint implementado devuelve Problem Details seguros: `409` cuando una clave idempotente se reutiliza con contenido diferente, `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso, capacidad idempotente agotada o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Un fallo neutral de embeddings, recuperación o persistencia RAG produce estado `degraded`: el chat continúa sin el contexto no disponible o conserva la respuesta ya generada. Un fallo del modelo mantiene el Problem Details correspondiente y no guarda memoria.
 
 ## Categorías
 
