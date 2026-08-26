@@ -4,6 +4,8 @@
 
 Aprobado el 26 de agosto de 2026.
 
+Este documento conserva el alcance histórico del incremento de mensajes. La administración documental fue implementada posteriormente según `2026-08-26-rag-knowledge-documents-design.md`, sin exponer endpoints técnicos de vectores.
+
 ## Objetivo
 
 Conectar temporalmente `POST /api/v1/messages` con el proveedor neutral de embeddings y las dos capacidades semánticas existentes en Qdrant: conocimiento global y memoria privada por conversación. Este incremento debe producir una rebanada vertical comprobable sin incorporar todavía administración de documentos, JWT, Oracle, Redis ni módulos veterinarios especializados.
@@ -144,4 +146,4 @@ Estas opciones solo afectan a la orquestación. Los nombres de colecciones y dim
 
 ## Entrega
 
-La rama será `feature/rag-messages-integration`. Los cambios se dividirán en commits Conventional Commit pequeños: contratos/configuración, recuperación, persistencia, composición, API/documentación y verificación. La administración de documentos se abordará después en una rama independiente.
+La rama será `feature/rag-messages-integration`. Los cambios se dividirán en commits Conventional Commit pequeños: contratos/configuración, recuperación, persistencia, composición, API/documentación y verificación. La administración documental se incorporó como un incremento posterior y mantiene límites propios en su documento de diseño.

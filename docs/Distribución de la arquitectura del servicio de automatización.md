@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. JWT, historial canónico, semántica de idempotencia, ejecución y routing de módulos veterinarios, administración de documentos globales, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances, construye contexto acotado, guarda el intercambio dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. JWT, historial canónico, semántica de idempotencia, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -575,7 +575,7 @@ La base de embeddings implementada cumple estas reglas:
 La conexión Qdrant implementada cumple estas reglas:
 
 - `VectorStore` contiene disponibilidad, creación o validación de colecciones y cierre.
-- `GlobalKnowledgeStore` expone upsert, búsqueda filtrada, listado por cursor y actualización de estado documental sin tipos del SDK.
+- `GlobalKnowledgeStore` expone upsert, búsqueda filtrada, snapshots documentales, listado por cursor y actualización de estado limitada a una versión exacta, sin tipos del SDK.
 - `ConversationMemoryStore` expone escritura y búsqueda con filtro obligatorio por `conversationId`.
 - `QdrantVectorStore` encapsula `AsyncQdrantClient`; el SDK no sale de `adapters/vector_store`.
 - `vector_store_factory.py` crea el adaptador únicamente cuando la capacidad está habilitada.
@@ -587,7 +587,11 @@ La conexión Qdrant implementada cumple estas reglas:
 - `MessageProcessor` usa colaboradores de orquestación separados para recuperar contexto y persistir intercambios; no conoce el SDK ni los nombres físicos de las colecciones.
 - La memoria se consulta con filtro exacto por `conversationId` y cada intercambio generado por IA se intenta guardar de forma privada.
 - La publicación `approved_exchange` requiere `publishAsGlobalKnowledge=true` en esa solicitud y nunca ocurre para una conversación escalada.
-- Los endpoints administrativos de conocimiento global permanecen pendientes.
+- La API administrativa registra, lista, consulta, reemplaza, activa o desactiva, elimina lógicamente y restaura documentos globales.
+- El servicio de aplicación conserva `documentId` y `externalId`, crea versiones `N+1`, fragmenta con límites configurables y genera embeddings en lote detrás del puerto neutral.
+- Solo el chunk cero vigente representa el documento durante la administración; todos los chunks vigentes y activos participan en RAG.
+- La restauración siempre establece `active=false`; la reactivación requiere una solicitud de estado separada.
+- La exclusión de escrituras y la unicidad de `externalId` son locales al proceso. Un despliegue con varias réplicas requerirá coordinación distribuida.
 
 ---
 
@@ -929,8 +933,6 @@ El incremento actual no implementa:
 - `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
-- Fragmentación e indexación de documentos mediante servicios de aplicación.
-- Endpoints administrativos de conocimiento global.
 - Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
