@@ -8,6 +8,7 @@ from app.orchestration.rag_contracts import (
     RagStatus,
     RagWriteResult,
     RetrievedRagContext,
+    SemanticRoute,
 )
 from app.ports.chat_model import (
     ChatMessage,
@@ -76,10 +77,19 @@ class MessageProcessor:
                 rag=RagMessageResult.skipped(),
             )
 
+        retrieved = await self._retrieve_context(command)
+        if retrieved.route is SemanticRoute.DIRECT and retrieved.direct_answer is not None:
+            return MessageResult(
+                message=retrieved.direct_answer,
+                conversation_id=command.conversation_id,
+                correlation_id=command.correlation_id,
+                response_type=MessageResponseType.RETRIEVED,
+                rag=self._build_rag_result(retrieved, RagWriteResult()),
+            )
+
         if self._chat_model is None:
             raise ModelConfigurationError("Chat model is not configured")
 
-        retrieved = await self._retrieve_context(command)
         messages = [ChatMessage(role=ChatRole.USER, content=command.message)]
         if retrieved.prompt_context is not None:
             messages.insert(
@@ -115,10 +125,20 @@ class MessageProcessor:
 
     async def _retrieve_context(self, command: MessageCommand) -> RetrievedRagContext:
         if not self._rag_enabled:
-            return RetrievedRagContext(status=RagStatus.DISABLED)
+            return RetrievedRagContext(
+                status=RagStatus.DISABLED,
+                route=SemanticRoute.DISABLED,
+            )
         if self._context_retriever is None or self._memory_writer is None:
-            return RetrievedRagContext(status=RagStatus.DEGRADED)
-        return await self._context_retriever.retrieve(command.message, command.conversation_id)
+            return RetrievedRagContext(
+                status=RagStatus.DEGRADED,
+                route=SemanticRoute.DEGRADED,
+            )
+        return await self._context_retriever.retrieve(
+            command.message,
+            command.conversation_id,
+            allow_direct=not command.publish_as_global_knowledge,
+        )
 
     async def _store_exchange(
         self,
@@ -142,10 +162,13 @@ class MessageProcessor:
         write_result: RagWriteResult,
     ) -> RagMessageResult:
         status = RagStatus.DEGRADED if write_result.degraded else retrieved.status
+        route = SemanticRoute.DEGRADED if write_result.degraded else retrieved.route
         return RagMessageResult(
             status=status,
             global_matches=retrieved.global_matches,
             conversation_matches=retrieved.conversation_matches,
             memory_stored=write_result.memory_stored,
             knowledge_published=write_result.knowledge_published,
+            route=route,
+            top_score=retrieved.top_score,
         )
