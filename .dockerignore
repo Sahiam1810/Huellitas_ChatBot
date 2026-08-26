@@ -1,0 +1,32 @@
+# Version control and editors
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+
+# Secrets and local environment
+.env
+.env.*
+
+# Python environments and generated files
+.venv
+.cache
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+
+# Tests and local reports are not runtime inputs
+tests
+htmlcov
+.coverage
+.pytest_cache
+.ruff_cache
+
+# Planning documents and local operating-system files
+docs
+Thumbs.db
+.DS_Store
