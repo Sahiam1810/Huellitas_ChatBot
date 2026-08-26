@@ -376,3 +376,13 @@ def test_enabled_embeddings_require_key_model_and_dimensions(values: dict[str, o
 def test_embeddings_reject_invalid_limits(field: str, value: int) -> None:
     with pytest.raises(ValidationError):
         Settings(**{field: value}, _env_file=None)
+
+
+def test_empty_optional_embedding_environment_values_are_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_EMBEDDING_DIMENSIONS", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_dimensions is None
