@@ -34,6 +34,12 @@ PROVIDER_ENV_KEYS = (
     "HUELLITAS_GEMINI_TIMEOUT_SECONDS",
 )
 
+IDEMPOTENCY_ENV_KEYS = (
+    "HUELLITAS_IDEMPOTENCY_ENABLED",
+    "HUELLITAS_IDEMPOTENCY_TTL_SECONDS",
+    "HUELLITAS_IDEMPOTENCY_MAX_ENTRIES",
+)
+
 VECTOR_STORE_ENV_KEYS = (
     "HUELLITAS_VECTOR_STORE_ENABLED",
     "HUELLITAS_QDRANT_URL",
@@ -73,6 +79,7 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
     for key in (
         *HUELLITAS_ENV_KEYS,
         *PROVIDER_ENV_KEYS,
+        *IDEMPOTENCY_ENV_KEYS,
         *VECTOR_STORE_ENV_KEYS,
         *EMBEDDING_ENV_KEYS,
         *RAG_ENV_KEYS,
@@ -268,6 +275,48 @@ def test_chat_output_limit_uses_safe_default() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.chat_max_output_tokens == 1024
+
+
+def test_idempotency_uses_bounded_defaults() -> None:
+    configuration = Settings(_env_file=None).active_idempotency_configuration()
+
+    assert configuration is not None
+    assert configuration.ttl_seconds == 86400
+    assert configuration.max_entries == 10000
+
+
+def test_idempotency_configuration_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_IDEMPOTENCY_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_IDEMPOTENCY_TTL_SECONDS", "3600")
+    monkeypatch.setenv("HUELLITAS_IDEMPOTENCY_MAX_ENTRIES", "250")
+
+    configuration = Settings(_env_file=None).active_idempotency_configuration()
+
+    assert configuration is not None
+    assert configuration.ttl_seconds == 3600
+    assert configuration.max_entries == 250
+
+
+def test_disabled_idempotency_has_no_active_configuration() -> None:
+    settings = Settings(idempotency_enabled=False, _env_file=None)
+
+    assert settings.active_idempotency_configuration() is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("idempotency_ttl_seconds", 0),
+        ("idempotency_ttl_seconds", 604801),
+        ("idempotency_max_entries", 0),
+        ("idempotency_max_entries", 1000001),
+    ],
+)
+def test_idempotency_configuration_rejects_values_outside_bounds(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
 
 
 def test_chat_output_limit_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:

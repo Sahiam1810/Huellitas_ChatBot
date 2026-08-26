@@ -117,7 +117,7 @@ Campos:
 - `roles`: roles autorizados informados por .NET; puede ser una lista vacía.
 - `isEscalated`: estado canónico de escalamiento informado en cada solicitud.
 - `correlationId`: UUID para correlación técnica.
-- `idempotencyKey`: clave obligatoria y no vacía; se transporta, pero todavía no se ejecuta una política de idempotencia.
+- `idempotencyKey`: clave obligatoria y no vacía. En el incremento fundacional solo se transportaba; posteriormente se implementó una política local que la combina con `conversationId` para coordinar reintentos dentro del proceso.
 
 Los campos desconocidos serán rechazados. Ningún identificador, rol, canal o clave de idempotencia se incluirá automáticamente en el prompt.
 
@@ -242,7 +242,7 @@ Todos los clientes de modelos serán falsos o simulados. Las pruebas automatizad
 - Validación JWT y autorización HTTP.
 - Historial conversacional o persistencia.
 - Consulta de datos a .NET.
-- Idempotencia ejecutable y bloqueo por conversación.
+- Idempotencia durable o distribuida y bloqueo general por conversación. La idempotencia local de mensajes se incorporó en un incremento posterior.
 - LangGraph y routing de intenciones.
 - Módulos veterinarios y prompts de módulo.
 - Fallback conversacional y escalamiento solicitado por IA.

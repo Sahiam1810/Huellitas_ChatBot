@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.api.dependencies import get_message_processor
 from app.api.schemas.requests import MessageRequest
@@ -10,7 +10,8 @@ from app.api.schemas.responses import (
     RagResponse,
     TokenUsageResponse,
 )
-from app.orchestration.message_processor import MessageCommand, MessageProcessor
+from app.orchestration.message_handler import MessageHandler
+from app.orchestration.message_processor import MessageCommand
 
 router = APIRouter(tags=["Messages"])
 
@@ -19,6 +20,21 @@ router = APIRouter(tags=["Messages"])
     "/messages",
     response_model=MessageResponse,
     responses={
+        200: {
+            "description": "Message processed successfully.",
+            "headers": {
+                "Idempotency-Replayed": {
+                    "description": (
+                        "Whether the response was replayed from the idempotency store."
+                    ),
+                    "schema": {"type": "string"},
+                }
+            },
+        },
+        409: {
+            "model": MessageProblemDetail,
+            "description": "The idempotency key was reused with another request.",
+        },
         422: {"model": MessageProblemDetail, "description": "Invalid message envelope."},
         502: {
             "model": MessageProblemDetail,
@@ -37,7 +53,8 @@ router = APIRouter(tags=["Messages"])
 )
 async def create_message(
     payload: MessageRequest,
-    processor: Annotated[MessageProcessor, Depends(get_message_processor)],
+    response: Response,
+    processor: Annotated[MessageHandler, Depends(get_message_processor)],
 ) -> MessageResponse:
     result = await processor.process(
         MessageCommand(
@@ -60,6 +77,7 @@ async def create_message(
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
         )
+    response.headers["Idempotency-Replayed"] = str(result.idempotency_replayed).lower()
     return MessageResponse(
         message=result.message,
         conversation_id=result.conversation_id,

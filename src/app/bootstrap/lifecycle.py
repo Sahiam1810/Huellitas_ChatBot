@@ -6,6 +6,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from fastapi import FastAPI
 
 from app.adapters.embeddings.embedding_factory import create_embedding_model
+from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
@@ -15,6 +16,7 @@ from app.knowledge.management_service import KnowledgeManagementService
 from app.observability.logging import configure_logging
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
+from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.message_processor import MessageProcessor
 from app.ports.vector_store import VectorCollectionDefinition, VectorStore
 from app.shared.exceptions import VectorStoreError, VectorStoreUnavailableError
@@ -115,13 +117,26 @@ def build_lifespan(
                     ),
                     DocumentWriteLock(),
                 )
-            app.state.dependencies.message_processor = MessageProcessor(
+            message_processor = MessageProcessor(
                 chat_model=chat_model,
                 max_output_tokens=settings.chat_max_output_tokens,
                 rag_enabled=settings.rag_enabled,
                 context_retriever=context_retriever,
                 memory_writer=memory_writer,
             )
+            idempotency_configuration = settings.active_idempotency_configuration()
+            if idempotency_configuration is not None:
+                idempotency_store = InMemoryIdempotencyStore(
+                    ttl_seconds=idempotency_configuration.ttl_seconds,
+                    max_entries=idempotency_configuration.max_entries,
+                )
+                app.state.dependencies.idempotency_store = idempotency_store
+                app.state.dependencies.message_processor = IdempotentMessageProcessor(
+                    message_processor,
+                    idempotency_store,
+                )
+            else:
+                app.state.dependencies.message_processor = message_processor
             app.state.ready = True
             logger.info(
                 "application_started name=%s version=%s environment=%s",
@@ -133,6 +148,8 @@ def build_lifespan(
         finally:
             app.state.ready = False
             app.state.dependencies.message_processor = None
+            idempotency_store = app.state.dependencies.idempotency_store
+            app.state.dependencies.idempotency_store = None
             app.state.dependencies.knowledge_management_service = None
             app.state.dependencies.global_knowledge_store = None
             app.state.dependencies.conversation_memory_store = None
@@ -143,17 +160,21 @@ def build_lifespan(
             vector_store = app.state.dependencies.vector_store
             app.state.dependencies.vector_store = None
             try:
-                if chat_model is not None:
-                    await chat_model.close()
+                if idempotency_store is not None:
+                    await idempotency_store.close()
             finally:
                 try:
-                    if embedding_model is not None:
-                        await embedding_model.close()
+                    if chat_model is not None:
+                        await chat_model.close()
                 finally:
                     try:
-                        if vector_store is not None:
-                            await vector_store.close()
+                        if embedding_model is not None:
+                            await embedding_model.close()
                     finally:
-                        logger.info("application_stopped name=%s", settings.app_name)
+                        try:
+                            if vector_store is not None:
+                                await vector_store.close()
+                        finally:
+                            logger.info("application_stopped name=%s", settings.app_name)
 
     return lifespan

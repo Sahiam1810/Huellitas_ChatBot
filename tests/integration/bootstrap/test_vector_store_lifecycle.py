@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call
 
@@ -7,6 +8,8 @@ from fastapi.testclient import TestClient
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
+from app.orchestration.message_processor import MessageProcessor
 from app.ports.chat_model import ChatResponse, ModelProvider
 from app.ports.embedding_model import (
     EmbeddingProvider,
@@ -14,6 +17,7 @@ from app.ports.embedding_model import (
     EmbeddingUsage,
     EmbeddingVector,
 )
+from app.ports.idempotency_store import IdempotencyIdentity, IdempotencyRequest
 from app.ports.vector_store import VectorCollectionDefinition, VectorDistance
 from app.shared.exceptions import (
     VectorStoreConfigurationError,
@@ -253,3 +257,37 @@ def test_disabled_rag_does_not_provision_collections(
         assert app.state.dependencies.knowledge_management_service is None
 
     store.ensure_collection.assert_not_awaited()
+
+
+def test_lifespan_composes_and_closes_in_memory_idempotency() -> None:
+    app = create_application(Settings(environment="test", _env_file=None))
+
+    with TestClient(app):
+        handler = app.state.dependencies.message_processor
+        store = app.state.dependencies.idempotency_store
+        assert isinstance(handler, IdempotentMessageProcessor)
+        assert store is not None
+
+    assert app.state.dependencies.idempotency_store is None
+    assert store is not None
+    with pytest.raises(RuntimeError, match="closed"):
+        asyncio.run(
+            store.execute(
+                IdempotencyRequest(IdempotencyIdentity("conversation", "message"), "fingerprint"),
+                _idempotency_value,
+            )
+        )
+
+
+def test_disabled_idempotency_exposes_base_message_processor() -> None:
+    app = create_application(
+        Settings(environment="test", idempotency_enabled=False, _env_file=None)
+    )
+
+    with TestClient(app):
+        assert isinstance(app.state.dependencies.message_processor, MessageProcessor)
+        assert app.state.dependencies.idempotency_store is None
+
+
+async def _idempotency_value() -> str:
+    return "value"

@@ -1,11 +1,11 @@
 from fastapi import Request
 
 from app.knowledge.management_service import KnowledgeManagementService
-from app.orchestration.message_processor import MessageProcessor
+from app.orchestration.message_handler import MessageHandler
 from app.shared.exceptions import KnowledgeNotConfiguredError, ServiceNotReadyError
 
 
-def get_message_processor(request: Request) -> MessageProcessor:
+def get_message_processor(request: Request) -> MessageHandler:
     processor = request.app.state.dependencies.message_processor
     if processor is None:
         raise ServiceNotReadyError

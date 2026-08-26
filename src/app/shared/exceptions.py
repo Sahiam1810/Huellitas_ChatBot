@@ -104,3 +104,15 @@ class KnowledgeDocumentDeletedError(KnowledgeError):
 
 class KnowledgeDocumentConsistencyError(KnowledgeError):
     pass
+
+
+class IdempotencyError(RuntimeError):
+    """Base error for provider-neutral idempotency failures."""
+
+
+class IdempotencyKeyConflictError(IdempotencyError):
+    pass
+
+
+class IdempotencyCapacityExceededError(IdempotencyError):
+    pass
