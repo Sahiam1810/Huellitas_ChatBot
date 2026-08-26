@@ -19,4 +19,8 @@ def create_vector_store(settings: Settings) -> VectorStore | None:
         timeout=configuration.timeout_seconds,
         prefer_grpc=False,
     )
-    return QdrantVectorStore(client)
+    return QdrantVectorStore(
+        client,
+        settings.qdrant_global_knowledge_collection.strip(),
+        settings.qdrant_conversation_memory_collection.strip(),
+    )

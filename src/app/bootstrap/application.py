@@ -25,6 +25,7 @@ def create_application(settings: Settings | None = None) -> FastAPI:
     )
     app.state.dependencies = ApplicationDependencies(module_registry=build_module_registry())
     app.state.ready = False
+    app.state.rag_collections_ready = not resolved_settings.rag_enabled
     app.state.settings = resolved_settings
     register_exception_handlers(app)
     app.include_router(health.router)

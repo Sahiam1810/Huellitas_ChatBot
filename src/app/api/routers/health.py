@@ -27,7 +27,7 @@ async def live() -> HealthResponse:
     summary="Check whether the application is ready",
 )
 async def ready(request: Request) -> HealthResponse:
-    if not request.app.state.ready:
+    if not request.app.state.ready or not request.app.state.rag_collections_ready:
         raise ServiceNotReadyError
 
     vector_store = request.app.state.dependencies.vector_store
