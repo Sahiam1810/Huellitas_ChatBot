@@ -1,0 +1,48 @@
+name: huellitas-chatbot
+
+services:
+  agent-api:
+    image: huellitas-chatbot:local
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      HUELLITAS_HOST: "0.0.0.0"
+      HUELLITAS_PORT: "8000"
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    networks:
+      - automation
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - automation
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+          grep -q "200 OK" <&3'
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+networks:
+  automation:
+    driver: bridge
+
+volumes:
+  qdrant_storage:
