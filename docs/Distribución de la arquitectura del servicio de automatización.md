@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable y un `ModuleRegistry` vacío. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, LangGraph, RAG, Qdrant, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, `POST /api/v1/messages`, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío y el runtime local de Docker Compose con Qdrant persistente. El flujo de mensajes invoca el proveedor activo o evita la IA cuando `isEscalated` indica control humano. JWT, historial, semántica de idempotencia, ejecución y routing de módulos veterinarios, integración Python con Qdrant, embeddings, colecciones, indexación, recuperación, RAG, Redis y comunicación con .NET todavía no están implementados.
 
 ---
 
@@ -164,6 +164,10 @@ Qdrant no es fuente de:
 - Datos personales.
 - Estado de escalamiento.
 
+El entorno de desarrollo ejecuta `qdrant/qdrant:v1.18.2` mediante Docker Compose. Los puertos REST y gRPC se publican únicamente en localhost y `/qdrant/storage` utiliza un volumen nombrado persistente para evitar acoplar el almacenamiento al sistema de archivos de Windows.
+
+La disponibilidad del contenedor no implica integración RAG. FastAPI todavía no crea un cliente Qdrant, no incorpora su estado a readiness y no administra colecciones ni vectores.
+
 ## Redis
 
 Redis se utiliza únicamente para:
@@ -183,6 +187,9 @@ Los datos de Redis deben ser expirables y reconstruibles. No sustituyen el histo
 ```text
 Huellitas_ChatBot/
 |-- README.md
+|-- Dockerfile
+|-- compose.yaml
+|-- .dockerignore
 |-- pyproject.toml
 |-- .env.example
 |-- docs/
@@ -253,6 +260,8 @@ Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrar
 ## `bootstrap/lifecycle.py`
 
 Coordina inicialización, readiness y cierre ordenado. Actualmente construye el modelo seleccionado y el `MessageProcessor`, sin invocar al proveedor durante el arranque, y libera ambas dependencias durante el shutdown.
+
+El contenedor Qdrant permanece fuera de este lifecycle hasta que exista un adaptador Python aprobado; su healthcheck de Compose no modifica `/health/ready`.
 
 ## `bootstrap/settings.py`
 
@@ -834,6 +843,8 @@ Se validan los adaptadores de .NET, Qdrant, Redis y proveedores de modelos con e
 
 En la base multiproveedor y el endpoint de mensajes actuales, todas las pruebas de modelos utilizan clientes simulados: no realizan llamadas de red ni consumen créditos. Las pruebas en vivo requerirán una fase y una autorización separadas.
 
+La base Docker se valida construyendo la imagen real, comprobando el UID no privilegiado del agente, iniciando FastAPI y Qdrant hasta estado saludable, consultando ambos endpoints de salud y verificando la red y el volumen persistente. Detener la prueba no elimina el volumen de Qdrant.
+
 ## Pruebas end-to-end
 
 Casos mínimos:
@@ -876,7 +887,7 @@ El incremento actual no implementa:
 - Esquemas HTTP finales de .NET.
 - Contenido veterinario definitivo.
 - Prompts clínicos o conversacionales.
-- Infraestructura de despliegue.
+- Infraestructura productiva de despliegue, secretos, TLS, backups, monitoreo y alta disponibilidad.
 - Integraciones directas con canales externos.
 - Tablas o migraciones de Oracle Database 26ai.
 - Validación JWT.
@@ -886,7 +897,8 @@ El incremento actual no implementa:
 - `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
 - LangGraph y subgrafos ejecutables.
-- RAG, embeddings, Qdrant o Redis.
+- Cliente Python de Qdrant, colecciones, indexación, recuperación y RAG.
+- Embeddings y Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
 La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.

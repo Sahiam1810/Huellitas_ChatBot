@@ -33,6 +33,33 @@ uv run --env-file .env python -m app
 
 El host y el puerto se leen desde `HUELLITAS_HOST` y `HUELLITAS_PORT`.
 
+## Ejecución con Docker
+
+Docker Compose ejecuta FastAPI y una instancia local persistente de Qdrant:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --detach --build --wait
+docker compose ps
+```
+
+Servicios locales:
+
+- FastAPI y Swagger: `http://127.0.0.1:8000/docs`.
+- Qdrant REST: `http://127.0.0.1:6333`.
+- Qdrant dashboard: `http://127.0.0.1:6333/dashboard`.
+- Qdrant gRPC: `127.0.0.1:6334`.
+
+Para detenerlos sin eliminar los vectores:
+
+```powershell
+docker compose down
+```
+
+El volumen `huellitas-chatbot_qdrant_storage` conserva los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente el almacenamiento local de Qdrant.
+
+En esta fase Qdrant está disponible en Docker, pero Python todavía no se conecta a él: no existen colecciones, embeddings, indexación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+
 ## Proveedor de IA
 
 La capacidad de modelos está deshabilitada por defecto. Para habilitarla, configura:
@@ -106,3 +133,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de la base FastAPI](docs/plans/2026-08-25-fastapi-foundation-design.md)
 - [Diseño de la base multiproveedor](docs/plans/2026-08-25-multi-provider-model-foundation-design.md)
 - [Diseño de la base del registro modular](docs/plans/2026-08-25-module-registry-foundation-design.md)
+- [Diseño de la base Docker](docs/plans/2026-08-26-docker-runtime-foundation-design.md)
