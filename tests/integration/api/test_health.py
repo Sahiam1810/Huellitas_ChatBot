@@ -1,8 +1,14 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.shared.exceptions import VectorStoreUnavailableError
 
 
 def build_test_app() -> FastAPI:
@@ -47,3 +53,44 @@ def test_readiness_reports_problem_when_lifespan_has_not_started() -> None:
         "detail": "Application is not ready",
         "instance": "/health/ready",
     }
+
+
+def test_readiness_recovers_after_vector_store_becomes_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimpleNamespace(
+        check_health=AsyncMock(
+            side_effect=[
+                VectorStoreUnavailableError("hidden sdk detail"),
+                VectorStoreUnavailableError("hidden sdk detail"),
+                None,
+            ]
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(
+        Settings(
+            environment="test",
+            vector_store_enabled=True,
+            qdrant_startup_max_attempts=1,
+            qdrant_startup_retry_delay_seconds=0,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        degraded = client.get("/health/ready")
+        recovered = client.get("/health/ready")
+
+    assert degraded.status_code == 503
+    assert degraded.json() == {
+        "type": "about:blank",
+        "title": "Service Unavailable",
+        "status": 503,
+        "detail": "Application is not ready",
+        "instance": "/health/ready",
+    }
+    assert "hidden sdk detail" not in degraded.text
+    assert recovered.status_code == 200
+    assert recovered.json() == {"status": "ready"}
