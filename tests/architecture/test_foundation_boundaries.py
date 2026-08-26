@@ -14,7 +14,10 @@ FORBIDDEN_FOUNDATION_IMPORTS = {
     "redis",
 }
 SDK_IMPORTS = {"google", "openai"}
-MODEL_ADAPTERS_ROOT = Path("src/app/adapters/models")
+PROVIDER_ADAPTER_ROOTS = (
+    Path("src/app/adapters/models"),
+    Path("src/app/adapters/embeddings"),
+)
 VECTOR_STORE_ADAPTERS_ROOT = Path("src/app/adapters/vector_store")
 
 
@@ -70,11 +73,11 @@ def test_api_layer_does_not_read_environment_directly() -> None:
     assert "os" not in imported
 
 
-def test_provider_sdks_are_isolated_to_model_adapters() -> None:
+def test_provider_sdks_are_isolated_to_provider_adapters() -> None:
     violations: dict[str, list[str]] = {}
     for path in Path("src/app").rglob("*.py"):
         sdk_imports = imported_roots(path) & SDK_IMPORTS
-        if sdk_imports and not path.is_relative_to(MODEL_ADAPTERS_ROOT):
+        if sdk_imports and not any(path.is_relative_to(root) for root in PROVIDER_ADAPTER_ROOTS):
             violations[str(path)] = sorted(sdk_imports)
 
     assert violations == {}

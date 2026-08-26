@@ -59,15 +59,19 @@ def test_model_close_failure_still_closes_vector_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chat_model = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("close failed")))
+    embedding_model = SimpleNamespace(close=AsyncMock())
     store = SimpleNamespace(check_health=AsyncMock(), close=AsyncMock())
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: chat_model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding_model)
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
     app = create_application(vector_settings())
 
     with pytest.raises(RuntimeError, match="close failed"), TestClient(app):
         pass
 
+    embedding_model.close.assert_awaited_once_with()
     store.close.assert_awaited_once_with()
     assert app.state.dependencies.chat_model is None
+    assert app.state.dependencies.embedding_model is None
     assert app.state.dependencies.vector_store is None
     assert app.state.ready is False
