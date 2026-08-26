@@ -126,6 +126,19 @@ def test_api_layer_does_not_import_concrete_adapters() -> None:
     assert violations == {}
 
 
+def test_orchestration_depends_on_ports_not_provider_or_storage_adapters() -> None:
+    forbidden_prefixes = ("app.adapters", "openai", "qdrant_client")
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app/orchestration").rglob("*.py"):
+        forbidden = sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            violations[str(path)] = forbidden
+
+    assert violations == {}
+
+
 def test_provider_secret_is_absent_from_http_metadata() -> None:
     secret = "must-never-be-exposed"
     app = create_application(

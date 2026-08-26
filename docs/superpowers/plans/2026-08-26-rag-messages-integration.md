@@ -58,7 +58,11 @@ from app.orchestration.rag_contracts import RagMessageResult, RagStatus
 
 def test_rag_status_values_are_stable() -> None:
     assert [status.value for status in RagStatus] == [
-        "disabled", "skipped", "empty", "used", "degraded"
+        "disabled",
+        "skipped",
+        "empty",
+        "used",
+        "degraded",
     ]
 
 

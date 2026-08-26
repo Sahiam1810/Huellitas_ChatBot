@@ -2,7 +2,7 @@
 
 Monolito modular de automatización conversacional para una plataforma veterinaria.
 
-El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutrales para modelos conversacionales, embeddings y almacenamiento RAG, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles para conversación; OpenAI directo está disponible como primer proveedor de embeddings. Qdrant puede preparar colecciones separadas para conocimiento global y memoria conversacional. El procesador actual todavía no recupera ni almacena contexto: envía el mensaje al proveedor conversacional activo o conserva el control humano cuando .NET informa que la conversación está escalada.
+El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutrales para modelos conversacionales, embeddings y almacenamiento RAG, un endpoint inicial de mensajes y un registro modular vacío con manifiestos inmutables. OpenRouter, OpenAI directo y Gemini directo están disponibles para conversación; OpenAI directo está disponible como primer proveedor de embeddings. Qdrant mantiene colecciones separadas para conocimiento global y memoria conversacional. El procesador recupera ambos alcances, guarda cada respuesta válida de IA dentro de su `conversationId` y solo publica globalmente cuando la solicitud lo autoriza de forma explícita. Cuando .NET informa que la conversación está escalada no se invocan modelos, embeddings ni Qdrant.
 
 ## Responsabilidades
 
@@ -106,7 +106,7 @@ HUELLITAS_EMBEDDING_DIMENSIONS=""
 
 Al habilitarla son obligatorios una API key exclusiva, el modelo y sus dimensiones. La credencial no reutiliza `HUELLITAS_OPENAI_API_KEY`: esto permite cambiar el proveedor conversacional sin afectar la futura indexación. El timeout y el límite de lote se controlan con `HUELLITAS_EMBEDDING_TIMEOUT_SECONDS` y `HUELLITAS_EMBEDDING_MAX_BATCH_SIZE`.
 
-El arranque solo construye y registra el adaptador detrás de `EmbeddingModel`; no solicita vectores, no consume créditos y no altera readiness. Las operaciones `embed_query` y `embed_documents` quedan disponibles para futuros servicios de indexación y recuperación, no como endpoints HTTP. Los reintentos automáticos del SDK están deshabilitados y sus errores se traducen a categorías neutrales.
+El arranque solo construye y registra el adaptador detrás de `EmbeddingModel`; no solicita vectores ni consume créditos. Con RAG habilitado, `POST /api/v1/messages` utiliza `embed_query`; `embed_documents` queda reservado para la administración posterior de documentos. Ninguna operación de embeddings se expone directamente como endpoint HTTP. Los reintentos automáticos del SDK están deshabilitados y sus errores se traducen a categorías neutrales.
 
 ## Colecciones para RAG
 
@@ -122,11 +122,17 @@ HUELLITAS_RAG_ENABLED="true"
 HUELLITAS_QDRANT_GLOBAL_KNOWLEDGE_COLLECTION="knowledge_global"
 HUELLITAS_QDRANT_CONVERSATION_MEMORY_COLLECTION="conversation_memory"
 HUELLITAS_QDRANT_VECTOR_DISTANCE="cosine"
+HUELLITAS_RAG_GLOBAL_LIMIT="4"
+HUELLITAS_RAG_CONVERSATION_LIMIT="4"
+HUELLITAS_RAG_SCORE_THRESHOLD=""
+HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS="6000"
 ```
 
 Durante startup se crean solamente las colecciones ausentes y sus índices de payload. Si una colección existente no coincide exactamente en dimensiones o distancia, no se modifica ni se elimina: readiness permanece en `503` para exigir una migración administrada. Si el provisioning inicial falla por indisponibilidad de Qdrant, debe reiniciarse FastAPI después de recuperar la dependencia.
 
-El arranque no genera embeddings ni consume créditos. Los puertos internos ya permiten upsert, búsqueda, listado por cursor y cambios de estado para conocimiento global, además de escritura y búsqueda estrictamente filtrada por conversación. Ninguna de estas operaciones está conectada todavía a `/messages` ni expuesta como endpoint administrativo.
+El arranque no genera embeddings ni consume créditos. En cada mensaje no escalado se genera una sola representación de la pregunta, se consulta en paralelo conocimiento global y memoria filtrada exactamente por `conversationId`, y se incorpora un contexto acotado como dato no confiable. El mismo vector se reutiliza al guardar la pregunta y respuesta en memoria privada. Un fallo neutral de recuperación o persistencia no descarta una respuesta válida del chat y se informa mediante el estado `degraded`.
+
+Esto es recuperación aumentada (`RAG`), no entrenamiento ni modificación de los pesos del modelo. Los endpoints administrativos para registrar, actualizar, desactivar, eliminar lógicamente y restaurar documentos globales todavía no están implementados.
 
 ## Endpoints disponibles
 
@@ -135,7 +141,7 @@ El arranque no genera embeddings ni consume créditos. Los puertos internos ya p
 | `GET` | `/health/live` | Confirma que el proceso responde. |
 | `GET` | `/health/ready` | Confirma que la aplicación terminó de iniciar. |
 | `GET` | `/api/v1/info` | Expone metadatos seguros del servicio. |
-| `POST` | `/api/v1/messages` | Procesa un mensaje mediante el proveedor activo o informa control humano. |
+| `POST` | `/api/v1/messages` | Procesa un mensaje, recupera contexto RAG y guarda memoria privada, o informa control humano. |
 | `GET` | `/docs` | Swagger UI, cuando está habilitado. |
 | `GET` | `/redoc` | ReDoc, cuando está habilitado. |
 | `GET` | `/openapi.json` | Esquema OpenAPI, cuando está habilitado. |
@@ -156,6 +162,7 @@ $body = @{
     isEscalated = $false
     correlationId = "8dd1b2d9-4812-463a-87a4-eb6346cb2f83"
     idempotencyKey = "local-message-001"
+    publishAsGlobalKnowledge = $false
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -164,6 +171,42 @@ Invoke-RestMethod `
     -ContentType "application/json" `
     -Body $body
 ```
+
+`publishAsGlobalKnowledge` es opcional y vale `false` por defecto. Con ese valor el intercambio solo se guarda en la memoria privada de la conversación. Usa `true` únicamente cuando el intercambio haya sido aprobado para convertirse también en conocimiento global; la aprobación aplica a una sola solicitud.
+
+Ejemplo de un intercambio aprobado explícitamente:
+
+```json
+{
+  "message": "Intercambio aprobado por un administrador",
+  "conversationId": "bda5a441-e907-4781-bca6-44c25a73255a",
+  "userId": "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9",
+  "petId": null,
+  "channel": "web",
+  "language": "es-CO",
+  "roles": ["administrator"],
+  "isEscalated": false,
+  "correlationId": "8dd1b2d9-4812-463a-87a4-eb6346cb2f83",
+  "idempotencyKey": "approved-message-001",
+  "publishAsGlobalKnowledge": true
+}
+```
+
+La respuesta incluye el resultado operativo sin exponer vectores ni detalles de proveedor:
+
+```json
+{
+  "rag": {
+    "status": "used",
+    "globalMatches": 2,
+    "conversationMatches": 1,
+    "memoryStored": true,
+    "knowledgePublished": false
+  }
+}
+```
+
+Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`.
 
 ## Calidad
 
@@ -187,3 +230,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de la base Docker](docs/plans/2026-08-26-docker-runtime-foundation-design.md)
 - [Diseño de la base de embeddings](docs/plans/2026-08-26-embeddings-foundation-design.md)
 - [Diseño de RAG y conocimiento](docs/plans/2026-08-26-rag-knowledge-foundation-design.md)
+- [Diseño de integración RAG en mensajes](docs/plans/2026-08-26-rag-messages-integration-design.md)
