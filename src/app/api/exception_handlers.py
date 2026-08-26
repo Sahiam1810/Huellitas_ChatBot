@@ -16,6 +16,9 @@ from app.shared.exceptions import (
     EmbeddingRequestError,
     EmbeddingTimeoutError,
     EmbeddingUnavailableError,
+    IdempotencyCapacityExceededError,
+    IdempotencyError,
+    IdempotencyKeyConflictError,
     KnowledgeDocumentConsistencyError,
     KnowledgeDocumentDeletedError,
     KnowledgeDocumentNotFoundError,
@@ -156,6 +159,21 @@ VECTOR_PROBLEMS: dict[type[VectorStoreError], ProblemSpec] = {
     ),
 }
 
+IDEMPOTENCY_PROBLEMS: dict[type[IdempotencyError], ProblemSpec] = {
+    IdempotencyKeyConflictError: ProblemSpec(
+        "Conflict",
+        409,
+        "Idempotency key was already used with a different request",
+        "idempotency_key_conflict",
+    ),
+    IdempotencyCapacityExceededError: ProblemSpec(
+        "Service Unavailable",
+        503,
+        "Idempotency capacity is temporarily exhausted",
+        "idempotency_capacity_exceeded",
+    ),
+}
+
 
 def problem_response(problem: MessageProblemDetail) -> JSONResponse:
     return JSONResponse(
@@ -230,6 +248,22 @@ async def dependency_error_handler(
     )
 
 
+async def idempotency_error_handler(
+    request: Request,
+    error: IdempotencyError,
+) -> JSONResponse:
+    spec = IDEMPOTENCY_PROBLEMS[type(error)]
+    return problem_response(
+        MessageProblemDetail(
+            title=spec.title,
+            status=spec.status,
+            detail=spec.detail,
+            instance=request.url.path,
+            code=spec.code,
+        )
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ServiceNotReadyError, service_not_ready_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
@@ -237,3 +271,5 @@ def register_exception_handlers(app: FastAPI) -> None:
         app.add_exception_handler(error_type, chat_model_error_handler)
     for error_type in (*KNOWLEDGE_PROBLEMS, *EMBEDDING_PROBLEMS, *VECTOR_PROBLEMS):
         app.add_exception_handler(error_type, dependency_error_handler)
+    for error_type in IDEMPOTENCY_PROBLEMS:
+        app.add_exception_handler(error_type, idempotency_error_handler)

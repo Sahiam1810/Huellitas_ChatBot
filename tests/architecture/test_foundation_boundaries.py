@@ -156,6 +156,19 @@ def test_knowledge_capability_depends_only_on_neutral_layers() -> None:
     assert violations == {}
 
 
+def test_idempotency_adapter_does_not_import_http_model_or_vector_sdks() -> None:
+    forbidden_prefixes = ("fastapi", "openai", "google", "qdrant_client", "app.api")
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app/adapters/idempotency").rglob("*.py"):
+        forbidden = sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        if forbidden:
+            violations[str(path)] = forbidden
+
+    assert violations == {}
+
+
 def test_provider_secret_is_absent_from_http_metadata() -> None:
     secret = "must-never-be-exposed"
     app = create_application(

@@ -1,3 +1,7 @@
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -36,9 +40,12 @@ def payload(
     is_escalated: bool = False,
     conversation_id: str = CONVERSATION_ID,
     publish_as_global_knowledge: bool = False,
+    message: str = "Necesito información",
+    correlation_id: str = CORRELATION_ID,
+    idempotency_key: str = "message-001",
 ) -> dict[str, object]:
     result: dict[str, object] = {
-        "message": "Necesito información",
+        "message": message,
         "conversationId": conversation_id,
         "userId": USER_ID,
         "petId": None,
@@ -46,8 +53,8 @@ def payload(
         "language": "es-CO",
         "roles": ["customer"],
         "isEscalated": is_escalated,
-        "correlationId": CORRELATION_ID,
-        "idempotencyKey": "message-001",
+        "correlationId": correlation_id,
+        "idempotencyKey": idempotency_key,
     }
     if publish_as_global_knowledge:
         result["publishAsGlobalKnowledge"] = True
@@ -229,6 +236,159 @@ def test_rag_messages_isolate_memory_and_publish_globally_only_when_requested(
     global_record = store.upsert_global.await_args.args[0][0]
     assert global_record.kind is GlobalKnowledgeKind.APPROVED_EXCHANGE
     assert global_record.source == "messages"
+
+
+def test_repeated_message_replays_without_duplicate_rag_or_provider_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=ChatResponse(
+                text="Respuesta estable",
+                provider=ModelProvider.OPENROUTER,
+                model="router-model",
+            )
+        ),
+        close=AsyncMock(),
+    )
+    embedding = SimpleNamespace(
+        embed_query=AsyncMock(
+            return_value=EmbeddingResponse(
+                vectors=(EmbeddingVector((0.1, 0.2, 0.3)),),
+                provider=EmbeddingProvider.OPENAI,
+                model="embedding-test",
+                usage=EmbeddingUsage(input_tokens=2, total_tokens=2),
+            )
+        ),
+        embed_documents=AsyncMock(),
+        close=AsyncMock(),
+    )
+    store = SimpleNamespace(
+        check_health=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        search_global=AsyncMock(return_value=()),
+        search_conversation=AsyncMock(return_value=()),
+        remember=AsyncMock(),
+        upsert_global=AsyncMock(),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding)
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
+    app = create_application(rag_provider_settings())
+
+    with TestClient(app) as client:
+        first = client.post("/api/v1/messages", json=payload())
+        replay = client.post("/api/v1/messages", json=payload())
+        traced_replay = client.post(
+            "/api/v1/messages",
+            json=payload(correlation_id="f27c135f-2c81-4697-afd6-430fe62c6d3a"),
+        )
+
+    assert first.status_code == replay.status_code == traced_replay.status_code == 200
+    assert first.json() == replay.json() == traced_replay.json()
+    assert first.headers["Idempotency-Replayed"] == "false"
+    assert replay.headers["Idempotency-Replayed"] == "true"
+    assert traced_replay.headers["Idempotency-Replayed"] == "true"
+    assert model.generate.await_count == 1
+    assert embedding.embed_query.await_count == 1
+    assert store.search_global.await_count == 1
+    assert store.search_conversation.await_count == 1
+    assert store.remember.await_count == 1
+    store.upsert_global.assert_not_awaited()
+
+
+def test_reused_idempotency_key_with_another_message_returns_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=ChatResponse(
+                text="Respuesta",
+                provider=ModelProvider.OPENROUTER,
+                model="router-model",
+            )
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    app = create_application(provider_settings())
+
+    with TestClient(app) as client:
+        first = client.post("/api/v1/messages", json=payload())
+        conflict = client.post("/api/v1/messages", json=payload(message="Contenido diferente"))
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "idempotency_key_conflict"
+    assert model.generate.await_count == 1
+
+
+def test_failed_message_can_retry_the_same_idempotency_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(
+        generate=AsyncMock(
+            side_effect=[
+                ModelUnavailableError("provider secret"),
+                ChatResponse(
+                    text="Respuesta recuperada",
+                    provider=ModelProvider.OPENROUTER,
+                    model="router-model",
+                ),
+            ]
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    app = create_application(provider_settings())
+
+    with TestClient(app) as client:
+        failed = client.post("/api/v1/messages", json=payload())
+        retried = client.post("/api/v1/messages", json=payload())
+
+    assert failed.status_code == 503
+    assert retried.status_code == 200
+    assert retried.headers["Idempotency-Replayed"] == "false"
+    assert model.generate.await_count == 2
+
+
+def test_concurrent_http_retries_share_one_provider_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = Event()
+    release = Event()
+    calls = 0
+
+    async def generate(_: object) -> ChatResponse:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await asyncio.to_thread(release.wait, 2)
+        return ChatResponse(
+            text="Respuesta compartida",
+            provider=ModelProvider.OPENROUTER,
+            model="router-model",
+        )
+
+    model = SimpleNamespace(generate=generate, close=AsyncMock())
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    app = create_application(provider_settings())
+
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as executor:
+        owner = executor.submit(client.post, "/api/v1/messages", json=payload())
+        assert entered.wait(timeout=1)
+        waiter = executor.submit(client.post, "/api/v1/messages", json=payload())
+        time.sleep(0.05)
+        assert calls == 1 and not waiter.done()
+        release.set()
+        owner_response = owner.result(timeout=2)
+        waiter_response = waiter.result(timeout=2)
+
+    assert owner_response.json() == waiter_response.json()
+    assert owner_response.headers["Idempotency-Replayed"] == "false"
+    assert waiter_response.headers["Idempotency-Replayed"] == "true"
+    assert calls == 1
 
 
 def test_non_escalated_message_requires_enabled_chat() -> None:

@@ -30,7 +30,9 @@ def test_documentation_routes_exist_when_enabled() -> None:
     }
     assert "503" in schema["paths"]["/health/ready"]["get"]["responses"]
     message_operation = schema["paths"]["/api/v1/messages"]["post"]
-    assert set(message_operation["responses"]) >= {"200", "422", "502", "503", "504"}
+    assert set(message_operation["responses"]) >= {"200", "409", "422", "502", "503", "504"}
+    replay_header = message_operation["responses"]["200"]["headers"]["Idempotency-Replayed"]
+    assert replay_header["schema"] == {"type": "string"}
     request_schema = message_operation["requestBody"]["content"]["application/json"]["schema"]
     assert request_schema["$ref"].endswith("/MessageRequest")
     request_component = schema["components"]["schemas"]["MessageRequest"]
@@ -41,6 +43,7 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert response_schema["$ref"].endswith("/MessageResponse")
     message_response = schema["components"]["schemas"]["MessageResponse"]
     assert message_response["properties"]["rag"]["$ref"].endswith("/RagResponse")
+    assert "idempotencyReplayed" not in message_response["properties"]
     assert set(schema["components"]["schemas"]["RagStatus"]["enum"]) == {
         "disabled",
         "skipped",
