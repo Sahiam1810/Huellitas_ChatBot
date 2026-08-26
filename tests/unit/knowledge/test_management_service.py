@@ -1,12 +1,16 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock, Mock, call
 from uuid import UUID
 
 import pytest
 
-from app.knowledge.contracts import CreateKnowledgeDocument, KnowledgeDocumentFilters
+from app.knowledge.contracts import (
+    CreateKnowledgeDocument,
+    KnowledgeDocumentFilters,
+    ReplaceKnowledgeDocument,
+)
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.management_service import KnowledgeManagementService
 from app.ports.embedding_model import (
@@ -23,8 +27,10 @@ from app.ports.global_knowledge_store import (
 from app.shared.exceptions import (
     EmbeddingInvalidResponseError,
     KnowledgeDocumentConsistencyError,
+    KnowledgeDocumentDeletedError,
     KnowledgeDocumentNotFoundError,
     KnowledgeExternalIdConflictError,
+    VectorStoreUnavailableError,
 )
 
 DOCUMENT_ID = UUID("0b4889ae-ddb6-428b-8833-7f14c499779d")
@@ -229,3 +235,182 @@ async def test_create_requires_post_write_snapshot() -> None:
 
     with pytest.raises(KnowledgeDocumentConsistencyError):
         await service(store, embedding, lock).create(command)
+
+
+@pytest.mark.anyio
+async def test_replace_writes_next_version_then_retires_previous() -> None:
+    replacement = document(version=2, title="Updated guide", active=False)
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(side_effect=[document(), replacement])
+    )
+    command = ReplaceKnowledgeDocument(
+        "Updated guide", "alpha beta gamma delta", "manual", ("updated",), False
+    )
+    timeline = Mock()
+    timeline.attach_mock(store.upsert_global, "upsert")
+    timeline.attach_mock(store.set_document_version_state, "state")
+
+    result = await service(store, embedding, lock, ids=(POINT_ONE, POINT_TWO, POINT_THREE)).replace(
+        DOCUMENT_ID, command
+    )
+
+    assert result == replacement
+    assert lock.keys == [str(DOCUMENT_ID)]
+    records = store.upsert_global.await_args.args[0]
+    assert all(record.document_id == DOCUMENT_ID and record.version == 2 for record in records)
+    assert all(record.created_at == NOW and record.updated_at == NOW for record in records)
+    store.set_document_version_state.assert_awaited_once_with(DOCUMENT_ID, 1, current=False)
+    assert timeline.mock_calls == [
+        call.upsert(ANY),
+        call.state(DOCUMENT_ID, 1, current=False),
+    ]
+
+
+@pytest.mark.anyio
+async def test_replace_rejects_deleted_document_before_embedding() -> None:
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(return_value=document(deleted=True, active=False))
+    )
+
+    with pytest.raises(KnowledgeDocumentDeletedError):
+        await service(store, embedding, lock).replace(
+            DOCUMENT_ID,
+            ReplaceKnowledgeDocument("Guide", "content", "manual", (), True),
+        )
+
+    embedding.embed_documents.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_replace_compensates_new_version_when_retirement_fails() -> None:
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(return_value=document()),
+        set_document_version_state=AsyncMock(
+            side_effect=[VectorStoreUnavailableError("safe"), None]
+        ),
+    )
+
+    with pytest.raises(VectorStoreUnavailableError):
+        await service(store, embedding, lock, ids=(POINT_ONE, POINT_TWO, POINT_THREE)).replace(
+            DOCUMENT_ID,
+            ReplaceKnowledgeDocument("Updated", "alpha beta gamma delta", "manual", (), True),
+        )
+
+    assert store.set_document_version_state.await_args_list[1].args == (DOCUMENT_ID, 2)
+    assert store.set_document_version_state.await_args_list[1].kwargs == {
+        "current": False,
+        "active": False,
+    }
+
+
+@pytest.mark.anyio
+async def test_replace_hides_provider_text_when_compensation_also_fails() -> None:
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(return_value=document()),
+        set_document_version_state=AsyncMock(
+            side_effect=[RuntimeError("retire secret"), RuntimeError("compensation secret")]
+        ),
+    )
+
+    with pytest.raises(KnowledgeDocumentConsistencyError) as captured:
+        await service(store, embedding, lock, ids=(POINT_ONE, POINT_TWO, POINT_THREE)).replace(
+            DOCUMENT_ID,
+            ReplaceKnowledgeDocument("Updated", "alpha beta gamma delta", "manual", (), True),
+        )
+
+    assert "secret" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_set_active_updates_only_current_version() -> None:
+    inactive = document(active=False)
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(side_effect=[document(), inactive])
+    )
+
+    result = await service(store, embedding, lock).set_active(DOCUMENT_ID, False)
+
+    assert result == inactive
+    assert lock.keys == [str(DOCUMENT_ID)]
+    store.set_document_version_state.assert_awaited_once_with(DOCUMENT_ID, 1, active=False)
+
+
+@pytest.mark.anyio
+async def test_set_active_rejects_deleted_document() -> None:
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(return_value=document(deleted=True, active=False))
+    )
+
+    with pytest.raises(KnowledgeDocumentDeletedError):
+        await service(store, embedding, lock).set_active(DOCUMENT_ID, True)
+
+    store.set_document_version_state.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_delete_is_logical_and_idempotent() -> None:
+    store, embedding, lock = dependencies(get_document=AsyncMock(return_value=document()))
+    management = service(store, embedding, lock)
+
+    await management.delete(DOCUMENT_ID)
+
+    store.set_document_version_state.assert_awaited_once_with(
+        DOCUMENT_ID, 1, active=False, deleted=True
+    )
+
+    store.get_document.return_value = document(deleted=True, active=False)
+    store.set_document_version_state.reset_mock()
+    await management.delete(DOCUMENT_ID)
+    store.set_document_version_state.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_delete_missing_document_raises_not_found() -> None:
+    store, embedding, lock = dependencies(get_document=AsyncMock(return_value=None))
+
+    with pytest.raises(KnowledgeDocumentNotFoundError):
+        await service(store, embedding, lock).delete(DOCUMENT_ID)
+
+
+@pytest.mark.anyio
+async def test_restore_returns_inactive_document_and_checks_external_conflict() -> None:
+    deleted = document(deleted=True, active=False)
+    restored = document(deleted=False, active=False)
+    store, embedding, lock = dependencies(get_document=AsyncMock(side_effect=[deleted, restored]))
+
+    result = await service(store, embedding, lock).restore(DOCUMENT_ID)
+
+    assert result == restored
+    assert lock.keys == [str(DOCUMENT_ID), "vaccination-guide"]
+    store.find_document_by_external_id.assert_awaited_once_with(
+        "vaccination-guide", include_deleted=False
+    )
+    store.set_document_version_state.assert_awaited_once_with(
+        DOCUMENT_ID, 1, active=False, deleted=False
+    )
+
+
+@pytest.mark.anyio
+async def test_restore_rejects_external_id_owned_by_another_document() -> None:
+    other_id = UUID("aac8e4ae-1aa2-456c-8487-68daccedbc6d")
+    store, embedding, lock = dependencies(
+        get_document=AsyncMock(return_value=document(deleted=True, active=False)),
+        find_document_by_external_id=AsyncMock(return_value=document(document_id=other_id)),
+    )
+
+    with pytest.raises(KnowledgeExternalIdConflictError):
+        await service(store, embedding, lock).restore(DOCUMENT_ID)
+
+    store.set_document_version_state.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_restore_is_idempotent_when_document_is_not_deleted() -> None:
+    existing = document(active=True)
+    store, embedding, lock = dependencies(get_document=AsyncMock(return_value=existing))
+
+    result = await service(store, embedding, lock).restore(DOCUMENT_ID)
+
+    assert result == existing
+    store.find_document_by_external_id.assert_not_awaited()
+    store.set_document_version_state.assert_not_awaited()
