@@ -59,6 +59,10 @@ RAG_ENV_KEYS = (
     "HUELLITAS_QDRANT_GLOBAL_KNOWLEDGE_COLLECTION",
     "HUELLITAS_QDRANT_CONVERSATION_MEMORY_COLLECTION",
     "HUELLITAS_QDRANT_VECTOR_DISTANCE",
+    "HUELLITAS_RAG_GLOBAL_LIMIT",
+    "HUELLITAS_RAG_CONVERSATION_LIMIT",
+    "HUELLITAS_RAG_SCORE_THRESHOLD",
+    "HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS",
 )
 
 
@@ -425,6 +429,52 @@ def test_enabled_rag_exposes_validated_configuration() -> None:
     assert configuration.conversation_memory_collection == "memory_v1"
     assert configuration.dimensions == 1536
     assert configuration.distance is VectorDistance.DOT
+    assert configuration.global_limit == 4
+    assert configuration.conversation_limit == 4
+    assert configuration.score_threshold is None
+    assert configuration.max_context_characters == 6000
+
+
+def test_rag_retrieval_configuration_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_RAG_GLOBAL_LIMIT", "6")
+    monkeypatch.setenv("HUELLITAS_RAG_CONVERSATION_LIMIT", "3")
+    monkeypatch.setenv("HUELLITAS_RAG_SCORE_THRESHOLD", "0.75")
+    monkeypatch.setenv("HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS", "8000")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.rag_global_limit == 6
+    assert settings.rag_conversation_limit == 3
+    assert settings.rag_score_threshold == 0.75
+    assert settings.rag_max_context_characters == 8000
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rag_global_limit", 0),
+        ("rag_global_limit", 21),
+        ("rag_conversation_limit", 0),
+        ("rag_conversation_limit", 21),
+        ("rag_score_threshold", -0.01),
+        ("rag_score_threshold", 1.01),
+        ("rag_max_context_characters", 499),
+        ("rag_max_context_characters", 20001),
+    ],
+)
+def test_rag_retrieval_configuration_rejects_invalid_values(field: str, value: int | float) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
+
+
+def test_empty_optional_rag_threshold_environment_value_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_RAG_SCORE_THRESHOLD", "")
+
+    assert Settings(_env_file=None).rag_score_threshold is None
 
 
 @pytest.mark.parametrize(
