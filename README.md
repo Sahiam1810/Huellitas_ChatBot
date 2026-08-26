@@ -58,7 +58,22 @@ docker compose down
 
 El volumen `huellitas-chatbot_qdrant_storage` conserva los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente el almacenamiento local de Qdrant.
 
-En esta fase Qdrant está disponible en Docker, pero Python todavía no se conecta a él: no existen colecciones, embeddings, indexación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. No existen todavía colecciones, embeddings, indexación, recuperación ni RAG. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+
+## Conexión con Qdrant
+
+Fuera de Docker la conexión está deshabilitada por defecto. Para habilitarla contra la instancia local:
+
+```dotenv
+HUELLITAS_VECTOR_STORE_ENABLED="true"
+HUELLITAS_QDRANT_URL="http://127.0.0.1:6333"
+HUELLITAS_QDRANT_API_KEY=""
+HUELLITAS_QDRANT_TIMEOUT_SECONDS="5"
+HUELLITAS_QDRANT_STARTUP_MAX_ATTEMPTS="5"
+HUELLITAS_QDRANT_STARTUP_RETRY_DELAY_SECONDS="1"
+```
+
+La API key es opcional para desarrollo local. Cuando la conexión está habilitada, el lifecycle realiza hasta el número configurado de intentos antes de continuar en estado degradado. Readiness vuelve a comprobar Qdrant en cada solicitud, por lo que puede recuperarse sin reiniciar FastAPI. El cliente se cierra durante el apagado ordenado.
 
 ## Proveedor de IA
 
