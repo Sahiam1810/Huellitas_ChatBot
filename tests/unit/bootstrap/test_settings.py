@@ -63,6 +63,8 @@ RAG_ENV_KEYS = (
     "HUELLITAS_RAG_CONVERSATION_LIMIT",
     "HUELLITAS_RAG_SCORE_THRESHOLD",
     "HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS",
+    "HUELLITAS_RAG_CHUNK_MAX_CHARACTERS",
+    "HUELLITAS_RAG_CHUNK_OVERLAP_CHARACTERS",
 )
 
 
@@ -433,6 +435,8 @@ def test_enabled_rag_exposes_validated_configuration() -> None:
     assert configuration.conversation_limit == 4
     assert configuration.score_threshold is None
     assert configuration.max_context_characters == 6000
+    assert configuration.chunk_max_characters == 1200
+    assert configuration.chunk_overlap_characters == 200
 
 
 def test_rag_retrieval_configuration_reads_environment(
@@ -442,6 +446,8 @@ def test_rag_retrieval_configuration_reads_environment(
     monkeypatch.setenv("HUELLITAS_RAG_CONVERSATION_LIMIT", "3")
     monkeypatch.setenv("HUELLITAS_RAG_SCORE_THRESHOLD", "0.75")
     monkeypatch.setenv("HUELLITAS_RAG_MAX_CONTEXT_CHARACTERS", "8000")
+    monkeypatch.setenv("HUELLITAS_RAG_CHUNK_MAX_CHARACTERS", "1600")
+    monkeypatch.setenv("HUELLITAS_RAG_CHUNK_OVERLAP_CHARACTERS", "300")
 
     settings = Settings(_env_file=None)
 
@@ -449,6 +455,8 @@ def test_rag_retrieval_configuration_reads_environment(
     assert settings.rag_conversation_limit == 3
     assert settings.rag_score_threshold == 0.75
     assert settings.rag_max_context_characters == 8000
+    assert settings.rag_chunk_max_characters == 1600
+    assert settings.rag_chunk_overlap_characters == 300
 
 
 @pytest.mark.parametrize(
@@ -462,6 +470,10 @@ def test_rag_retrieval_configuration_reads_environment(
         ("rag_score_threshold", 1.01),
         ("rag_max_context_characters", 499),
         ("rag_max_context_characters", 20001),
+        ("rag_chunk_max_characters", 199),
+        ("rag_chunk_max_characters", 8001),
+        ("rag_chunk_overlap_characters", -1),
+        ("rag_chunk_overlap_characters", 2001),
     ],
 )
 def test_rag_retrieval_configuration_rejects_invalid_values(field: str, value: int | float) -> None:
@@ -475,6 +487,16 @@ def test_empty_optional_rag_threshold_environment_value_is_ignored(
     monkeypatch.setenv("HUELLITAS_RAG_SCORE_THRESHOLD", "")
 
     assert Settings(_env_file=None).rag_score_threshold is None
+
+
+def test_rag_chunk_overlap_must_be_smaller_than_maximum_even_when_disabled() -> None:
+    with pytest.raises(ValidationError, match="overlap"):
+        Settings(
+            rag_enabled=False,
+            rag_chunk_max_characters=400,
+            rag_chunk_overlap_characters=400,
+            _env_file=None,
+        )
 
 
 @pytest.mark.parametrize(
