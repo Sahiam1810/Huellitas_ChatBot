@@ -135,3 +135,49 @@ class RoutingObservation:
     global_matches: tuple[GlobalKnowledgeMatch, ...]
     conversation_matches: tuple[ConversationMemoryMatch, ...]
     embedding_input_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CaseEvaluation:
+    case_id: str
+    split: DatasetSplit
+    expected_route: SemanticRoute
+    predicted_route: SemanticRoute
+    top_score: float | None
+    direct_answer_correct: bool | None
+    false_direct: bool
+    safety_critical: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RouteMetrics:
+    precision: float
+    recall: float
+    f1: float
+    support: int
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationMetrics:
+    total_cases: int
+    accuracy: float
+    macro_f1: float
+    confusion_matrix: dict[str, dict[str, int]]
+    per_route: dict[str, RouteMetrics]
+    route_distribution: dict[str, int]
+    false_direct_ids: tuple[str, ...]
+    unsafe_direct_ids: tuple[str, ...]
+    baseline_llm_calls: int
+    actual_llm_calls: int
+    llm_calls_avoided: int
+    llm_call_avoidance_rate: float
+    observed_tokens_avoided: int
+    token_coverage: float
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationResult:
+    high_threshold: float
+    medium_threshold: float
+    cases: tuple[CaseEvaluation, ...]
+    metrics: EvaluationMetrics
