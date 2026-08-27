@@ -18,6 +18,9 @@ def test_documentation_routes_exist_when_enabled() -> None:
     schema = openapi_response.json()
     assert schema["info"]["title"] == "Huellitas ChatBot"
     assert schema["info"]["version"] == "0.1.0"
+    access_token_scheme = schema["components"]["securitySchemes"]["AccessToken"]
+    assert access_token_scheme["type"] == "http"
+    assert access_token_scheme["scheme"] == "bearer"
     assert set(schema["paths"]) == {
         "/api/v1/info",
         "/api/v1/messages",
@@ -30,7 +33,17 @@ def test_documentation_routes_exist_when_enabled() -> None:
     }
     assert "503" in schema["paths"]["/health/ready"]["get"]["responses"]
     message_operation = schema["paths"]["/api/v1/messages"]["post"]
-    assert set(message_operation["responses"]) >= {"200", "409", "422", "502", "503", "504"}
+    assert message_operation["security"] == [{"AccessToken": []}]
+    assert set(message_operation["responses"]) >= {
+        "200",
+        "401",
+        "403",
+        "409",
+        "422",
+        "502",
+        "503",
+        "504",
+    }
     replay_header = message_operation["responses"]["200"]["headers"]["Idempotency-Replayed"]
     assert replay_header["schema"] == {"type": "string"}
     request_schema = message_operation["requestBody"]["content"]["application/json"]["schema"]
@@ -71,6 +84,14 @@ def test_documentation_routes_exist_when_enabled() -> None:
     item = schema["paths"]["/api/v1/knowledge/documents/{documentId}"]
     assert set(item) == {"get", "put", "delete"}
     assert "204" in item["delete"]["responses"]
+    for path, path_item in schema["paths"].items():
+        if path.startswith("/api/v1/knowledge/documents"):
+            for operation in path_item.values():
+                assert operation["security"] == [{"AccessToken": []}]
+                assert {"401", "403"} <= set(operation["responses"])
+    assert "security" not in schema["paths"]["/health/live"]["get"]
+    assert "security" not in schema["paths"]["/health/ready"]["get"]
+    assert "security" not in schema["paths"]["/api/v1/info"]["get"]
     assert all("embeddings" not in path for path in schema["paths"])
 
 

@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. JWT, historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios, Redis y comunicación con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose, validación local de los JWT `RS256` emitidos por .NET y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. Historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios, Redis y comunicación operacional con .NET todavía no están implementados.
 
 ---
 
@@ -263,7 +263,7 @@ Coordina inicialización, readiness y cierre ordenado. Construye el modelo conve
 
 ## `bootstrap/settings.py`
 
-Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, proveedores de modelos, embeddings, conexión Qdrant y colecciones RAG. `HUELLITAS_RAG_ENABLED=false` es el valor predeterminado; al activarlo exige embeddings y vector store habilitados, nombres distintos para ambas colecciones, dimensiones explícitas y distancia vectorial. Ningún router de API lee directamente el entorno del proceso.
+Centraliza configuración tipada e inmutable mediante variables `HUELLITAS_*`: metadatos del servicio, ambiente, logging, documentación, host, puerto, validación JWT, proveedores de modelos, embeddings, conexión Qdrant y colecciones RAG. `HUELLITAS_RAG_ENABLED=false` es el valor predeterminado; al activarlo exige embeddings y vector store habilitados, nombres distintos para ambas colecciones, dimensiones explícitas y distancia vectorial. Ningún router de API lee directamente el entorno del proceso.
 
 ---
 
@@ -278,11 +278,13 @@ api/routers/
 |-- chat.py
 |-- conversations.py
 |-- internal.py
+|-- knowledge.py
 |-- health.py
 `-- info.py
 ```
 
-- `chat.py`: actualmente expone `POST /api/v1/messages`, valida exclusivamente el transporte y delega al contrato `MessageHandler`; la composición aplica idempotencia antes del `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
+- `chat.py`: actualmente expone `POST /api/v1/messages`, exige Bearer, vincula `userId` con `person_id` y `roles` con el rol autenticado, y delega al contrato `MessageHandler`; la composición aplica idempotencia antes del `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
+- `knowledge.py`: administra documentos globales y aplica una dependencia de autorización administrativa a todo el router.
 - `conversations.py`: contexto permitido y estado técnico requerido para coordinar una conversación.
 - `internal.py`: indexación, sincronización y preparación opcional de contenido interno.
 - `health.py`: expone `GET /health/live` y `GET /health/ready` fuera de la API de negocio versionada.
@@ -319,13 +321,15 @@ Los routers validan transporte y delegan. No seleccionan módulos ni contienen r
 
 El backend .NET emite el JWT. FastAPI valida:
 
-- Firma.
+- Firma `RS256` mediante la clave pública RSA configurada, nunca mediante la clave privada.
 - Emisor.
 - Audiencia.
 - Expiración.
 - Momento de validez.
-- Identificador de clave cuando exista rotación.
-- Claims requeridos.
+- Identificador de clave `kid` exacto.
+- Claims `sub`, `person_id`, `role_id`, `role`, `preferred_username`, `email`, `jti`, `iat`, `nbf` y `exp`.
+
+`sub` identifica la cuenta de autenticación y `person_id` identifica la persona de `Users.Id`; por ello `MessageRequest.userId` debe coincidir con `person_id`. El rol efectivo siempre procede del token. Mensajes acepta cualquier principal válido y la administración documental requiere el rol exacto `Administrador`, configurable por entorno. Health, info y documentación permanecen públicos.
 
 El token nunca se entrega al modelo, prompts o Qdrant, y debe redactarse de logs y trazas. Una autenticación inválida termina en la frontera HTTP y no activa un fallback conversacional.
 
@@ -765,7 +769,7 @@ Si cambian los datos relevantes, la confirmación se invalida. El agente nunca a
 
 # 17. Fallbacks y resiliencia
 
-El endpoint implementado devuelve Problem Details seguros: `409` cuando una clave idempotente se reutiliza con contenido diferente, `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso, capacidad idempotente agotada o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK o del proveedor no se incluyen en la respuesta HTTP. Un fallo neutral de embeddings, recuperación o persistencia RAG produce estado `degraded`: el chat continúa sin el contexto no disponible o conserva la respuesta ya generada. Un fallo del modelo mantiene el Problem Details correspondiente y no guarda memoria.
+El endpoint implementado devuelve Problem Details seguros: `401` para autenticación ausente o token inválido, `403` para identidad inconsistente o permisos insuficientes, `409` cuando una clave idempotente se reutiliza con contenido diferente, `422` para contratos inválidos, `502` para autenticación, rechazo o respuesta inválida del proveedor, `503` para configuración ausente, límite de uso, capacidad idempotente agotada o indisponibilidad, y `504` para timeout. Los mensajes internos del SDK, del proveedor o del validador JWT no se incluyen en la respuesta HTTP. Un fallo neutral de embeddings, recuperación o persistencia RAG produce estado `degraded`: el chat continúa sin el contexto no disponible o conserva la respuesta ya generada. Un fallo del modelo mantiene el Problem Details correspondiente y no guarda memoria.
 
 ## Categorías
 
@@ -947,7 +951,6 @@ El incremento actual no implementa:
 - Infraestructura productiva de despliegue, secretos, TLS, backups, monitoreo y alta disponibilidad.
 - Integraciones directas con canales externos.
 - Tablas o migraciones de Oracle Database 26ai.
-- Validación JWT.
 - Consulta o persistencia del historial canónico.
 - Comportamiento de idempotencia, bloqueos o checkpoints.
 - Llamadas al backend .NET.

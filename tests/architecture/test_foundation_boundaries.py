@@ -19,6 +19,7 @@ PROVIDER_ADAPTER_ROOTS = (
     Path("src/app/adapters/embeddings"),
 )
 VECTOR_STORE_ADAPTERS_ROOT = Path("src/app/adapters/vector_store")
+SECURITY_ADAPTERS_ROOT = Path("src/app/adapters/security")
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -88,6 +89,16 @@ def test_qdrant_sdk_is_isolated_to_vector_store_adapters() -> None:
     for path in Path("src/app").rglob("*.py"):
         sdk_imports = imported_roots(path) & {"qdrant_client"}
         if sdk_imports and not path.is_relative_to(VECTOR_STORE_ADAPTERS_ROOT):
+            violations[str(path)] = sorted(sdk_imports)
+
+    assert violations == {}
+
+
+def test_jwt_crypto_sdks_are_isolated_to_security_adapters() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app").rglob("*.py"):
+        sdk_imports = imported_roots(path) & {"jwt", "cryptography"}
+        if sdk_imports and not path.is_relative_to(SECURITY_ADAPTERS_ROOT):
             violations[str(path)] = sorted(sdk_imports)
 
     assert violations == {}
