@@ -23,6 +23,7 @@ from app.shared.exceptions import (
     VectorStoreConfigurationError,
     VectorStoreUnavailableError,
 )
+from tests.support.jwt import PERSON_ID, TEST_JWT_KEYS, issue_token
 
 
 def vector_settings(**overrides: object) -> Settings:
@@ -190,17 +191,20 @@ def test_rag_lifespan_composes_message_retrieval_and_private_memory(
         )
     )
 
-    with TestClient(app) as client:
+    with TestClient(
+        app,
+        headers={"Authorization": f"Bearer {issue_token(TEST_JWT_KEYS)}"},
+    ) as client:
         response = client.post(
             "/api/v1/messages",
             json={
                 "message": "Pregunta",
                 "conversationId": "bda5a441-e907-4781-bca6-44c25a73255a",
-                "userId": "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9",
+                "userId": str(PERSON_ID),
                 "petId": None,
                 "channel": "web",
                 "language": "es-CO",
-                "roles": ["customer"],
+                "roles": ["Cliente"],
                 "isEscalated": False,
                 "correlationId": "8dd1b2d9-4812-463a-87a4-eb6346cb2f83",
                 "idempotencyKey": "message-001",

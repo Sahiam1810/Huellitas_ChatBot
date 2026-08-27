@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.adapters.security.jwt import JwtRs256TokenValidator
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routers import chat, health, info, knowledge
 from app.bootstrap.dependencies import ApplicationDependencies
@@ -10,6 +11,7 @@ from app.bootstrap.settings import Settings, load_settings
 
 def create_application(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
+    token_validator = JwtRs256TokenValidator(resolved_settings.active_jwt_configuration())
     docs_url = "/docs" if resolved_settings.docs_enabled else None
     redoc_url = "/redoc" if resolved_settings.docs_enabled else None
     openapi_url = "/openapi.json" if resolved_settings.docs_enabled else None
@@ -23,7 +25,10 @@ def create_application(settings: Settings | None = None) -> FastAPI:
         openapi_url=openapi_url,
         lifespan=build_lifespan(resolved_settings),
     )
-    app.state.dependencies = ApplicationDependencies(module_registry=build_module_registry())
+    app.state.dependencies = ApplicationDependencies(
+        module_registry=build_module_registry(),
+        token_validator=token_validator,
+    )
     app.state.ready = False
     app.state.rag_collections_ready = not resolved_settings.rag_enabled
     app.state.settings = resolved_settings

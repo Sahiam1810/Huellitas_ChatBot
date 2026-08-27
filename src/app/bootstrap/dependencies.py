@@ -8,12 +8,14 @@ from app.ports.conversation_memory_store import ConversationMemoryStore
 from app.ports.embedding_model import EmbeddingModel
 from app.ports.global_knowledge_store import GlobalKnowledgeStore
 from app.ports.idempotency_store import IdempotencyStore
+from app.ports.token_validator import TokenValidator
 from app.ports.vector_store import VectorStore
 
 
 @dataclass(slots=True)
 class ApplicationDependencies:
     module_registry: ModuleRegistry
+    token_validator: TokenValidator
     chat_model: ChatModel | None = None
     embedding_model: EmbeddingModel | None = None
     message_processor: MessageHandler | None = None

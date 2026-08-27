@@ -92,6 +92,16 @@ HUELLITAS_CHAT_PROVIDER="openrouter"
 
 Los valores disponibles están documentados en `.env.example`. Construir el servicio no llama al proveedor. La suite automatizada sustituye los clientes externos por dobles controlados, por lo que no usa red ni consume créditos.
 
+## Autenticación con el backend
+
+El backend .NET inicia sesión y firma access tokens `RS256`; el agente valida esos tokens localmente
+con la clave pública configurada. Health, info y documentación permanecen públicos. Mensajes exige
+un JWT válido y la administración de conocimiento exige el rol `Administrador`.
+
+Consulta la [guía de autenticación JWT](docs/jwt-authentication.md) para configurar las variables,
+obtener el token desde `/api/auth/login`, usar Swagger y entender la relación entre `person_id`,
+`userId` y `role`.
+
 ## Proveedor de embeddings
 
 Embeddings es una capacidad independiente del chat y está deshabilitada por defecto. Para preparar el adaptador de OpenAI directo configura:
@@ -197,17 +207,18 @@ Este almacenamiento vive únicamente en la memoria del proceso: se pierde al rei
 
 ## Prueba de mensajes
 
-Una solicitud real consume créditos del proveedor y requiere `HUELLITAS_CHAT_ENABLED=true`. También puedes probar el contrato desde Swagger en `/docs`. JWT todavía no se exige en este incremento; no expongas el endpoint fuera de un entorno de desarrollo confiable hasta implementar esa validación.
+Una solicitud real consume créditos del proveedor, requiere `HUELLITAS_CHAT_ENABLED=true` y un access token válido emitido por el backend. Puedes probar el contrato desde Swagger en `/docs`; consulta la [guía JWT](docs/jwt-authentication.md) para autorizar la solicitud.
 
 ```powershell
+$authorization = @{ Authorization = "Bearer access-token-del-backend" }
 $body = @{
     message = "Hola"
     conversationId = "bda5a441-e907-4781-bca6-44c25a73255a"
-    userId = "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9"
+    userId = "person_id-del-access-token"
     petId = $null
     channel = "web"
     language = "es-CO"
-    roles = @("customer")
+    roles = @("Cliente")
     isEscalated = $false
     correlationId = "8dd1b2d9-4812-463a-87a4-eb6346cb2f83"
     idempotencyKey = "local-message-001"
@@ -217,12 +228,14 @@ $body = @{
 $first = Invoke-WebRequest `
     -Method Post `
     -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -Headers $authorization `
     -ContentType "application/json" `
     -Body $body
 
 $replay = Invoke-WebRequest `
     -Method Post `
     -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -Headers $authorization `
     -ContentType "application/json" `
     -Body $body
 
@@ -241,11 +254,11 @@ Ejemplo de un intercambio aprobado explícitamente:
 {
   "message": "Intercambio aprobado por un administrador",
   "conversationId": "bda5a441-e907-4781-bca6-44c25a73255a",
-  "userId": "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9",
+  "userId": "person_id-del-access-token",
   "petId": null,
   "channel": "web",
   "language": "es-CO",
-  "roles": ["administrator"],
+  "roles": ["Administrador"],
   "isEscalated": false,
   "correlationId": "8dd1b2d9-4812-463a-87a4-eb6346cb2f83",
   "idempotencyKey": "approved-message-001",
@@ -273,7 +286,7 @@ Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`. Las rutas o
 
 ## Administración de conocimiento global
 
-La API requiere que Qdrant, embeddings y RAG estén habilitados. Cada alta o reemplazo genera embeddings y puede consumir créditos del proveedor. JWT todavía no se exige; usa estos endpoints únicamente dentro de un entorno interno confiable.
+La API requiere que Qdrant, embeddings y RAG estén habilitados, además de un token con rol `Administrador`. Cada alta o reemplazo genera embeddings y puede consumir créditos del proveedor.
 
 ```powershell
 $document = @{
@@ -287,21 +300,26 @@ $document = @{
 
 $created = Invoke-RestMethod -Method Post `
     -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents" `
+    -Headers $authorization `
     -ContentType "application/json" -Body $document
 
 Invoke-RestMethod -Method Get `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents?active=true&tags=vacunación"
+    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents?active=true&tags=vacunación" `
+    -Headers $authorization
 
 $inactive = @{ active = $false } | ConvertTo-Json
 Invoke-RestMethod -Method Patch `
     -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)/status" `
+    -Headers $authorization `
     -ContentType "application/json" -Body $inactive
 
 Invoke-RestMethod -Method Delete `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)"
+    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)" `
+    -Headers $authorization
 
 Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)/restore"
+    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)/restore" `
+    -Headers $authorization
 ```
 
 `externalId` es único entre documentos no eliminados dentro de una instancia del proceso. Qdrant no impone esa unicidad de forma transaccional entre varias réplicas; antes de desplegar múltiples instancias debe incorporarse coordinación distribuida. La restauración recupera el contenido pero devuelve `active=false`.
@@ -331,3 +349,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de integración RAG en mensajes](docs/plans/2026-08-26-rag-messages-integration-design.md)
 - [Diseño de administración de documentos RAG](docs/plans/2026-08-26-rag-knowledge-documents-design.md)
 - [Evaluación y calibración del routing RAG](docs/rag-routing-evaluation.md)
+- [Autenticación JWT entre .NET y el agente](docs/jwt-authentication.md)

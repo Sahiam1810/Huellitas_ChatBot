@@ -6,6 +6,7 @@ from pydantic import SecretStr, ValidationError
 from app.bootstrap.settings import Environment, LogLevel, Settings, load_settings
 from app.ports.chat_model import ModelProvider
 from app.ports.vector_store import VectorDistance
+from tests.support.jwt import AUDIENCE, ISSUER, KEY_ID
 
 HUELLITAS_ENV_KEYS = (
     "HUELLITAS_APP_NAME",
@@ -98,6 +99,38 @@ def test_settings_use_safe_development_defaults() -> None:
     assert settings.docs_enabled is True
     assert settings.host == "127.0.0.1"
     assert settings.port == 8000
+
+
+def test_active_jwt_configuration_reads_validated_environment() -> None:
+    configuration = Settings(_env_file=None).active_jwt_configuration()
+
+    assert configuration.issuer == ISSUER
+    assert configuration.audience == AUDIENCE
+    assert configuration.key_id == KEY_ID
+    assert configuration.clock_skew_seconds == 0
+    assert configuration.knowledge_admin_role == "Administrador"
+    assert isinstance(configuration.public_key_pem_base64, SecretStr)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "jwt_public_key_pem_base64",
+        "jwt_issuer",
+        "jwt_audience",
+        "jwt_key_id",
+        "knowledge_admin_role",
+    ],
+)
+def test_active_jwt_configuration_rejects_blank_required_values(field: str) -> None:
+    with pytest.raises(ValueError, match="JWT|administrator"):
+        Settings(**{field: " "}, _env_file=None).active_jwt_configuration()
+
+
+@pytest.mark.parametrize("clock_skew", [-1, 301])
+def test_jwt_clock_skew_is_bounded(clock_skew: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(jwt_clock_skew_seconds=clock_skew, _env_file=None)
 
 
 def test_settings_read_prefixed_environment_variables(

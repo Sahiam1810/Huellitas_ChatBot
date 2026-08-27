@@ -25,6 +25,7 @@ from app.shared.exceptions import (
     VectorStoreInvalidResponseError,
     VectorStoreUnavailableError,
 )
+from tests.support.jwt import TEST_JWT_KEYS, issue_token
 
 DOCUMENT_ID = UUID("0b4889ae-ddb6-428b-8833-7f14c499779d")
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
@@ -63,10 +64,17 @@ def knowledge_service(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def administrator_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {issue_token(TEST_JWT_KEYS, role='Administrador')}"}
+
+
 def client_with(service: SimpleNamespace) -> TestClient:
     app = create_application(Settings(environment="test", _env_file=None))
     app.dependency_overrides[get_knowledge_management_service] = lambda: service
-    return TestClient(app)
+    return TestClient(
+        app,
+        headers=administrator_headers(),
+    )
 
 
 def create_payload() -> dict[str, object]:
@@ -78,6 +86,63 @@ def create_payload() -> dict[str, object]:
         "tags": ["vaccination", "vaccination"],
         "active": True,
     }
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/api/v1/knowledge/documents", create_payload()),
+        ("get", "/api/v1/knowledge/documents", None),
+        ("get", f"/api/v1/knowledge/documents/{DOCUMENT_ID}", None),
+        (
+            "put",
+            f"/api/v1/knowledge/documents/{DOCUMENT_ID}",
+            {
+                "title": "Updated",
+                "content": "New",
+                "source": "manual",
+                "tags": [],
+                "active": True,
+            },
+        ),
+        (
+            "patch",
+            f"/api/v1/knowledge/documents/{DOCUMENT_ID}/status",
+            {"active": False},
+        ),
+        ("delete", f"/api/v1/knowledge/documents/{DOCUMENT_ID}", None),
+        ("post", f"/api/v1/knowledge/documents/{DOCUMENT_ID}/restore", None),
+    ],
+)
+def test_knowledge_operations_reject_non_administrator(
+    auth_headers: dict[str, str],
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+) -> None:
+    service = knowledge_service()
+    app = create_application(Settings(environment="test", _env_file=None))
+    app.dependency_overrides[get_knowledge_management_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.request(method, path, json=body, headers=auth_headers)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "insufficient_permissions"
+    assert all(operation.await_count == 0 for operation in vars(service).values())
+
+
+def test_knowledge_operations_require_authentication() -> None:
+    service = knowledge_service()
+    app = create_application(Settings(environment="test", _env_file=None))
+    app.dependency_overrides[get_knowledge_management_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/knowledge/documents")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "authentication_required"
+    assert service.list.await_count == 0
 
 
 def test_knowledge_endpoints_map_all_document_operations() -> None:
@@ -117,7 +182,7 @@ def test_knowledge_endpoints_map_all_document_operations() -> None:
 
 def test_missing_knowledge_service_returns_safe_503() -> None:
     app = create_application(Settings(environment="test", _env_file=None))
-    with TestClient(app) as client:
+    with TestClient(app, headers=administrator_headers()) as client:
         response = client.get("/api/v1/knowledge/documents")
 
     assert response.status_code == 503

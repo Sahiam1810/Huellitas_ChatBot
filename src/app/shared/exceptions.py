@@ -116,3 +116,31 @@ class IdempotencyKeyConflictError(IdempotencyError):
 
 class IdempotencyCapacityExceededError(IdempotencyError):
     pass
+
+
+class TokenValidatorConfigurationError(RuntimeError):
+    """Raised when access-token validation cannot be configured safely."""
+
+
+class AuthenticationError(RuntimeError):
+    """Base error for access-token authentication failures."""
+
+
+class AuthenticationRequiredError(AuthenticationError):
+    pass
+
+
+class InvalidAccessTokenError(AuthenticationError):
+    pass
+
+
+class AuthorizationError(RuntimeError):
+    """Base error for authenticated requests that are not authorized."""
+
+
+class IdentityMismatchError(AuthorizationError):
+    pass
+
+
+class InsufficientPermissionsError(AuthorizationError):
+    pass
