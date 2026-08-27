@@ -7,6 +7,9 @@ from fastapi.responses import JSONResponse
 from app.api.schemas.health import ProblemDetail
 from app.api.schemas.responses import MessageProblemDetail
 from app.shared.exceptions import (
+    AuthenticationError,
+    AuthenticationRequiredError,
+    AuthorizationError,
     ChatModelError,
     EmbeddingAuthenticationError,
     EmbeddingConfigurationError,
@@ -19,6 +22,9 @@ from app.shared.exceptions import (
     IdempotencyCapacityExceededError,
     IdempotencyError,
     IdempotencyKeyConflictError,
+    IdentityMismatchError,
+    InsufficientPermissionsError,
+    InvalidAccessTokenError,
     KnowledgeDocumentConsistencyError,
     KnowledgeDocumentDeletedError,
     KnowledgeDocumentNotFoundError,
@@ -174,6 +180,30 @@ IDEMPOTENCY_PROBLEMS: dict[type[IdempotencyError], ProblemSpec] = {
     ),
 }
 
+AUTHENTICATION_PROBLEMS: dict[type[AuthenticationError], ProblemSpec] = {
+    AuthenticationRequiredError: ProblemSpec(
+        "Unauthorized", 401, "Authentication is required", "authentication_required"
+    ),
+    InvalidAccessTokenError: ProblemSpec(
+        "Unauthorized", 401, "Access token is invalid", "invalid_access_token"
+    ),
+}
+
+AUTHORIZATION_PROBLEMS: dict[type[AuthorizationError], ProblemSpec] = {
+    IdentityMismatchError: ProblemSpec(
+        "Forbidden",
+        403,
+        "Authenticated identity does not match the request",
+        "identity_mismatch",
+    ),
+    InsufficientPermissionsError: ProblemSpec(
+        "Forbidden",
+        403,
+        "Authenticated role does not have sufficient permissions",
+        "insufficient_permissions",
+    ),
+}
+
 
 def problem_response(problem: MessageProblemDetail) -> JSONResponse:
     return JSONResponse(
@@ -264,6 +294,40 @@ async def idempotency_error_handler(
     )
 
 
+async def authentication_error_handler(
+    request: Request,
+    error: AuthenticationError,
+) -> JSONResponse:
+    spec = AUTHENTICATION_PROBLEMS[type(error)]
+    response = problem_response(
+        MessageProblemDetail(
+            title=spec.title,
+            status=spec.status,
+            detail=spec.detail,
+            instance=request.url.path,
+            code=spec.code,
+        )
+    )
+    response.headers["WWW-Authenticate"] = "Bearer"
+    return response
+
+
+async def authorization_error_handler(
+    request: Request,
+    error: AuthorizationError,
+) -> JSONResponse:
+    spec = AUTHORIZATION_PROBLEMS[type(error)]
+    return problem_response(
+        MessageProblemDetail(
+            title=spec.title,
+            status=spec.status,
+            detail=spec.detail,
+            instance=request.url.path,
+            code=spec.code,
+        )
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ServiceNotReadyError, service_not_ready_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
@@ -273,3 +337,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         app.add_exception_handler(error_type, dependency_error_handler)
     for error_type in IDEMPOTENCY_PROBLEMS:
         app.add_exception_handler(error_type, idempotency_error_handler)
+    for error_type in AUTHENTICATION_PROBLEMS:
+        app.add_exception_handler(error_type, authentication_error_handler)
+    for error_type in AUTHORIZATION_PROBLEMS:
+        app.add_exception_handler(error_type, authorization_error_handler)
