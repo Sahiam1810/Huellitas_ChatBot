@@ -81,6 +81,17 @@ class ActiveRagConfiguration(BaseModel):
     semantic_medium_threshold: float
 
 
+class ActiveJwtConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    public_key_pem_base64: SecretStr
+    issuer: str
+    audience: str
+    key_id: str
+    clock_skew_seconds: int
+    knowledge_admin_role: str
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HUELLITAS_",
@@ -98,6 +109,13 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
+
+    jwt_public_key_pem_base64: SecretStr | None = None
+    jwt_issuer: str = "Veterinaria.Api"
+    jwt_audience: str = "Veterinaria.Client"
+    jwt_key_id: str | None = None
+    jwt_clock_skew_seconds: int = Field(default=0, ge=0, le=300)
+    knowledge_admin_role: str = "Administrador"
 
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER
@@ -213,6 +231,31 @@ class Settings(BaseSettings):
         return ActiveIdempotencyConfiguration(
             ttl_seconds=self.idempotency_ttl_seconds,
             max_entries=self.idempotency_max_entries,
+        )
+
+    def active_jwt_configuration(self) -> ActiveJwtConfiguration:
+        public_key = self.jwt_public_key_pem_base64
+        if public_key is None or not public_key.get_secret_value().strip():
+            raise ValueError("JWT public key is required")
+        issuer = self.jwt_issuer.strip()
+        if not issuer:
+            raise ValueError("JWT issuer is required")
+        audience = self.jwt_audience.strip()
+        if not audience:
+            raise ValueError("JWT audience is required")
+        key_id = self.jwt_key_id.strip() if self.jwt_key_id is not None else ""
+        if not key_id:
+            raise ValueError("JWT key ID is required")
+        knowledge_admin_role = self.knowledge_admin_role.strip()
+        if not knowledge_admin_role:
+            raise ValueError("Knowledge administrator role is required")
+        return ActiveJwtConfiguration(
+            public_key_pem_base64=public_key,
+            issuer=issuer,
+            audience=audience,
+            key_id=key_id,
+            clock_skew_seconds=self.jwt_clock_skew_seconds,
+            knowledge_admin_role=knowledge_admin_role,
         )
 
     def active_vector_store_configuration(self) -> ActiveVectorStoreConfiguration | None:

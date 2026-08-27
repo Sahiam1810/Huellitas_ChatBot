@@ -52,6 +52,8 @@
 ### Task 1: JWT configuration and isolated test key support
 
 **Files:**
+- Modify: `pyproject.toml`
+- Modify: `uv.lock`
 - Create: `tests/support/__init__.py`
 - Create: `tests/support/jwt.py`
 - Create: `tests/conftest.py`
@@ -62,6 +64,13 @@
 - Produces: `ActiveJwtConfiguration(public_key_pem_base64, issuer, audience, key_id, clock_skew_seconds, knowledge_admin_role)`.
 - Produces: `Settings.active_jwt_configuration() -> ActiveJwtConfiguration`.
 - Produces: pytest fixtures `jwt_key_material`, `issue_access_token`, `auth_headers`, and `admin_auth_headers`.
+
+- [ ] **Step 0: Add the JWT dependency required by test support**
+
+Run: `uv add "PyJWT[crypto]>=2.10.1,<3.0.0"`
+
+Confirm `pyproject.toml` contains the direct dependency and `uv.lock` is updated without unrelated
+package removals.
 
 - [ ] **Step 1: Create ephemeral RSA test support**
 
@@ -154,8 +163,6 @@ git commit -m "feat: :sparkles: configure JWT validation"
 ### Task 2: Provider-neutral token validation port and RS256 adapter
 
 **Files:**
-- Modify: `pyproject.toml`
-- Modify: `uv.lock`
 - Modify: `src/app/ports/token_validator.py`
 - Modify: `src/app/adapters/security/jwt.py`
 - Modify: `src/app/shared/exceptions.py`
@@ -167,14 +174,7 @@ git commit -m "feat: :sparkles: configure JWT validation"
 - Produces: `JwtRs256TokenValidator(configuration)`.
 - Produces: `TokenValidatorConfigurationError` and `InvalidAccessTokenError`.
 
-- [ ] **Step 1: Add the direct JWT dependency**
-
-Run: `uv add "PyJWT[crypto]>=2.10.1,<3.0.0"`
-
-Confirm `pyproject.toml` contains the direct dependency and `uv.lock` is updated without unrelated
-package removals.
-
-- [ ] **Step 2: Write failing contract and adapter tests**
+- [ ] **Step 1: Write failing contract and adapter tests**
 
 Cover a valid backend-compatible token plus rejections for malformed Base64, non-PEM keys, non-RSA
 keys, RSA below 2048 bits, HS256, wrong/missing `kid`, wrong signature, issuer, audience, expired,
@@ -192,13 +192,13 @@ assert principal.username == "cliente.demo"
 assert principal.email == "cliente@example.test"
 ```
 
-- [ ] **Step 3: Run the adapter tests and confirm RED**
+- [ ] **Step 2: Run the adapter tests and confirm RED**
 
 Run: `uv run pytest tests/unit/adapters/security/test_jwt.py -q`
 
 Expected: FAIL because the port, exceptions, and adapter are empty or absent.
 
-- [ ] **Step 4: Define the neutral port**
+- [ ] **Step 3: Define the neutral port**
 
 Implement this public shape in `src/app/ports/token_validator.py`:
 
@@ -220,7 +220,7 @@ class TokenValidator(Protocol):
 
 The port must not import FastAPI, PyJWT, cryptography, settings, or adapters.
 
-- [ ] **Step 5: Implement strict RS256 validation**
+- [ ] **Step 4: Implement strict RS256 validation**
 
 In `JwtRs256TokenValidator.__init__`, Base64-decode with validation, load the PEM public key, assert
 it is `RSAPublicKey`, and require `key_size >= 2048`; map all setup failures to
@@ -245,7 +245,7 @@ Parse UUID claims strictly and require nonblank role, username, and email. Catch
 failures and raise `InvalidAccessTokenError("Access token is invalid")` without chaining details
 into an HTTP response.
 
-- [ ] **Step 6: Run adapter, lint, and architecture-focused tests**
+- [ ] **Step 5: Run adapter, lint, and architecture-focused tests**
 
 Run: `uv run pytest tests/unit/adapters/security/test_jwt.py tests/architecture/test_foundation_boundaries.py -q`
 
@@ -253,7 +253,7 @@ Run: `uv run ruff check src/app/ports/token_validator.py src/app/adapters/securi
 
 Expected: all PASS.
 
-- [ ] **Step 7: Commit the validator increment**
+- [ ] **Step 6: Commit the validator increment**
 
 ```powershell
 git add pyproject.toml uv.lock src/app/ports/token_validator.py src/app/adapters/security/jwt.py src/app/shared/exceptions.py tests/unit/adapters/security/test_jwt.py
