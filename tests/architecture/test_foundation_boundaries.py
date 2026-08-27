@@ -191,6 +191,7 @@ def test_rag_evaluation_core_is_independent_from_runtime_and_sdks() -> None:
     evaluation_files = (
         Path("src/app/evaluation/rag_routing/contracts.py"),
         Path("src/app/evaluation/rag_routing/dataset_loader.py"),
+        Path("src/app/evaluation/rag_routing/observation_collector.py"),
     )
     forbidden_prefixes = (
         "fastapi",
