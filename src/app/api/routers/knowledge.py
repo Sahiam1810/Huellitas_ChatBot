@@ -1,9 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Response, Security, status
 
-from app.api.dependencies import get_knowledge_management_service
+from app.api.dependencies import (
+    get_knowledge_management_service,
+    require_knowledge_administrator,
+)
 from app.api.schemas.knowledge import (
     CreateKnowledgeDocumentRequest,
     KnowledgeDocumentPageResponse,
@@ -19,9 +22,15 @@ from app.knowledge.contracts import (
 )
 from app.knowledge.management_service import KnowledgeManagementService
 
-router = APIRouter(prefix="/knowledge/documents", tags=["Knowledge"])
+router = APIRouter(
+    prefix="/knowledge/documents",
+    tags=["Knowledge"],
+    dependencies=[Security(require_knowledge_administrator)],
+)
 
 ERROR_RESPONSES = {
+    401: {"model": MessageProblemDetail, "description": "Authentication is required."},
+    403: {"model": MessageProblemDetail, "description": "Administrator role is required."},
     404: {"model": MessageProblemDetail, "description": "Document not found."},
     409: {"model": MessageProblemDetail, "description": "Document state conflict."},
     422: {"model": MessageProblemDetail, "description": "Invalid document request."},
