@@ -78,17 +78,17 @@ async def _collect_observations(
         raise ValueError("live retrieval requires active RAG and embedding configuration")
 
     embedding_model = create_embedding_model(settings)
-    vector_store = create_vector_store(settings)
-    if embedding_model is None or vector_store is None:
-        raise ValueError("live retrieval infrastructure is not configured")
-    if not hasattr(vector_store, "search_global") or not hasattr(
-        vector_store, "search_conversation"
-    ):
-        await embedding_model.close()
-        await vector_store.close()
-        raise ValueError("vector store does not expose RAG search capabilities")
-
+    vector_store = None
     try:
+        if embedding_model is None:
+            raise ValueError("live retrieval infrastructure is not configured")
+        vector_store = create_vector_store(settings)
+        if vector_store is None:
+            raise ValueError("live retrieval infrastructure is not configured")
+        if not hasattr(vector_store, "search_global") or not hasattr(
+            vector_store, "search_conversation"
+        ):
+            raise ValueError("vector store does not expose RAG search capabilities")
         collector = LiveRetrievalObservationCollector(
             embedding_model,
             vector_store,
@@ -98,8 +98,10 @@ async def _collect_observations(
         )
         observations = await collector.collect(dataset)
     finally:
-        await embedding_model.close()
-        await vector_store.close()
+        if embedding_model is not None:
+            await embedding_model.close()
+        if vector_store is not None:
+            await vector_store.close()
 
     return observations, ReportMetadata(
         mode="live-retrieval",

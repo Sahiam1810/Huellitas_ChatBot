@@ -115,6 +115,49 @@ async def test_live_mode_closes_embedding_and_qdrant_resources(
 
 
 @pytest.mark.anyio
+async def test_live_mode_closes_embedding_when_qdrant_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Embedding:
+        dimensions = 3
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    embedding = Embedding()
+    settings = SimpleNamespace(
+        active_rag_configuration=lambda: SimpleNamespace(
+            global_limit=4,
+            conversation_limit=3,
+        ),
+        active_embedding_configuration=lambda: SimpleNamespace(
+            provider=EmbeddingProvider.OPENAI,
+            model="embedding-test",
+        ),
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_embedding_model", lambda active: embedding)
+    monkeypatch.setattr(cli, "create_vector_store", lambda active: None)
+
+    code = await cli.async_main(
+        [
+            "evaluate",
+            "--mode",
+            "live-retrieval",
+            "--dataset",
+            DATASET,
+            "--allow-paid-embeddings",
+        ]
+    )
+
+    assert code == 1
+    assert embedding.closed == 1
+
+
+@pytest.mark.anyio
 async def test_tune_offline_produces_a_safe_recommendation(tmp_path: Path) -> None:
     code = await cli.async_main(["tune", "--dataset", DATASET, "--output-dir", str(tmp_path)])
 
