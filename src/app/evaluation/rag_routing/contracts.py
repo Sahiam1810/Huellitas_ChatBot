@@ -181,3 +181,25 @@ class EvaluationResult:
     medium_threshold: float
     cases: tuple[CaseEvaluation, ...]
     metrics: EvaluationMetrics
+
+
+class RecommendationStatus(StrEnum):
+    RECOMMENDED = "recommended"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdRecommendation:
+    status: RecommendationStatus
+    high_threshold: float | None
+    medium_threshold: float | None
+    reason: str | None
+    environment: dict[str, str] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdOptimizationResult:
+    calibration: EvaluationResult | None
+    validation: EvaluationResult | None
+    recommendation: ThresholdRecommendation
+    evaluated_pairs: int
