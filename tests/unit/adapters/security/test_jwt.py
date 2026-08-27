@@ -86,17 +86,19 @@ def test_validator_rejects_invalid_public_key_material(
     public_key: SecretStr,
 ) -> None:
     with pytest.raises(TokenValidatorConfigurationError):
-        JwtRs256TokenValidator(
-            configuration(jwt_key_material, public_key_pem_base64=public_key)
-        )
+        JwtRs256TokenValidator(configuration(jwt_key_material, public_key_pem_base64=public_key))
 
 
 def test_validator_rejects_non_rsa_public_key(
     jwt_key_material: JwtTestKeyMaterial,
 ) -> None:
-    ec_public_pem = ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ec_public_pem = (
+        ec.generate_private_key(ec.SECP256R1())
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
     )
 
     with pytest.raises(TokenValidatorConfigurationError):

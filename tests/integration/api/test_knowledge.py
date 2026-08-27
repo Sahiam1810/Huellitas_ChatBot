@@ -65,9 +65,7 @@ def knowledge_service(**overrides: object) -> SimpleNamespace:
 
 
 def administrator_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {issue_token(TEST_JWT_KEYS, role='Administrador')}"
-    }
+    return {"Authorization": f"Bearer {issue_token(TEST_JWT_KEYS, role='Administrador')}"}
 
 
 def client_with(service: SimpleNamespace) -> TestClient:
