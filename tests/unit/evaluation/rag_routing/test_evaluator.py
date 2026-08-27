@@ -103,6 +103,7 @@ def test_evaluate_observations_calculates_routes_metrics_and_savings() -> None:
     }
     assert result.metrics.llm_calls_avoided == 1
     assert result.metrics.actual_llm_calls == 2
+    assert result.metrics.direct_answer_precision == 1.0
     assert result.metrics.observed_tokens_avoided == 120
     assert result.metrics.token_coverage == pytest.approx(1 / 3)
 
@@ -151,6 +152,7 @@ def test_evaluate_observations_marks_unsafe_false_direct() -> None:
 
     assert result.metrics.false_direct_ids == ("unsafe",)
     assert result.metrics.unsafe_direct_ids == ("unsafe",)
+    assert result.metrics.direct_answer_precision == 0.0
     assert result.metrics.per_route["contextual"].precision == 0.0
     assert result.metrics.per_route["general"].f1 == 0.0
 

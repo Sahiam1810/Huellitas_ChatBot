@@ -128,6 +128,7 @@ def _metrics_payload(metrics: EvaluationMetrics) -> dict[str, Any]:
         "actualLlmCalls": metrics.actual_llm_calls,
         "llmCallsAvoided": metrics.llm_calls_avoided,
         "llmCallAvoidanceRate": metrics.llm_call_avoidance_rate,
+        "directAnswerPrecision": metrics.direct_answer_precision,
         "observedTokensAvoided": metrics.observed_tokens_avoided,
         "tokenCoverage": metrics.token_coverage,
     }
@@ -189,6 +190,7 @@ def _evaluation_markdown(
         f"Thresholds: high `{result.high_threshold:.2f}`, medium `{result.medium_threshold:.2f}`",
         f"Accuracy: {metrics.accuracy:.4f}",
         f"Macro F1: {metrics.macro_f1:.4f}",
+        f"Direct answer precision: {metrics.direct_answer_precision:.4f}",
         f"LLM calls avoided: {metrics.llm_calls_avoided}",
         f"Observed tokens avoided: {metrics.observed_tokens_avoided}",
         f"Token coverage: {metrics.token_coverage:.2%}",

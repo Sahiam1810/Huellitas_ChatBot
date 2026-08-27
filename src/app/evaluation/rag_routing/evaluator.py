@@ -101,6 +101,7 @@ def _calculate_metrics(
     total = len(cases)
     correct = sum(case.expected_route is case.predicted_route for case in cases)
     calls_avoided = distribution[SemanticRoute.DIRECT.value]
+    correct_directs = sum(case.direct_answer_correct is True for case in cases)
     measured_cases = sum(
         observation.case.baseline_usage is not None for observation in observations
     )
@@ -127,6 +128,7 @@ def _calculate_metrics(
         actual_llm_calls=total - calls_avoided,
         llm_calls_avoided=calls_avoided,
         llm_call_avoidance_rate=_safe_ratio(calls_avoided, total),
+        direct_answer_precision=_safe_ratio(correct_directs, calls_avoided),
         observed_tokens_avoided=observed_tokens_avoided,
         token_coverage=_safe_ratio(measured_cases, total),
     )

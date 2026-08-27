@@ -71,6 +71,7 @@ def test_write_reports_serializes_safe_machine_and_human_results(tmp_path: Path)
         "embedding": {"provider": None, "model": None},
     }
     assert payload["evaluation"]["metrics"]["routeDistribution"]["direct"] == 1
+    assert payload["evaluation"]["metrics"]["directAnswerPrecision"] == 1.0
     assert "Pregunta privada" not in serialized
     assert "Respuesta segura" not in serialized
     assert "vector" not in serialized.casefold()

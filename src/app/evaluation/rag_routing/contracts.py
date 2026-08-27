@@ -171,6 +171,7 @@ class EvaluationMetrics:
     actual_llm_calls: int
     llm_calls_avoided: int
     llm_call_avoidance_rate: float
+    direct_answer_precision: float
     observed_tokens_avoided: int
     token_coverage: float
 
