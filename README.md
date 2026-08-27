@@ -151,6 +151,17 @@ Un documento global ordinario nunca se devuelve directamente, incluso con simili
 
 Los valores `0.95` y `0.80` son puntos iniciales, no certezas universales; deben calibrarse con preguntas reales para el modelo de embeddings activo. Esta optimización puede ahorrar generación y tokens del LLM, pero siempre requiere el embedding y la consulta a Qdrant. El routing actual requiere distancia `cosine`; el clasificador de complejidad, reranking y búsqueda híbrida permanecen fuera de alcance.
 
+### Evaluación y calibración del routing
+
+El repositorio incluye un corpus veterinario sintético y una CLI desacoplada de FastAPI. El modo offline no lee `.env`, no usa red y permite evaluar o calibrar los umbrales reproduciblemente:
+
+```powershell
+uv run python -m app.evaluation.rag_routing evaluate --dataset evaluations/datasets/veterinary-routing-v1.jsonl
+uv run python -m app.evaluation.rag_routing tune --dataset evaluations/datasets/veterinary-routing-v1.jsonl
+```
+
+Los reportes JSON y Markdown quedan centralizados en `.cache/evaluations/`. Existe un modo `live-retrieval` de solo lectura para embeddings y Qdrant, protegido por el consentimiento explícito `--allow-paid-embeddings`. Consulta la [guía de evaluación del routing RAG](docs/rag-routing-evaluation.md) antes de usarlo o aplicar una recomendación.
+
 ## Idempotencia temporal de mensajes
 
 El agente coordina temporalmente los reintentos de `POST /api/v1/messages` mediante la identidad compuesta por `conversationId` e `idempotencyKey`. Está habilitada por defecto y se configura con:
@@ -319,3 +330,4 @@ Las pruebas actuales no son pruebas en vivo de los proveedores. No agregues cred
 - [Diseño de RAG y conocimiento](docs/plans/2026-08-26-rag-knowledge-foundation-design.md)
 - [Diseño de integración RAG en mensajes](docs/plans/2026-08-26-rag-messages-integration-design.md)
 - [Diseño de administración de documentos RAG](docs/plans/2026-08-26-rag-knowledge-documents-design.md)
+- [Evaluación y calibración del routing RAG](docs/rag-routing-evaluation.md)

@@ -628,6 +628,12 @@ Aplicar routing semántico
 
 La respuesta HTTP informa `route` y `topScore` sin revelar vectores, contenido recuperado o IDs de puntos. La similitud siempre exige embedding y búsqueda; la ruta directa ahorra la generación del LLM y evita duplicar memoria. Los umbrales deben evaluarse con un corpus veterinario representativo antes de producción.
 
+## Evaluador desacoplado de routing
+
+`app.evaluation.rag_routing` es una herramienta de desarrollo fuera del runtime FastAPI. Reutiliza la política neutral y mide un corpus veterinario versionado en modos offline o `live-retrieval`. El primero usa candidatos reproducibles sin entorno ni red; el segundo genera embeddings y consulta las colecciones existentes en modo de solo lectura, con consentimiento explícito, sin invocar el modelo conversacional ni escribir en Qdrant.
+
+La calibración selecciona umbrales únicamente con la partición de calibración y verifica después la combinación elegida sobre validación. Un solo falso directo bloquea la recomendación. Los reportes se guardan bajo `.cache/evaluations/`, no contienen preguntas, respuestas, vectores o secretos y nunca modifican `.env`. Esta capacidad técnica no cambia la propiedad de datos: .NET y Oracle continúan siendo la fuente de operaciones, historial, escalamiento y datos dinámicos.
+
 ## Metadatos mínimos
 
 - ID y versión del documento.
@@ -724,7 +730,7 @@ La implementación actual utiliza `(conversationId, idempotencyKey)` como identi
 
 El adaptador actual vive en memoria, aplica TTL y capacidad acotada y elimina la entrada si la ejecución propietaria falla para permitir un reintento real. Su estado desaparece al reiniciar y no se comparte entre réplicas. La idempotencia durable de operaciones y mensajes seguirá perteneciendo a .NET/Oracle o a una infraestructura distribuida como Redis; la frontera `IdempotencyStore` permite sustituir el adaptador sin acoplar el flujo conversacional.
 
-La similitud vectorial no define idempotencia. El Query Routing o RAG adaptativo se diseñará como un incremento independiente para decidir cuándo reutilizar una respuesta de alta confianza, recuperar contexto o recurrir al modelo general.
+La similitud vectorial no define idempotencia. El Query Routing o RAG adaptativo decide después de una ejecución nueva cuándo reutilizar una respuesta autorizada, recuperar contexto o recurrir al modelo general; un replay idempotente se resuelve antes y no repite ninguna de esas operaciones.
 
 Las operaciones con efectos siguen este flujo:
 
