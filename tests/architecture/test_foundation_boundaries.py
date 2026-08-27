@@ -187,6 +187,30 @@ def test_semantic_routing_policy_is_independent_from_http_and_sdks() -> None:
     assert forbidden == []
 
 
+def test_rag_evaluation_core_is_independent_from_runtime_and_sdks() -> None:
+    evaluation_files = (
+        Path("src/app/evaluation/rag_routing/contracts.py"),
+        Path("src/app/evaluation/rag_routing/dataset_loader.py"),
+    )
+    forbidden_prefixes = (
+        "fastapi",
+        "app.api",
+        "app.bootstrap",
+        "app.adapters",
+        "qdrant_client",
+        "openai",
+        "google",
+    )
+    violations = {
+        str(path): sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        for path in evaluation_files
+    }
+
+    assert {path: names for path, names in violations.items() if names} == {}
+
+
 def test_provider_secret_is_absent_from_http_metadata() -> None:
     secret = "must-never-be-exposed"
     app = create_application(
