@@ -9,9 +9,11 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_message_processor
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.ports.chat_model import ChatResponse, ModelProvider
 from app.ports.conversation_memory_store import ConversationMemoryMatch
 from app.ports.embedding_model import (
@@ -21,6 +23,7 @@ from app.ports.embedding_model import (
     EmbeddingVector,
 )
 from app.ports.global_knowledge_store import GlobalKnowledgeKind, GlobalKnowledgeMatch
+from app.shared.enums import MessageResponseType
 from app.shared.exceptions import (
     ModelAuthenticationError,
     ModelInvalidResponseError,
@@ -29,9 +32,10 @@ from app.shared.exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
 )
+from tests.support.jwt import PERSON_ID, TEST_JWT_KEYS, issue_token
 
 CONVERSATION_ID = "bda5a441-e907-4781-bca6-44c25a73255a"
-USER_ID = "68d10da5-d6a8-4e49-8aaa-69c64d19dbb9"
+USER_ID = str(PERSON_ID)
 CORRELATION_ID = "8dd1b2d9-4812-463a-87a4-eb6346cb2f83"
 OTHER_CONVERSATION_ID = "ea4e90b7-a58d-4f85-944a-1fc1bc6f484c"
 
@@ -44,15 +48,17 @@ def payload(
     message: str = "Necesito información",
     correlation_id: str = CORRELATION_ID,
     idempotency_key: str = "message-001",
+    user_id: str = USER_ID,
+    roles: list[str] | None = None,
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "message": message,
         "conversationId": conversation_id,
-        "userId": USER_ID,
+        "userId": user_id,
         "petId": None,
         "channel": "whatsapp",
         "language": "es-CO",
-        "roles": ["customer"],
+        "roles": roles if roles is not None else ["Cliente"],
         "isEscalated": is_escalated,
         "correlationId": correlation_id,
         "idempotencyKey": idempotency_key,
@@ -60,6 +66,97 @@ def payload(
     if publish_as_global_knowledge:
         result["publishAsGlobalKnowledge"] = True
     return result
+
+
+class RecordingMessageProcessor:
+    def __init__(self) -> None:
+        self.command: MessageCommand | None = None
+
+    async def process(self, command: MessageCommand) -> MessageResult:
+        self.command = command
+        return MessageResult(
+            message=None,
+            conversation_id=command.conversation_id,
+            correlation_id=command.correlation_id,
+            response_type=MessageResponseType.HUMAN_CONTROLLED,
+        )
+
+
+def authenticated_client(app: object) -> TestClient:
+    return TestClient(
+        app,
+        headers={"Authorization": f"Bearer {issue_token(TEST_JWT_KEYS)}"},
+    )
+
+
+def test_messages_require_bearer_authentication() -> None:
+    app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/messages", json=payload(is_escalated=True))
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "authentication_required"
+
+
+def test_messages_reject_invalid_bearer_token() -> None:
+    app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/messages",
+            json=payload(is_escalated=True),
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "invalid_access_token"
+
+
+@pytest.mark.parametrize(
+    "request_overrides",
+    [
+        {"user_id": "44444444-4444-4444-4444-444444444444"},
+        {"roles": []},
+        {"roles": ["Veterinario"]},
+        {"roles": ["Cliente", "Administrador"]},
+    ],
+)
+def test_messages_reject_identity_or_role_mismatch(
+    auth_headers: dict[str, str],
+    request_overrides: dict[str, object],
+) -> None:
+    app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/messages",
+            json=payload(is_escalated=True, **request_overrides),
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "identity_mismatch"
+
+
+def test_messages_build_command_from_authenticated_identity(
+    auth_headers: dict[str, str],
+) -> None:
+    processor = RecordingMessageProcessor()
+    app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
+    app.dependency_overrides[get_message_processor] = lambda: processor
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/messages",
+            json=payload(is_escalated=True),
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    assert processor.command is not None
+    assert processor.command.user_id == PERSON_ID
+    assert processor.command.roles == ("Cliente",)
 
 
 def provider_settings() -> Settings:
@@ -133,7 +230,7 @@ def test_messages_endpoint_returns_active_provider_response(
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
     app = create_application(provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post("/api/v1/messages", json=payload())
 
     assert response.status_code == 200
@@ -162,7 +259,7 @@ def test_messages_endpoint_returns_active_provider_response(
 def test_escalated_message_returns_human_control_without_model() -> None:
     app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post(
             "/api/v1/messages",
             json=payload(is_escalated=True),
@@ -229,7 +326,7 @@ def test_rag_messages_isolate_memory_and_publish_globally_only_when_requested(
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
     app = create_application(rag_provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         private_response = client.post("/api/v1/messages", json=payload())
         global_response = client.post(
             "/api/v1/messages",
@@ -303,7 +400,7 @@ def test_high_private_memory_replays_directly_without_model_or_write(
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
     app = create_application(semantic_rag_provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         first = client.post("/api/v1/messages", json=payload())
         replay = client.post("/api/v1/messages", json=payload())
 
@@ -386,7 +483,7 @@ def test_high_document_uses_contextual_model_route(
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
     app = create_application(semantic_rag_provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post("/api/v1/messages", json=payload(idempotency_key="document-001"))
 
     assert response.status_code == 200
@@ -437,7 +534,7 @@ def test_repeated_message_replays_without_duplicate_rag_or_provider_effects(
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: store)
     app = create_application(rag_provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         first = client.post("/api/v1/messages", json=payload())
         replay = client.post("/api/v1/messages", json=payload())
         traced_replay = client.post(
@@ -474,7 +571,7 @@ def test_reused_idempotency_key_with_another_message_returns_conflict(
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
     app = create_application(provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         first = client.post("/api/v1/messages", json=payload())
         conflict = client.post("/api/v1/messages", json=payload(message="Contenido diferente"))
 
@@ -503,7 +600,7 @@ def test_failed_message_can_retry_the_same_idempotency_key(
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
     app = create_application(provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         failed = client.post("/api/v1/messages", json=payload())
         retried = client.post("/api/v1/messages", json=payload())
 
@@ -535,7 +632,7 @@ def test_concurrent_http_retries_share_one_provider_execution(
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
     app = create_application(provider_settings())
 
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as executor:
+    with authenticated_client(app) as client, ThreadPoolExecutor(max_workers=2) as executor:
         owner = executor.submit(client.post, "/api/v1/messages", json=payload())
         assert entered.wait(timeout=1)
         waiter = executor.submit(client.post, "/api/v1/messages", json=payload())
@@ -554,7 +651,7 @@ def test_concurrent_http_retries_share_one_provider_execution(
 def test_non_escalated_message_requires_enabled_chat() -> None:
     app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post("/api/v1/messages", json=payload())
 
     assert response.status_code == 503
@@ -568,7 +665,7 @@ def test_invalid_message_uses_safe_problem_details() -> None:
     invalid["unexpected"] = "secret-value"
     app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post("/api/v1/messages", json=invalid)
 
     assert response.status_code == 422
@@ -601,7 +698,7 @@ def test_provider_errors_are_safe_problem_details(
     monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
     app = create_application(provider_settings())
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         response = client.post("/api/v1/messages", json=payload())
 
     assert response.status_code == status

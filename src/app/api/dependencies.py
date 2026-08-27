@@ -3,11 +3,13 @@ from typing import Annotated
 from fastapi import Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.schemas.requests import MessageRequest
 from app.knowledge.management_service import KnowledgeManagementService
 from app.orchestration.message_handler import MessageHandler
 from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.exceptions import (
     AuthenticationRequiredError,
+    IdentityMismatchError,
     InsufficientPermissionsError,
     KnowledgeNotConfiguredError,
     ServiceNotReadyError,
@@ -42,6 +44,15 @@ def require_knowledge_administrator(
     if principal.role != request.app.state.settings.knowledge_admin_role.strip():
         raise InsufficientPermissionsError
     return principal
+
+
+def bind_message_identity(
+    payload: MessageRequest,
+    principal: AuthenticatedPrincipal,
+) -> tuple[str, ...]:
+    if payload.user_id != principal.person_id or tuple(payload.roles) != (principal.role,):
+        raise IdentityMismatchError
+    return (principal.role,)
 
 
 def get_message_processor(request: Request) -> MessageHandler:

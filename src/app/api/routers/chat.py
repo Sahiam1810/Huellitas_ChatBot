@@ -1,8 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, Security
 
-from app.api.dependencies import get_message_processor
+from app.api.dependencies import (
+    bind_message_identity,
+    get_authenticated_principal,
+    get_message_processor,
+)
 from app.api.schemas.requests import MessageRequest
 from app.api.schemas.responses import (
     MessageProblemDetail,
@@ -12,6 +16,7 @@ from app.api.schemas.responses import (
 )
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand
+from app.ports.token_validator import AuthenticatedPrincipal
 
 router = APIRouter(tags=["Messages"])
 
@@ -35,6 +40,11 @@ router = APIRouter(tags=["Messages"])
             "model": MessageProblemDetail,
             "description": "The idempotency key was reused with another request.",
         },
+        401: {"model": MessageProblemDetail, "description": "Authentication is required."},
+        403: {
+            "model": MessageProblemDetail,
+            "description": "Authenticated identity does not match the message envelope.",
+        },
         422: {"model": MessageProblemDetail, "description": "Invalid message envelope."},
         502: {
             "model": MessageProblemDetail,
@@ -55,7 +65,12 @@ async def create_message(
     payload: MessageRequest,
     response: Response,
     processor: Annotated[MessageHandler, Depends(get_message_processor)],
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Security(get_authenticated_principal),
+    ],
 ) -> MessageResponse:
+    authenticated_roles = bind_message_identity(payload, principal)
     result = await processor.process(
         MessageCommand(
             message=payload.message,
@@ -64,7 +79,7 @@ async def create_message(
             pet_id=payload.pet_id,
             channel=payload.channel,
             language=payload.language,
-            roles=tuple(payload.roles),
+            roles=authenticated_roles,
             is_escalated=payload.is_escalated,
             correlation_id=payload.correlation_id,
             idempotency_key=payload.idempotency_key,

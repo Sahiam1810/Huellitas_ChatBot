@@ -7,12 +7,10 @@ from tests.support.jwt import (
     AUDIENCE,
     ISSUER,
     KEY_ID,
+    TEST_JWT_KEYS,
     JwtTestKeyMaterial,
-    create_key_material,
     issue_token,
 )
-
-TEST_JWT_KEYS = create_key_material()
 
 
 @pytest.fixture(autouse=True)

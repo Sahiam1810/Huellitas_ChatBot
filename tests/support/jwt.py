@@ -76,3 +76,6 @@ def issue_token(
         algorithm="RS256",
         headers={"kid": key_id},
     )
+
+
+TEST_JWT_KEYS = create_key_material()
