@@ -150,9 +150,7 @@ def test_readiness_requires_both_vector_and_runtime_store_when_enabled(
 ) -> None:
     vector_store = SimpleNamespace(check_health=AsyncMock(), close=AsyncMock())
     runtime_store = SimpleNamespace(
-        check_health=AsyncMock(
-            side_effect=[None, RuntimeStoreUnavailableError("hidden")]
-        ),
+        check_health=AsyncMock(side_effect=[None, RuntimeStoreUnavailableError("hidden")]),
         close=AsyncMock(),
     )
     monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: vector_store)

@@ -102,8 +102,7 @@ def test_redis_sdk_is_isolated_to_runtime_store_adapters() -> None:
     violations = {
         str(path): sorted(imported_roots(path) & {"redis"})
         for path in Path("src/app").rglob("*.py")
-        if not path.is_relative_to(RUNTIME_STORE_ADAPTERS_ROOT)
-        and "redis" in imported_roots(path)
+        if not path.is_relative_to(RUNTIME_STORE_ADAPTERS_ROOT) and "redis" in imported_roots(path)
     }
 
     assert violations == {}

@@ -10,9 +10,7 @@ def create_runtime_store(settings: Settings) -> RuntimeStore | None:
     if configuration is None:
         return None
     password = (
-        configuration.password.get_secret_value()
-        if configuration.password is not None
-        else None
+        configuration.password.get_secret_value() if configuration.password is not None else None
     )
     client = Redis.from_url(
         str(configuration.url),
