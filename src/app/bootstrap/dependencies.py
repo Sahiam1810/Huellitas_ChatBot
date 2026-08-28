@@ -24,3 +24,5 @@ class ApplicationDependencies:
     conversation_memory_store: ConversationMemoryStore | None = None
     knowledge_management_service: KnowledgeManagementService | None = None
     idempotency_store: IdempotencyStore | None = None
+    main_graph: object | None = None
+    graph_checkpointer: object | None = None

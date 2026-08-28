@@ -9,7 +9,7 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
-from app.orchestration.message_processor import MessageProcessor
+from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.ports.chat_model import ChatResponse, ModelProvider
 from app.ports.embedding_model import (
     EmbeddingProvider,
@@ -283,13 +283,13 @@ def test_lifespan_composes_and_closes_in_memory_idempotency() -> None:
         )
 
 
-def test_disabled_idempotency_exposes_base_message_processor() -> None:
+def test_disabled_idempotency_exposes_graph_message_handler() -> None:
     app = create_application(
         Settings(environment="test", idempotency_enabled=False, _env_file=None)
     )
 
     with TestClient(app):
-        assert isinstance(app.state.dependencies.message_processor, MessageProcessor)
+        assert isinstance(app.state.dependencies.message_processor, LangGraphMessageHandler)
         assert app.state.dependencies.idempotency_store is None
 
 

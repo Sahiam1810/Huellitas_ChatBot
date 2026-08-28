@@ -1,10 +1,12 @@
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Response, Security
 
 from app.api.dependencies import (
+    AuthenticatedAccess,
     bind_message_identity,
-    get_authenticated_principal,
+    get_authenticated_access,
     get_message_processor,
 )
 from app.api.schemas.requests import MessageRequest
@@ -14,9 +16,9 @@ from app.api.schemas.responses import (
     RagResponse,
     TokenUsageResponse,
 )
+from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand
-from app.ports.token_validator import AuthenticatedPrincipal
 
 router = APIRouter(tags=["Messages"])
 
@@ -65,26 +67,33 @@ async def create_message(
     payload: MessageRequest,
     response: Response,
     processor: Annotated[MessageHandler, Depends(get_message_processor)],
-    principal: Annotated[
-        AuthenticatedPrincipal,
-        Security(get_authenticated_principal),
+    access: Annotated[
+        AuthenticatedAccess,
+        Security(get_authenticated_access),
     ],
 ) -> MessageResponse:
-    authenticated_roles = bind_message_identity(payload, principal)
+    authenticated_roles = bind_message_identity(payload, access.principal)
+    command = MessageCommand(
+        message=payload.message,
+        conversation_id=payload.conversation_id,
+        user_id=payload.user_id,
+        pet_id=payload.pet_id,
+        channel=payload.channel,
+        language=payload.language,
+        roles=authenticated_roles,
+        is_escalated=payload.is_escalated,
+        correlation_id=payload.correlation_id,
+        idempotency_key=payload.idempotency_key,
+        publish_as_global_knowledge=payload.publish_as_global_knowledge,
+    )
     result = await processor.process(
-        MessageCommand(
-            message=payload.message,
-            conversation_id=payload.conversation_id,
-            user_id=payload.user_id,
-            pet_id=payload.pet_id,
-            channel=payload.channel,
-            language=payload.language,
-            roles=authenticated_roles,
-            is_escalated=payload.is_escalated,
-            correlation_id=payload.correlation_id,
-            idempotency_key=payload.idempotency_key,
-            publish_as_global_knowledge=payload.publish_as_global_knowledge,
-        )
+        command,
+        ExecutionContext(
+            bearer_token=access.bearer_token,
+            principal=access.principal,
+            execution_id=uuid4(),
+            correlation_id=command.correlation_id,
+        ),
     )
     usage = None
     if result.input_tokens is not None or result.output_tokens is not None:

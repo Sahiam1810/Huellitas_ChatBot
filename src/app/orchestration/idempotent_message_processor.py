@@ -2,6 +2,7 @@ import hashlib
 import json
 from dataclasses import replace
 
+from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.ports.idempotency_store import (
@@ -36,7 +37,11 @@ class IdempotentMessageProcessor:
         self._inner = inner
         self._store = store
 
-    async def process(self, command: MessageCommand) -> MessageResult:
+    async def process(
+        self,
+        command: MessageCommand,
+        context: ExecutionContext,
+    ) -> MessageResult:
         execution = await self._store.execute(
             IdempotencyRequest(
                 identity=IdempotencyIdentity(
@@ -45,6 +50,6 @@ class IdempotentMessageProcessor:
                 ),
                 fingerprint=message_fingerprint(command),
             ),
-            lambda: self._inner.process(command),
+            lambda: self._inner.process(command, context),
         )
         return replace(execution.value, idempotency_replayed=execution.replayed)

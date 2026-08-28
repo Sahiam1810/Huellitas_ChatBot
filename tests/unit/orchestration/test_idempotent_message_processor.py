@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.idempotent_message_processor import (
     IdempotentMessageProcessor,
     message_fingerprint,
@@ -15,6 +16,7 @@ from app.ports.idempotency_store import (
     IdempotencyIdentity,
     IdempotencyRequest,
 )
+from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.enums import MessageResponseType
 
 CONVERSATION_ID = UUID("bda5a441-e907-4781-bca6-44c25a73255a")
@@ -57,9 +59,15 @@ class Handler:
     def __init__(self, value: MessageResult) -> None:
         self.value = value
         self.calls = 0
+        self.contexts: list[ExecutionContext] = []
 
-    async def process(self, _: MessageCommand) -> MessageResult:
+    async def process(
+        self,
+        _: MessageCommand,
+        context: ExecutionContext,
+    ) -> MessageResult:
         self.calls += 1
+        self.contexts.append(context)
         return self.value
 
 
@@ -80,6 +88,23 @@ class Store:
         return IdempotencyExecution(value=await operation(), replayed=self.replayed)
 
     async def close(self) -> None: ...
+
+
+def execution_context(token: str = "token-one") -> ExecutionContext:
+    return ExecutionContext(
+        bearer_token=token,
+        principal=AuthenticatedPrincipal(
+            account_id=UUID("11111111-1111-1111-1111-111111111111"),
+            person_id=USER_ID,
+            role_id=UUID("22222222-2222-2222-2222-222222222222"),
+            role="Cliente",
+            username="cliente.demo",
+            email="cliente@example.test",
+            token_id=UUID("33333333-3333-3333-3333-333333333333"),
+        ),
+        execution_id=UUID("44444444-4444-4444-4444-444444444444"),
+        correlation_id=CORRELATION_ID,
+    )
 
 
 def test_message_fingerprint_is_stable_sha256() -> None:
@@ -131,10 +156,12 @@ async def test_decorator_executes_owner_through_scoped_idempotency_request() -> 
     store = Store(replayed=False)
     processor = IdempotentMessageProcessor(handler, store)
 
-    processed = await processor.process(command())
+    context = execution_context()
+    processed = await processor.process(command(), context)
 
     assert processed == result()
     assert handler.calls == 1
+    assert handler.contexts == [context]
     assert store.request == IdempotencyRequest(
         identity=IdempotencyIdentity(
             scope=str(CONVERSATION_ID),
@@ -151,10 +178,12 @@ async def test_decorator_marks_replay_without_changing_original_result() -> None
     store = Store(replayed=True, stored=original)
 
     processed = await IdempotentMessageProcessor(handler, store).process(
-        command(correlation_id=OTHER_CORRELATION_ID)
+        command(correlation_id=OTHER_CORRELATION_ID),
+        execution_context("token-two"),
     )
 
     assert processed == replace(original, idempotency_replayed=True)
     assert processed.message == "Respuesta original"
     assert processed.correlation_id == CORRELATION_ID
     assert handler.calls == 0
+    assert handler.contexts == []
