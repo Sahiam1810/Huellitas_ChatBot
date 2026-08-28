@@ -22,11 +22,15 @@ def test_lifespan_owns_model_and_message_processor(
     with TestClient(app):
         assert app.state.dependencies.chat_model is chat_model
         assert isinstance(app.state.dependencies.message_processor, MessageHandler)
+        assert app.state.dependencies.main_graph is not None
+        assert app.state.dependencies.graph_checkpointer is not None
         assert app.state.ready is True
 
     chat_model.close.assert_awaited_once()
     assert app.state.dependencies.chat_model is None
     assert app.state.dependencies.message_processor is None
+    assert app.state.dependencies.main_graph is None
+    assert app.state.dependencies.graph_checkpointer is None
     assert app.state.ready is False
 
 
@@ -62,10 +66,14 @@ def test_disabled_chat_still_builds_message_processor() -> None:
     with TestClient(app) as client:
         assert app.state.dependencies.chat_model is None
         assert isinstance(app.state.dependencies.message_processor, MessageHandler)
+        assert app.state.dependencies.main_graph is not None
+        assert app.state.dependencies.graph_checkpointer is not None
         assert client.get("/health/live").json() == {"status": "alive"}
         assert client.get("/health/ready").json() == {"status": "ready"}
 
     assert app.state.dependencies.message_processor is None
+    assert app.state.dependencies.main_graph is None
+    assert app.state.dependencies.graph_checkpointer is None
 
 
 def test_lifespan_resets_all_state_even_when_model_close_fails(
@@ -88,5 +96,7 @@ def test_lifespan_resets_all_state_even_when_model_close_fails(
     assert app.state.dependencies.chat_model is None
     assert app.state.dependencies.embedding_model is None
     assert app.state.dependencies.message_processor is None
+    assert app.state.dependencies.main_graph is None
+    assert app.state.dependencies.graph_checkpointer is None
     assert app.state.ready is False
     embedding_model.close.assert_awaited_once_with()

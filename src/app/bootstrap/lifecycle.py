@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
@@ -17,6 +18,8 @@ from app.observability.logging import configure_logging
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
+from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
+from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.vector_store import VectorCollectionDefinition, VectorStore
@@ -125,13 +128,23 @@ def build_lifespan(
                     ),
                     DocumentWriteLock(),
                 )
-            message_processor = MessageProcessor(
+            general_processor = MessageProcessor(
                 chat_model=chat_model,
                 max_output_tokens=settings.chat_max_output_tokens,
                 rag_enabled=settings.rag_enabled,
                 context_retriever=context_retriever,
                 memory_writer=memory_writer,
             )
+            graph_checkpointer = InMemorySaver()
+            main_graph = build_main_graph(
+                general_processor=general_processor,
+                registry=app.state.dependencies.module_registry,
+                router=None,
+                checkpointer=graph_checkpointer,
+            )
+            graph_handler = LangGraphMessageHandler(main_graph)
+            app.state.dependencies.graph_checkpointer = graph_checkpointer
+            app.state.dependencies.main_graph = main_graph
             idempotency_configuration = settings.active_idempotency_configuration()
             if idempotency_configuration is not None:
                 idempotency_store = InMemoryIdempotencyStore(
@@ -140,11 +153,11 @@ def build_lifespan(
                 )
                 app.state.dependencies.idempotency_store = idempotency_store
                 app.state.dependencies.message_processor = IdempotentMessageProcessor(
-                    message_processor,
+                    graph_handler,
                     idempotency_store,
                 )
             else:
-                app.state.dependencies.message_processor = message_processor
+                app.state.dependencies.message_processor = graph_handler
             app.state.ready = True
             logger.info(
                 "application_started name=%s version=%s environment=%s",
@@ -156,6 +169,8 @@ def build_lifespan(
         finally:
             app.state.ready = False
             app.state.dependencies.message_processor = None
+            app.state.dependencies.main_graph = None
+            app.state.dependencies.graph_checkpointer = None
             idempotency_store = app.state.dependencies.idempotency_store
             app.state.dependencies.idempotency_store = None
             app.state.dependencies.knowledge_management_service = None
