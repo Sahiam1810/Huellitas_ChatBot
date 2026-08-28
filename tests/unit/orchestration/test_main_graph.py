@@ -10,6 +10,7 @@ from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest, ModuleResult
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.module_registry import ModuleRegistry
+from app.orchestration.state import message_command_to_state, message_result_from_state
 from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
@@ -125,12 +126,14 @@ async def test_empty_registry_follows_the_existing_general_route_without_router(
     current = command()
 
     state = await graph.ainvoke(
-        {"command": current},
+        {"command": message_command_to_state(current)},
         config=config(current),
         context=context(),
     )
 
-    assert state["result"].message == "general:Quiero ver mis citas"
+    assert message_result_from_state(state["result"]).message == (
+        "general:Quiero ver mis citas"
+    )
     assert state["fallback_reason"] == "module_registry_empty"
     assert general.commands == [current]
 
@@ -146,11 +149,14 @@ async def test_escalated_conversation_ends_before_routing_or_general_processing(
     current = command(is_escalated=True)
 
     state = await graph.ainvoke(
-        {"command": current}, config=config(current), context=context()
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
     )
 
-    assert state["result"].response_type is MessageResponseType.HUMAN_CONTROLLED
-    assert state["result"].message is None
+    result = message_result_from_state(state["result"])
+    assert result.response_type is MessageResponseType.HUMAN_CONTROLLED
+    assert result.message is None
     assert general.commands == []
     assert router.calls == 0
     assert executor.requests == []
@@ -169,13 +175,14 @@ async def test_selected_module_receives_only_the_neutral_request_and_runtime_con
     execution_context = context()
 
     state = await graph.ainvoke(
-        {"command": current},
+        {"command": message_command_to_state(current)},
         config=config(current),
         context=execution_context,
     )
 
-    assert state["result"].message == "Tienes una cita mañana"
-    assert state["result"].module == "appointments"
+    result = message_result_from_state(state["result"])
+    assert result.message == "Tienes una cita mañana"
+    assert result.module == "appointments"
     assert state["selected_module_id"] == "appointments"
     assert executor.requests == [
         ModuleExecutionRequest(
@@ -203,10 +210,14 @@ async def test_non_selected_routing_falls_back_to_general_processing(
     current = command()
 
     state = await graph.ainvoke(
-        {"command": current}, config=config(current), context=context()
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
     )
 
-    assert state["result"].message == "general:Quiero ver mis citas"
+    assert message_result_from_state(state["result"]).message == (
+        "general:Quiero ver mis citas"
+    )
     assert state["fallback_reason"] == decision.reason
     assert general.commands == [current]
 
@@ -243,7 +254,9 @@ async def test_router_cannot_select_an_unregistered_module() -> None:
 
     with pytest.raises(GraphCompositionError, match="unregistered") as captured:
         await graph.ainvoke(
-            {"command": current}, config=config(current), context=context()
+            {"command": message_command_to_state(current)},
+            config=config(current),
+            context=context(),
         )
 
     assert "secret-token" not in str(captured.value)
@@ -263,7 +276,9 @@ async def test_module_cannot_return_a_result_for_another_module() -> None:
 
     with pytest.raises(InvalidModuleResultError) as captured:
         await graph.ainvoke(
-            {"command": current}, config=config(current), context=context()
+            {"command": message_command_to_state(current)},
+            config=config(current),
+            context=context(),
         )
 
     assert "secret-token" not in str(captured.value)

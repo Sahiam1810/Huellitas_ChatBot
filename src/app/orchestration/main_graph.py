@@ -14,7 +14,16 @@ from app.orchestration.response_builder import (
     build_human_controlled_result,
     normalize_module_result,
 )
-from app.orchestration.state import MainGraphState, initial_run_update
+from app.orchestration.state import (
+    MainGraphState,
+    initial_run_update,
+    message_command_from_state,
+    message_result_to_state,
+    module_result_from_state,
+    module_result_to_state,
+    routing_decision_from_state,
+    routing_decision_to_state,
+)
 from app.shared.exceptions import GraphCompositionError
 
 
@@ -41,7 +50,8 @@ def build_main_graph(
         return {}
 
     async def build_human_controlled(state: MainGraphState) -> MainGraphState:
-        return {"result": build_human_controlled_result(state["command"])}
+        command = message_command_from_state(state["command"])
+        return {"result": message_result_to_state(build_human_controlled_result(command))}
 
     async def route_intent(state: MainGraphState) -> MainGraphState:
         manifests = registry.list_manifests()
@@ -49,9 +59,12 @@ def build_main_graph(
             return {"fallback_reason": "module_registry_empty"}
         if router is None:
             raise GraphCompositionError("Intent router is not configured")
-        decision = await router.route(state["command"], manifests)
+        decision = await router.route(message_command_from_state(state["command"]), manifests)
         if decision.kind is not RoutingKind.MODULE:
-            return {"routing": decision, "fallback_reason": decision.reason}
+            return {
+                "routing": routing_decision_to_state(decision),
+                "fallback_reason": decision.reason,
+            }
         if decision.module_id is None or decision.intent is None:
             raise GraphCompositionError("Router returned incomplete module selection")
         try:
@@ -61,51 +74,60 @@ def build_main_graph(
         if decision.intent not in registration.manifest.intents:
             raise GraphCompositionError("Router selected an intent outside the module manifest")
         return {
-            "routing": decision,
+            "routing": routing_decision_to_state(decision),
             "selected_module_id": registration.manifest.module_id,
         }
 
     async def execute_general(state: MainGraphState) -> MainGraphState:
-        return {"result": await general_processor.process(state["command"])}
+        command = message_command_from_state(state["command"])
+        return {"result": message_result_to_state(await general_processor.process(command))}
 
     async def execute_module(
         state: MainGraphState,
         runtime: Runtime[ExecutionContext],
     ) -> MainGraphState:
-        decision = state.get("routing")
+        routing_state = state.get("routing")
         selected_module_id = state.get("selected_module_id")
         if (
-            decision is None
-            or decision.intent is None
+            routing_state is None
             or selected_module_id is None
             or runtime.context is None
         ):
             raise GraphCompositionError("Module execution state is incomplete")
+        decision = routing_decision_from_state(routing_state)
+        if decision.intent is None:
+            raise GraphCompositionError("Module execution routing is incomplete")
         registration = registry.get_registration(selected_module_id)
         if registration.executor is None:
             raise GraphCompositionError("Selected module executor is not configured")
         result = await registration.executor.execute(
             ModuleExecutionRequest(
-                command=state["command"],
+                command=message_command_from_state(state["command"]),
                 intent=decision.intent,
                 manifest=registration.manifest,
             ),
             runtime.context,
         )
-        return {"module_result": result}
+        return {"module_result": module_result_to_state(result)}
 
     async def normalize_result(state: MainGraphState) -> MainGraphState:
-        module_result = state.get("module_result")
+        module_result_state = state.get("module_result")
         selected_module_id = state.get("selected_module_id")
-        if module_result is None or selected_module_id is None:
+        if module_result_state is None or selected_module_id is None:
             raise GraphCompositionError("Module result state is incomplete")
         manifest = registry.get(selected_module_id)
         return {
-            "result": normalize_module_result(state["command"], manifest, module_result)
+            "result": message_result_to_state(
+                normalize_module_result(
+                    message_command_from_state(state["command"]),
+                    manifest,
+                    module_result_from_state(module_result_state),
+                )
+            )
         }
 
     def after_escalation(state: MainGraphState) -> str:
-        return "human" if state["command"].is_escalated else "route"
+        return "human" if state["command"]["is_escalated"] else "route"
 
     def after_routing(state: MainGraphState) -> str:
         return "module" if state.get("selected_module_id") is not None else "general"

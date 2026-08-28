@@ -10,7 +10,7 @@ from app.orchestration.response_builder import (
     build_human_controlled_result,
     normalize_module_result,
 )
-from app.orchestration.state import initial_run_update
+from app.orchestration.state import initial_run_update, message_command_to_state
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import InvalidModuleResultError
@@ -46,8 +46,9 @@ def manifest() -> ModuleManifest:
 def test_initial_run_update_clears_every_transient_checkpoint_value() -> None:
     current = command()
 
-    assert initial_run_update(current) == {
-        "command": current,
+    checkpoint_command = message_command_to_state(current)
+    assert initial_run_update(checkpoint_command) == {
+        "command": checkpoint_command,
         "routing": None,
         "selected_module_id": None,
         "module_result": None,
