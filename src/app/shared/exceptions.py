@@ -144,3 +144,11 @@ class IdentityMismatchError(AuthorizationError):
 
 class InsufficientPermissionsError(AuthorizationError):
     pass
+
+
+class GraphCompositionError(RuntimeError):
+    """Raised when the main orchestration graph cannot be composed safely."""
+
+
+class InvalidModuleResultError(RuntimeError):
+    """Raised when a module returns data outside its selected contract."""
