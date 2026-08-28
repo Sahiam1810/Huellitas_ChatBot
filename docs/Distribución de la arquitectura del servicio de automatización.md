@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose, validación local de los JWT `RS256` emitidos por .NET y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. Historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios, Redis y comunicación operacional con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose, validación local de los JWT `RS256` emitidos por .NET y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. Redis standalone también está conectado detrás de un puerto neutral, con lifecycle y readiness, aunque todavía no almacena responsabilidades funcionales. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. Historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios y comunicación operacional con .NET todavía no están implementados.
 
 ---
 
@@ -170,7 +170,7 @@ FastAPI crea un cliente asíncrono REST solamente cuando `HUELLITAS_VECTOR_STORE
 
 ## Redis
 
-Redis se utiliza únicamente para:
+La conexión Redis ya existe como infraestructura de runtime, pero todavía no almacena datos de la aplicación. Sus usos futuros autorizados se limitarán a:
 
 - Caché técnica.
 - Idempotencia.
@@ -178,7 +178,7 @@ Redis se utiliza únicamente para:
 - Checkpoints temporales.
 - Contadores limitados de reintentos y aclaraciones.
 
-Los datos de Redis deben ser expirables y reconstruibles. No sustituyen el historial guardado por .NET.
+Cuando esas responsabilidades se implementen, los datos de Redis deberán ser expirables y reconstruibles. No sustituirán el historial guardado por .NET.
 
 ---
 
@@ -952,7 +952,7 @@ El incremento actual no implementa:
 - Llamadas al backend .NET.
 - Implementación y registro de los siete módulos veterinarios.
 - Subgrafos veterinarios ejecutables y enrutamiento de intención con un modelo real.
-- Redis.
+- Usos funcionales de Redis para idempotencia, caché, checkpoints, locks, colas o sesiones.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
 La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.
@@ -1020,3 +1020,25 @@ El colector contabiliza ejecuciones iniciadas, exitosas y fallidas; duración to
 Los agregados viven únicamente en el proceso, son seguros para concurrencia y se reinician al reiniciar el servicio. En esta fase no existe `/metrics`, persistencia, percentiles, temporización por nodo, Prometheus, OpenTelemetry ni alertas externas.
 
 Una integración futura podrá implementar `GraphRunObserver` para exportar los mismos eventos hacia otra infraestructura sin acoplar LangGraph, los módulos veterinarios ni los adaptadores de proveedor.
+
+---
+
+# 25. Base de runtime Redis implementada
+
+Redis standalone está conectado como dependencia opcional de infraestructura:
+
+```text
+Redis standalone -> RedisRuntimeStore -> RuntimeStore
+                                      |-> lifecycle
+                                      `-> readiness
+```
+
+`RuntimeStore` expone únicamente `check_health()` y `close()`. El paquete `redis` se importa exclusivamente dentro de `adapters/runtime_store`; health, FastAPI, LangGraph, observabilidad y los módulos dependen del puerto neutral. La factory no crea un cliente cuando `HUELLITAS_REDIS_ENABLED=false`.
+
+La conexión admite `redis://` y `rediss://`. URL, usuario, contraseña, base, timeouts, conexiones máximas y reintentos se configuran mediante variables `HUELLITAS_REDIS_*`. Las credenciales se entregan por campos separados, nunca dentro de la URL, permanecen en tipos secretos y no aparecen en logs, errores, metadata HTTP ni OpenAPI.
+
+Cuando Redis está habilitado, lifecycle crea el pool, ejecuta `PING` con reintentos limitados y lo cierra una sola vez durante shutdown. Un fallo de arranque no detiene FastAPI: liveness permanece en `200` y readiness responde `503`. Readiness vuelve a comprobar el puerto en cada solicitud, por lo que retorna a `200` después de recuperar Redis sin reiniciar el agente. Si Qdrant y Redis están habilitados, ambos deben responder.
+
+Docker Compose ejecuta `redis:8.8.2-alpine` en la red `automation`, publica el puerto solo en localhost, habilita AOF con `appendfsync everysec` y conserva `/data` en `redis_storage`. El contenedor del agente usa `redis://redis:6379` y no tiene `depends_on`, permitiendo observar el proceso vivo aunque Redis esté degradado.
+
+Esta base no mueve todavía la idempotencia en memoria, checkpoints de LangGraph, caché, locks, pub/sub, colas, sesiones, conversaciones ni RAG. Cada responsabilidad requerirá un puerto y un incremento especializado antes de utilizar Redis.
