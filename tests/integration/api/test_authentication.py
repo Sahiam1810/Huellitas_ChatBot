@@ -5,7 +5,7 @@ from fastapi import Security
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from app.api.dependencies import get_authenticated_principal
+from app.api.dependencies import get_authenticated_access, get_authenticated_principal
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.ports.token_validator import AuthenticatedPrincipal
@@ -24,6 +24,15 @@ def application_with_probe(settings: Settings | None = None):
             "accountId": str(principal.account_id),
             "personId": str(principal.person_id),
             "role": principal.role,
+        }
+
+    @app.get("/authenticated-access-probe", include_in_schema=False)
+    def authenticated_access_probe(
+        access: Annotated[object, Security(get_authenticated_access)],
+    ) -> dict[str, str]:
+        return {
+            "personId": str(access.principal.person_id),
+            "bearerToken": access.bearer_token,
         }
 
     return app
@@ -49,6 +58,21 @@ def test_valid_bearer_token_resolves_authenticated_principal(
         "accountId": str(ACCOUNT_ID),
         "personId": str(PERSON_ID),
         "role": "Cliente",
+    }
+
+
+def test_valid_bearer_is_retained_only_in_authenticated_request_access(
+    auth_headers: dict[str, str],
+) -> None:
+    expected_token = auth_headers["Authorization"].removeprefix("Bearer ")
+
+    with TestClient(application_with_probe()) as client:
+        response = client.get("/authenticated-access-probe", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "personId": str(PERSON_ID),
+        "bearerToken": expected_token,
     }
 
 

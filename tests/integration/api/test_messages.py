@@ -13,6 +13,7 @@ from app.api.dependencies import get_message_processor
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.ports.chat_model import ChatResponse, ModelProvider
 from app.ports.conversation_memory_store import ConversationMemoryMatch
@@ -71,9 +72,15 @@ def payload(
 class RecordingMessageProcessor:
     def __init__(self) -> None:
         self.command: MessageCommand | None = None
+        self.context: ExecutionContext | None = None
 
-    async def process(self, command: MessageCommand) -> MessageResult:
+    async def process(
+        self,
+        command: MessageCommand,
+        context: ExecutionContext,
+    ) -> MessageResult:
         self.command = command
+        self.context = context
         return MessageResult(
             message=None,
             conversation_id=command.conversation_id,
@@ -157,6 +164,11 @@ def test_messages_build_command_from_authenticated_identity(
     assert processor.command is not None
     assert processor.command.user_id == PERSON_ID
     assert processor.command.roles == ("Cliente",)
+    assert processor.context is not None
+    assert processor.context.principal.person_id == PERSON_ID
+    assert processor.context.bearer_token == auth_headers["Authorization"].removeprefix("Bearer ")
+    assert processor.context.correlation_id == UUID(CORRELATION_ID)
+    assert isinstance(processor.context.execution_id, UUID)
 
 
 def provider_settings() -> Settings:

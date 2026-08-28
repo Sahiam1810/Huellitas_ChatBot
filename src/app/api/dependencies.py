@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Request, Security
@@ -22,16 +23,31 @@ bearer_scheme = HTTPBearer(
 )
 
 
-def get_authenticated_principal(
+@dataclass(frozen=True, slots=True)
+class AuthenticatedAccess:
+    principal: AuthenticatedPrincipal
+    bearer_token: str
+
+
+def get_authenticated_access(
     request: Request,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Security(bearer_scheme),
     ],
-) -> AuthenticatedPrincipal:
+) -> AuthenticatedAccess:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise AuthenticationRequiredError
-    return request.app.state.dependencies.token_validator.validate(credentials.credentials)
+    return AuthenticatedAccess(
+        principal=request.app.state.dependencies.token_validator.validate(credentials.credentials),
+        bearer_token=credentials.credentials,
+    )
+
+
+def get_authenticated_principal(
+    access: Annotated[AuthenticatedAccess, Security(get_authenticated_access)],
+) -> AuthenticatedPrincipal:
+    return access.principal
 
 
 def require_knowledge_administrator(
