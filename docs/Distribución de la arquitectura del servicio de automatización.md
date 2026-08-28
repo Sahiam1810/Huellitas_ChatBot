@@ -823,20 +823,16 @@ Toda ejecución utiliza:
 
 - Correlation ID.
 - Execution ID.
-- Conversation ID.
 
 La telemetría registra de forma estructurada:
 
-- Intención y módulo.
-- Duración y resultado de nodos.
-- Herramientas y dependencias consultadas.
-- Categoría de fallback.
-- Estado de confirmación y escalamiento.
-- Proveedor, modelo, tokens y latencia.
-- Versión de prompt.
-- Identificadores de fuentes RAG utilizadas.
+- Duración total y resultado de la ejecución completa.
+- Ruta cerrada y módulo normalizado, cuando corresponda.
+- Categorías cerradas de fallback y fallo.
+- Proveedor, modelo y tokens agregados.
+- Estado, ruta, cantidades de coincidencias y escrituras RAG agregadas.
 
-Tokens JWT, credenciales, prompts internos y datos sensibles se redactan.
+No se registran `Conversation ID`, intención libre, resultados por nodo, herramientas o dependencias consultadas, estado de confirmación, versiones de prompt ni identificadores de fuentes RAG. Tokens JWT, credenciales, mensajes, respuestas, prompts internos, contexto recuperado, estado del grafo y datos personales están prohibidos en los eventos y logs. El detalle implementado y las limitaciones operativas se especifican en la sección 24.
 
 ---
 
