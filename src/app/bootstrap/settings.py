@@ -1,7 +1,17 @@
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, RedisDsn, SecretStr, model_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RedisDsn,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ports.chat_model import ModelProvider
@@ -114,6 +124,7 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
         extra="ignore",
         frozen=True,
+        hide_input_in_errors=True,
     )
 
     app_name: str = Field(default="Huellitas ChatBot", min_length=1)
@@ -193,6 +204,21 @@ class Settings(BaseSettings):
     rag_semantic_routing_enabled: bool = False
     rag_semantic_high_threshold: float = Field(default=0.95, ge=0, le=1)
     rag_semantic_medium_threshold: float = Field(default=0.80, ge=0, le=1)
+
+    @field_validator("redis_url", mode="before")
+    @classmethod
+    def validate_redis_url_has_only_network_location(cls, value: object) -> object:
+        parsed = urlsplit(str(value))
+        allowed_paths = ("", "/", "/0") if isinstance(value, RedisDsn) else ("", "/")
+        if (
+            parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in allowed_paths
+        ):
+            raise ValueError("Redis URL must contain only scheme, host, and port")
+        return value
 
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":

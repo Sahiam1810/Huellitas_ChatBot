@@ -189,6 +189,24 @@ def test_redis_rejects_invalid_or_ambiguous_configuration(field: str, value: obj
         Settings(redis_enabled=True, **{field: value}, _env_file=None)
 
 
+@pytest.mark.parametrize(
+    "redis_url",
+    [
+        "redis://redis:6379/2",
+        "redis://redis:6379/?db=2",
+        "redis://redis:6379?socket_timeout=99",
+        "redis://redis:6379?password=redis-query-secret",
+    ],
+)
+def test_redis_url_rejects_paths_and_query_options_without_exposing_input(
+    redis_url: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        Settings(redis_enabled=True, redis_url=redis_url, _env_file=None)
+
+    assert "redis-query-secret" not in str(error.value)
+
+
 def test_settings_use_safe_development_defaults() -> None:
     settings = Settings(_env_file=None)
 

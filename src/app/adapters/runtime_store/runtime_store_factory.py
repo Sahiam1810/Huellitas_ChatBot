@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit, urlunsplit
+
 from redis.asyncio import Redis
 
 from app.adapters.runtime_store.redis import RedisRuntimeStore
@@ -12,8 +14,10 @@ def create_runtime_store(settings: Settings) -> RuntimeStore | None:
     password = (
         configuration.password.get_secret_value() if configuration.password is not None else None
     )
+    parsed_url = urlsplit(str(configuration.url))
+    network_url = urlunsplit((parsed_url.scheme, parsed_url.netloc, "", "", ""))
     client = Redis.from_url(
-        str(configuration.url),
+        network_url,
         username=configuration.username,
         password=password,
         db=configuration.database,

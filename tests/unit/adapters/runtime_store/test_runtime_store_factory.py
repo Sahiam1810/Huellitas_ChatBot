@@ -39,7 +39,7 @@ def test_factory_builds_the_client_from_active_configuration(monkeypatch: object
     assert isinstance(result, RedisRuntimeStore)
     assert configuration is not None
     constructor.assert_called_once_with(
-        str(configuration.url),
+        "rediss://redis.example.test:6380",
         username="runtime-user",
         password="runtime-secret",
         db=2,
@@ -49,3 +49,18 @@ def test_factory_builds_the_client_from_active_configuration(monkeypatch: object
         decode_responses=False,
     )
     assert "runtime-secret" not in repr(result)
+
+
+def test_factory_database_setting_is_authoritative_in_real_connection_pool() -> None:
+    result = runtime_store_factory.create_runtime_store(
+        Settings(
+            redis_enabled=True,
+            redis_url="redis://redis.example.test:6379",
+            redis_database=2,
+            _env_file=None,
+        )
+    )
+
+    assert isinstance(result, RedisRuntimeStore)
+    client = result._client  # noqa: SLF001 - verifies the SDK boundary without network I/O
+    assert client.connection_pool.connection_kwargs["db"] == 2  # type: ignore[attr-defined]

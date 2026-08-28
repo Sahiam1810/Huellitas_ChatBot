@@ -10,7 +10,8 @@ El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutr
 - .NET conserva el historial canónico y el estado de escalamiento.
 - Python coordinará conversación, módulos, modelos y RAG.
 - Qdrant contiene las colecciones vectoriales y permanece detrás de puertos neutrales.
-- Redis se incorporará posteriormente para estado técnico temporal.
+- Redis ya está conectado como dependencia técnica opcional, pero todavía no posee
+  responsabilidades de caché, idempotencia, checkpoints ni estado conversacional.
 - Python nunca accederá directamente a Oracle Database 26ai.
 
 ## Requisitos
