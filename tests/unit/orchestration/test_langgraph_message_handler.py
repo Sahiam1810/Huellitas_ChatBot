@@ -1,8 +1,10 @@
+import logging
 from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
+from app.observability.logging import SafeLoggingGraphObserver
 from app.observability.tracing import (
     FallbackCategory,
     GraphFailureCategory,
@@ -12,11 +14,16 @@ from app.observability.tracing import (
     GraphRunStarted,
 )
 from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.intent_router import RoutingDecision
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand, MessageResult
+from app.orchestration.module_executor import ModuleExecutionRequest, ModuleResult
+from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.module_registry import ModuleRegistry
+from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
+from app.ports.chat_model import ModelProvider
 from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import GraphCompositionError, ModelTimeoutError
@@ -31,6 +38,7 @@ def command(
     *,
     conversation_id: UUID = CONVERSATION_ID,
     correlation_id: UUID = CORRELATION_ID,
+    is_escalated: bool = False,
 ) -> MessageCommand:
     return MessageCommand(
         message=message,
@@ -40,7 +48,7 @@ def command(
         channel="web",
         language="es-CO",
         roles=("Cliente",),
-        is_escalated=False,
+        is_escalated=is_escalated,
         correlation_id=correlation_id,
         idempotency_key=f"key-{message}",
     )
@@ -70,6 +78,35 @@ class GeneralProcessor:
             conversation_id=current.conversation_id,
             correlation_id=current.correlation_id,
             response_type=MessageResponseType.AI_GENERATED,
+        )
+
+
+class ModuleRouter:
+    async def route(
+        self, current: MessageCommand, manifests: tuple[ModuleManifest, ...]
+    ) -> RoutingDecision:
+        return RoutingDecision.module(intent="appointments.list", module_id="appointments")
+
+
+class AppointmentsExecutor:
+    async def execute(
+        self, request: ModuleExecutionRequest, execution_context: ExecutionContext
+    ) -> ModuleResult:
+        return ModuleResult(
+            module_id="appointments",
+            message="SENSITIVE MODULE RESPONSE",
+            response_type=MessageResponseType.AI_GENERATED,
+            provider=ModelProvider.OPENAI,
+            model="gpt-4o-mini",
+            input_tokens=9,
+            output_tokens=4,
+            rag=RagMessageResult(
+                status=RagStatus.USED,
+                route=SemanticRoute.CONTEXTUAL,
+                global_matches=2,
+                conversation_matches=1,
+                memory_stored=True,
+            ),
         )
 
 
@@ -121,6 +158,20 @@ def graph_with_memory() -> object:
         None,
         InMemorySaver(),
     )
+
+
+def graph_with_module() -> object:
+    registry = ModuleRegistry()
+    registry.register(
+        ModuleManifest(
+            module_id="appointments",
+            version="1.0.0",
+            description="Appointment operations",
+            intents=("appointments.list",),
+        ),
+        AppointmentsExecutor(),
+    )
+    return build_main_graph(GeneralProcessor(), registry, ModuleRouter(), InMemorySaver())
 
 
 def graph_config(conversation_id: UUID) -> dict[str, dict[str, str]]:
@@ -248,6 +299,70 @@ async def test_handler_observes_one_complete_general_graph_execution() -> None:
     assert completed.rag_status == "disabled"
     assert completed.tokens_reported is False
     assert observer.failed_events == []
+
+
+@pytest.mark.anyio
+async def test_handler_observes_human_controlled_route_without_model_usage() -> None:
+    observer = RecordingObserver()
+    current = command(is_escalated=True)
+
+    await LangGraphMessageHandler(
+        graph_with_memory(),
+        observer=observer,
+        clock=clock(2.0, 2.010),  # type: ignore[arg-type]
+    ).process(current, context(current.correlation_id))
+
+    event = observer.completed_events[0]
+    assert event.route is GraphRoute.HUMAN_CONTROLLED
+    assert event.fallback is FallbackCategory.NONE
+    assert event.provider is event.model is None
+    assert event.tokens_reported is False
+    assert event.rag_status == "skipped"
+
+
+@pytest.mark.anyio
+async def test_handler_observes_complete_module_usage() -> None:
+    observer = RecordingObserver()
+    current = command()
+
+    await LangGraphMessageHandler(
+        graph_with_module(),
+        observer=observer,
+        clock=clock(4.0, 4.050),  # type: ignore[arg-type]
+    ).process(current, context(current.correlation_id))
+
+    event = observer.completed_events[0]
+    assert event.route is GraphRoute.MODULE
+    assert event.module == "appointments"
+    assert (event.provider, event.model) == ("openai", "gpt-4o-mini")
+    assert (event.input_tokens, event.output_tokens) == (9, 4)
+    assert (event.rag_status, event.rag_route) == ("used", "contextual")
+    assert (event.global_matches, event.conversation_matches) == (2, 1)
+    assert event.memory_stored is True
+
+
+@pytest.mark.anyio
+async def test_handler_and_logging_observer_never_log_conversational_data(caplog: object) -> None:
+    logger = logging.getLogger("test.graph.handler.privacy")
+    current = command(message="SENSITIVE USER MESSAGE")
+    with caplog.at_level(logging.INFO, logger=logger.name):  # type: ignore[attr-defined]
+        await LangGraphMessageHandler(
+            graph_with_module(),
+            observer=SafeLoggingGraphObserver(logger),
+            clock=clock(5.0, 5.010),  # type: ignore[arg-type]
+        ).process(current, context(current.correlation_id))
+
+    output = caplog.text  # type: ignore[attr-defined]
+    for forbidden in (
+        "SENSITIVE USER MESSAGE",
+        "SENSITIVE MODULE RESPONSE",
+        str(current.conversation_id),
+        str(current.user_id),
+        "header.sensitive-payload.signature",
+        "sensitive.username",
+        "sensitive@example.test",
+    ):
+        assert forbidden not in output
 
 
 @pytest.mark.anyio
