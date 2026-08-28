@@ -952,12 +952,47 @@ El incremento actual no implementa:
 - Integraciones directas con canales externos.
 - Tablas o migraciones de Oracle Database 26ai.
 - Consulta o persistencia del historial canónico.
-- Comportamiento de idempotencia, bloqueos o checkpoints.
+- Bloqueos distribuidos y checkpoints persistentes entre reinicios o réplicas.
 - Llamadas al backend .NET.
-- `ModuleResult`, referencias ejecutables y routing modular.
 - Implementación y registro de los siete módulos veterinarios.
-- LangGraph y subgrafos ejecutables.
+- Subgrafos veterinarios ejecutables y enrutamiento de intención con un modelo real.
 - Redis.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
 La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.
+
+---
+
+# 23. Estado implementado de la fundación LangGraph
+
+El núcleo de orquestación principal ya está ejecutable y conserva el contrato HTTP existente:
+
+```text
+HTTP/JWT -> idempotencia -> LangGraph(thread_id=conversationId)
+  conversación escalada -> human_controlled
+  registro vacío o ruta desconocida -> IA general + RAG adaptativo existentes
+  módulo seleccionado -> ModuleExecutor neutral
+```
+
+## Composición activa
+
+- FastAPI construye una sola instancia del grafo durante el ciclo de vida del proceso.
+- `IdempotentMessageProcessor` permanece por fuera del grafo y evita repetir modelos, RAG o módulos.
+- `MessageProcessor` continúa siendo el ejecutor general; LangGraph no duplica su lógica.
+- El registro admite asociaciones entre `ModuleManifest` y `ModuleExecutor`, pero producción lo mantiene intencionalmente vacío hasta implementar el primer módulo veterinario.
+- Una conversación marcada como escalada finaliza antes del routing, el modelo, Qdrant o cualquier ejecutor modular.
+- Una intención desconocida o ambigua utiliza el fallback general y nunca inventa un módulo.
+
+## Estado, seguridad y checkpoints
+
+`conversationId` se utiliza como `thread_id`. El estado persistible contiene únicamente estructuras primitivas compatibles con checkpoints: diccionarios, listas, cadenas, números, booleanos y valores nulos. Los contratos de dominio se reconstruyen en los límites del grafo, evitando mutaciones de tipos al serializar.
+
+El Bearer JWT y la identidad validada viajan mediante `ExecutionContext` y `Runtime`, no como entrada ni estado del grafo. Por esta razón no aparecen en checkpoints. El contexto incluye además `executionId` y `correlationId`, pero no se registra ni se persiste como memoria conversacional.
+
+La implementación actual usa `InMemorySaver`. Mantiene hilos separados mientras vive un único proceso, pero pierde los checkpoints al reiniciar y no coordina múltiples réplicas. Sustituirlo por Redis y agregar bloqueo distribuido será un incremento independiente; no requerirá cambiar el endpoint ni los contratos neutrales de los módulos.
+
+## Alcance modular disponible
+
+La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. Un futuro módulo podrá ocultar un subgrafo detrás de `ModuleExecutor`, pero no importará otros módulos ni obligará a agregar reglas veterinarias en `main_graph.py`.
+
+Todavía no existen en producción un enrutador de intenciones modular, módulos veterinarios ejecutables, llamadas de negocio a .NET, confirmaciones mediante `interrupt` ni persistencia canónica de conversaciones. Estas capacidades deben incorporarse como funcionalidades separadas y comprobables de forma independiente.

@@ -8,7 +8,6 @@ from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 
 FORBIDDEN_FOUNDATION_IMPORTS = {
-    "langgraph",
     "openai",
     "qdrant_client",
     "redis",
@@ -20,6 +19,10 @@ PROVIDER_ADAPTER_ROOTS = (
 )
 VECTOR_STORE_ADAPTERS_ROOT = Path("src/app/adapters/vector_store")
 SECURITY_ADAPTERS_ROOT = Path("src/app/adapters/security")
+LANGGRAPH_IMPORT_SURFACE = {
+    Path("src/app/bootstrap/lifecycle.py"),
+    Path("src/app/orchestration/main_graph.py"),
+}
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -154,6 +157,16 @@ def test_orchestration_depends_on_ports_not_provider_or_storage_adapters() -> No
     assert violations == {}
 
 
+def test_langgraph_sdk_is_isolated_to_graph_composition() -> None:
+    violations = {
+        str(path): sorted(imported_roots(path) & {"langgraph"})
+        for path in Path("src/app").rglob("*.py")
+        if path not in LANGGRAPH_IMPORT_SURFACE and "langgraph" in imported_roots(path)
+    }
+
+    assert violations == {}
+
+
 def test_knowledge_capability_depends_only_on_neutral_layers() -> None:
     forbidden_prefixes = ("app.api", "app.adapters", "openai", "qdrant_client")
     violations: dict[str, list[str]] = {}
@@ -263,7 +276,7 @@ def test_module_registry_is_independent_from_http_and_adapters() -> None:
 
 def test_veterinary_modules_respect_isolation_boundaries() -> None:
     modules_root = Path("src/app/modules")
-    forbidden_prefixes = ("app.api", "app.adapters", "app.bootstrap")
+    forbidden_prefixes = ("app.api", "app.adapters", "app.bootstrap", "langgraph")
     violations: dict[str, list[str]] = {}
 
     for path in modules_root.rglob("*.py"):
