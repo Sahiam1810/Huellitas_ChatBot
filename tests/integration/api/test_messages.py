@@ -13,6 +13,7 @@ from app.api.dependencies import get_message_processor
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.observability.tracing import GraphRoute
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.ports.chat_model import ChatResponse, ModelProvider
@@ -276,8 +277,13 @@ def test_escalated_message_returns_human_control_without_model() -> None:
             "/api/v1/messages",
             json=payload(is_escalated=True),
         )
+        metrics = app.state.dependencies.graph_metrics.snapshot()
 
     assert response.status_code == 200
+    assert metrics.runs_by_route[GraphRoute.HUMAN_CONTROLLED] == 1
+    assert metrics.runs_by_provider == {}
+    assert metrics.input_tokens == metrics.output_tokens == 0
+    assert metrics.runs_without_token_usage == 1
     assert response.json() == {
         "message": None,
         "conversationId": CONVERSATION_ID,
@@ -553,6 +559,7 @@ def test_repeated_message_replays_without_duplicate_rag_or_provider_effects(
             "/api/v1/messages",
             json=payload(correlation_id="f27c135f-2c81-4697-afd6-430fe62c6d3a"),
         )
+        metrics = app.state.dependencies.graph_metrics.snapshot()
 
     assert first.status_code == replay.status_code == traced_replay.status_code == 200
     assert first.json() == replay.json() == traced_replay.json()
@@ -560,6 +567,7 @@ def test_repeated_message_replays_without_duplicate_rag_or_provider_effects(
     assert replay.headers["Idempotency-Replayed"] == "true"
     assert traced_replay.headers["Idempotency-Replayed"] == "true"
     assert model.generate.await_count == 1
+    assert (metrics.started, metrics.completed, metrics.failed) == (1, 1, 0)
     assert embedding.embed_query.await_count == 1
     assert store.search_global.await_count == 1
     assert store.search_conversation.await_count == 1

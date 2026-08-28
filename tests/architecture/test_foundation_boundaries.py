@@ -297,3 +297,26 @@ def test_veterinary_modules_respect_isolation_boundaries() -> None:
             violations[str(path)] = sorted(forbidden)
 
     assert violations == {}
+
+
+def test_observability_depends_only_on_neutral_application_layers() -> None:
+    forbidden_prefixes = (
+        "fastapi",
+        "app.api",
+        "app.adapters",
+        "app.modules",
+        "openai",
+        "google",
+        "qdrant_client",
+        "redis",
+        "prometheus_client",
+        "opentelemetry",
+    )
+    violations = {
+        str(path): sorted(
+            name for name in imported_names(path) if name.startswith(forbidden_prefixes)
+        )
+        for path in Path("src/app/observability").rglob("*.py")
+    }
+
+    assert {path: names for path, names in violations.items() if names} == {}

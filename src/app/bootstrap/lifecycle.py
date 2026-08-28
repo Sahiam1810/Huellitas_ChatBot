@@ -14,7 +14,9 @@ from app.bootstrap.settings import ActiveVectorStoreConfiguration, Settings
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.document_lock import DocumentWriteLock
 from app.knowledge.management_service import KnowledgeManagementService
-from app.observability.logging import configure_logging
+from app.observability.logging import SafeLoggingGraphObserver, configure_logging
+from app.observability.metrics import InMemoryGraphMetrics
+from app.observability.tracing import CompositeGraphRunObserver
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
@@ -142,9 +144,12 @@ def build_lifespan(
                 router=None,
                 checkpointer=graph_checkpointer,
             )
-            graph_handler = LangGraphMessageHandler(main_graph)
+            graph_metrics = InMemoryGraphMetrics()
+            graph_observer = CompositeGraphRunObserver((graph_metrics, SafeLoggingGraphObserver()))
+            graph_handler = LangGraphMessageHandler(main_graph, observer=graph_observer)
             app.state.dependencies.graph_checkpointer = graph_checkpointer
             app.state.dependencies.main_graph = main_graph
+            app.state.dependencies.graph_metrics = graph_metrics
             idempotency_configuration = settings.active_idempotency_configuration()
             if idempotency_configuration is not None:
                 idempotency_store = InMemoryIdempotencyStore(
@@ -171,6 +176,7 @@ def build_lifespan(
             app.state.dependencies.message_processor = None
             app.state.dependencies.main_graph = None
             app.state.dependencies.graph_checkpointer = None
+            app.state.dependencies.graph_metrics = None
             idempotency_store = app.state.dependencies.idempotency_store
             app.state.dependencies.idempotency_store = None
             app.state.dependencies.knowledge_management_service = None

@@ -823,20 +823,16 @@ Toda ejecución utiliza:
 
 - Correlation ID.
 - Execution ID.
-- Conversation ID.
 
 La telemetría registra de forma estructurada:
 
-- Intención y módulo.
-- Duración y resultado de nodos.
-- Herramientas y dependencias consultadas.
-- Categoría de fallback.
-- Estado de confirmación y escalamiento.
-- Proveedor, modelo, tokens y latencia.
-- Versión de prompt.
-- Identificadores de fuentes RAG utilizadas.
+- Duración total y resultado de la ejecución completa.
+- Ruta cerrada y módulo normalizado, cuando corresponda.
+- Categorías cerradas de fallback y fallo.
+- Proveedor, modelo y tokens agregados.
+- Estado, ruta, cantidades de coincidencias y escrituras RAG agregadas.
 
-Tokens JWT, credenciales, prompts internos y datos sensibles se redactan.
+No se registran `Conversation ID`, intención libre, resultados por nodo, herramientas o dependencias consultadas, estado de confirmación, versiones de prompt ni identificadores de fuentes RAG. Tokens JWT, credenciales, mensajes, respuestas, prompts internos, contexto recuperado, estado del grafo y datos personales están prohibidos en los eventos y logs. El detalle implementado y las limitaciones operativas se especifican en la sección 24.
 
 ---
 
@@ -996,3 +992,31 @@ La implementación actual usa `InMemorySaver`. Mantiene hilos separados mientras
 La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. Un futuro módulo podrá ocultar un subgrafo detrás de `ModuleExecutor`, pero no importará otros módulos ni obligará a agregar reglas veterinarias en `main_graph.py`.
 
 Todavía no existen en producción un enrutador de intenciones modular, módulos veterinarios ejecutables, llamadas de negocio a .NET, confirmaciones mediante `interrupt` ni persistencia canónica de conversaciones. Estas capacidades deben incorporarse como funcionalidades separadas y comprobables de forma independiente.
+
+---
+
+# 24. Observabilidad de ejecuciones LangGraph
+
+La ejecución real del grafo cuenta con una base de observabilidad neutral que no modifica el contrato HTTP ni expone una ruta de métricas:
+
+```text
+propietario de idempotencia -> ejecución LangGraph medida -> observador neutral
+                                                   |-> agregados en memoria
+                                                   `-> logs estructurados seguros
+```
+
+`LangGraphMessageHandler` mide la duración completa de cada ejecución y publica eventos de inicio, finalización o fallo. Como `IdempotentMessageProcessor` permanece por fuera, una respuesta reproducida por idempotencia no vuelve a contar como ejecución del grafo ni duplica consumo de modelos o RAG.
+
+## Datos permitidos y privacidad
+
+Los únicos identificadores operativos permitidos son `correlationId` y `executionId`. Los eventos finalizados incluyen únicamente duración, ruta cerrada (`human_controlled`, `general` o `module`), fallback normalizado, módulo, proveedor, modelo, tokens y agregados de RAG. Los fallos se reducen a categorías cerradas y nunca incluyen el texto de la excepción ni traceback.
+
+No se conservan ni registran JWT o encabezados, mensaje o respuesta, `conversationId`, `userId`, `petId`, roles, usuario, correo, prompts, contexto o documentos RAG, estado completo del grafo ni razones libres de fallback. Las etiquetas de módulo, proveedor y modelo se normalizan y limitan antes de agregarse.
+
+## Métricas disponibles
+
+El colector contabiliza ejecuciones iniciadas, exitosas y fallidas; duración total, mínima y máxima; distribución por ruta, fallback, módulo y categoría de fallo; proveedor y modelo; tokens de entrada y salida; ejecuciones sin uso de tokens informado; estado y ruta RAG; coincidencias globales y conversacionales; memorias guardadas y conocimientos publicados.
+
+Los agregados viven únicamente en el proceso, son seguros para concurrencia y se reinician al reiniciar el servicio. En esta fase no existe `/metrics`, persistencia, percentiles, temporización por nodo, Prometheus, OpenTelemetry ni alertas externas.
+
+Una integración futura podrá implementar `GraphRunObserver` para exportar los mismos eventos hacia otra infraestructura sin acoplar LangGraph, los módulos veterinarios ni los adaptadores de proveedor.
