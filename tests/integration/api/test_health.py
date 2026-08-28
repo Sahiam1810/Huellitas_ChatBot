@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
-from app.shared.exceptions import VectorStoreUnavailableError
+from app.shared.exceptions import RuntimeStoreUnavailableError, VectorStoreUnavailableError
 
 
 def build_test_app() -> FastAPI:
@@ -105,3 +105,76 @@ def test_readiness_recovers_after_vector_store_becomes_available(
     assert "hidden sdk detail" not in degraded.text
     assert recovered.status_code == 200
     assert recovered.json() == {"status": "ready"}
+
+
+def test_liveness_survives_and_readiness_recovers_after_runtime_store_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimpleNamespace(
+        check_health=AsyncMock(
+            side_effect=[
+                RuntimeStoreUnavailableError("SENSITIVE REDIS DETAIL"),
+                RuntimeStoreUnavailableError("SENSITIVE REDIS DETAIL"),
+                None,
+            ]
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_runtime_store", lambda settings: store, raising=False)
+    app = create_application(
+        Settings(
+            environment="test",
+            redis_enabled=True,
+            redis_startup_max_attempts=1,
+            redis_startup_retry_delay_seconds=0,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        live = client.get("/health/live")
+        degraded = client.get("/health/ready")
+        recovered = client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert live.json() == {"status": "alive"}
+    assert degraded.status_code == 503
+    assert degraded.json()["detail"] == "Application is not ready"
+    assert "SENSITIVE REDIS DETAIL" not in degraded.text
+    assert recovered.status_code == 200
+    assert recovered.json() == {"status": "ready"}
+
+
+def test_readiness_requires_both_vector_and_runtime_store_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vector_store = SimpleNamespace(check_health=AsyncMock(), close=AsyncMock())
+    runtime_store = SimpleNamespace(
+        check_health=AsyncMock(
+            side_effect=[None, RuntimeStoreUnavailableError("hidden")]
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_vector_store", lambda settings: vector_store)
+    monkeypatch.setattr(
+        lifecycle, "create_runtime_store", lambda settings: runtime_store, raising=False
+    )
+    app = create_application(
+        Settings(
+            environment="test",
+            vector_store_enabled=True,
+            qdrant_startup_max_attempts=1,
+            qdrant_startup_retry_delay_seconds=0,
+            redis_enabled=True,
+            redis_startup_max_attempts=1,
+            redis_startup_retry_delay_seconds=0,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert vector_store.check_health.await_count == 2
+    assert runtime_store.check_health.await_count == 2
