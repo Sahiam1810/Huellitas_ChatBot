@@ -305,40 +305,61 @@ async def test_handler_observes_one_complete_general_graph_execution() -> None:
 async def test_handler_observes_human_controlled_route_without_model_usage() -> None:
     observer = RecordingObserver()
     current = command(is_escalated=True)
+    execution_context = context(current.correlation_id)
 
     await LangGraphMessageHandler(
         graph_with_memory(),
         observer=observer,
         clock=clock(2.0, 2.010),  # type: ignore[arg-type]
-    ).process(current, context(current.correlation_id))
+    ).process(current, execution_context)
 
     event = observer.completed_events[0]
+    assert (event.correlation_id, event.execution_id) == (
+        current.correlation_id,
+        execution_context.execution_id,
+    )
+    assert event.duration_ms == pytest.approx(10.0)
     assert event.route is GraphRoute.HUMAN_CONTROLLED
     assert event.fallback is FallbackCategory.NONE
+    assert event.module is None
     assert event.provider is event.model is None
+    assert event.input_tokens is event.output_tokens is None
     assert event.tokens_reported is False
-    assert event.rag_status == "skipped"
+    assert (event.rag_status, event.rag_route) == ("skipped", "skipped")
+    assert (event.global_matches, event.conversation_matches) == (0, 0)
+    assert (event.memory_stored, event.knowledge_published) == (False, False)
+    assert observer.failed_events == []
 
 
 @pytest.mark.anyio
 async def test_handler_observes_complete_module_usage() -> None:
     observer = RecordingObserver()
     current = command()
+    execution_context = context(current.correlation_id)
 
     await LangGraphMessageHandler(
         graph_with_module(),
         observer=observer,
         clock=clock(4.0, 4.050),  # type: ignore[arg-type]
-    ).process(current, context(current.correlation_id))
+    ).process(current, execution_context)
 
     event = observer.completed_events[0]
+    assert (event.correlation_id, event.execution_id) == (
+        current.correlation_id,
+        execution_context.execution_id,
+    )
+    assert event.duration_ms == pytest.approx(50.0)
     assert event.route is GraphRoute.MODULE
+    assert event.fallback is FallbackCategory.NONE
     assert event.module == "appointments"
     assert (event.provider, event.model) == ("openai", "gpt-4o-mini")
     assert (event.input_tokens, event.output_tokens) == (9, 4)
     assert (event.rag_status, event.rag_route) == ("used", "contextual")
     assert (event.global_matches, event.conversation_matches) == (2, 1)
     assert event.memory_stored is True
+    assert event.knowledge_published is False
+    assert event.tokens_reported is True
+    assert observer.failed_events == []
 
 
 @pytest.mark.anyio
