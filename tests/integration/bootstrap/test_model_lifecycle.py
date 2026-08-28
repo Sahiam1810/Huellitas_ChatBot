@@ -24,6 +24,8 @@ def test_lifespan_owns_model_and_message_processor(
         assert isinstance(app.state.dependencies.message_processor, MessageHandler)
         assert app.state.dependencies.main_graph is not None
         assert app.state.dependencies.graph_checkpointer is not None
+        assert app.state.dependencies.graph_metrics is not None
+        assert app.state.dependencies.graph_metrics.snapshot().started == 0
         assert app.state.ready is True
 
     chat_model.close.assert_awaited_once()
@@ -31,6 +33,7 @@ def test_lifespan_owns_model_and_message_processor(
     assert app.state.dependencies.message_processor is None
     assert app.state.dependencies.main_graph is None
     assert app.state.dependencies.graph_checkpointer is None
+    assert app.state.dependencies.graph_metrics is None
     assert app.state.ready is False
 
 

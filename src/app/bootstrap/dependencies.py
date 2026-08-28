@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.knowledge.management_service import KnowledgeManagementService
+from app.observability.metrics import InMemoryGraphMetrics
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.module_registry import ModuleRegistry
 from app.ports.chat_model import ChatModel
@@ -26,3 +27,4 @@ class ApplicationDependencies:
     idempotency_store: IdempotencyStore | None = None
     main_graph: object | None = None
     graph_checkpointer: object | None = None
+    graph_metrics: InMemoryGraphMetrics | None = None
