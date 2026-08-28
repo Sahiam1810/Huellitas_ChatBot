@@ -1,7 +1,7 @@
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, RedisDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ports.chat_model import ModelProvider
@@ -47,6 +47,20 @@ class ActiveVectorStoreConfiguration(BaseModel):
     url: AnyHttpUrl
     api_key: SecretStr | None
     timeout_seconds: float
+    startup_max_attempts: int
+    startup_retry_delay_seconds: float
+
+
+class ActiveRedisConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: RedisDsn
+    username: str | None
+    password: SecretStr | None
+    database: int
+    connect_timeout_seconds: float
+    operation_timeout_seconds: float
+    max_connections: int
     startup_max_attempts: int
     startup_retry_delay_seconds: float
 
@@ -146,6 +160,17 @@ class Settings(BaseSettings):
     qdrant_startup_max_attempts: int = Field(default=5, ge=1, le=20)
     qdrant_startup_retry_delay_seconds: float = Field(default=1.0, ge=0, le=60)
 
+    redis_enabled: bool = False
+    redis_url: RedisDsn = RedisDsn("redis://127.0.0.1:6379")
+    redis_username: str | None = None
+    redis_password: SecretStr | None = None
+    redis_database: int = Field(default=0, ge=0)
+    redis_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=300)
+    redis_operation_timeout_seconds: float = Field(default=5.0, gt=0, le=300)
+    redis_max_connections: int = Field(default=20, ge=1, le=1000)
+    redis_startup_max_attempts: int = Field(default=5, ge=1, le=20)
+    redis_startup_retry_delay_seconds: float = Field(default=1.0, ge=0, le=60)
+
     embedding_enabled: bool = False
     embedding_provider: EmbeddingProvider = EmbeddingProvider.OPENAI
     embedding_openai_api_key: SecretStr | None = None
@@ -171,6 +196,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
+        if self.redis_url.username is not None or self.redis_url.password is not None:
+            raise ValueError("Redis URL credentials are not allowed")
         if self.rag_chunk_overlap_characters >= self.rag_chunk_max_characters:
             raise ValueError("RAG chunk overlap must be smaller than its maximum")
         if self.rag_semantic_medium_threshold >= self.rag_semantic_high_threshold:
@@ -207,6 +234,25 @@ class Settings(BaseSettings):
             ):
                 raise ValueError("RAG collection names must be different")
         return self
+
+    def active_redis_configuration(self) -> ActiveRedisConfiguration | None:
+        if not self.redis_enabled:
+            return None
+        username = self.redis_username.strip() if self.redis_username is not None else ""
+        password = self.redis_password
+        if password is not None and not password.get_secret_value().strip():
+            password = None
+        return ActiveRedisConfiguration(
+            url=self.redis_url,
+            username=username or None,
+            password=password,
+            database=self.redis_database,
+            connect_timeout_seconds=self.redis_connect_timeout_seconds,
+            operation_timeout_seconds=self.redis_operation_timeout_seconds,
+            max_connections=self.redis_max_connections,
+            startup_max_attempts=self.redis_startup_max_attempts,
+            startup_retry_delay_seconds=self.redis_startup_retry_delay_seconds,
+        )
 
     def active_model_configuration(self) -> ActiveModelConfiguration | None:
         if not self.chat_enabled:
