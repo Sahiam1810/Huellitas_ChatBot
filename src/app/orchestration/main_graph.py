@@ -88,11 +88,7 @@ def build_main_graph(
     ) -> MainGraphState:
         routing_state = state.get("routing")
         selected_module_id = state.get("selected_module_id")
-        if (
-            routing_state is None
-            or selected_module_id is None
-            or runtime.context is None
-        ):
+        if routing_state is None or selected_module_id is None or runtime.context is None:
             raise GraphCompositionError("Module execution state is incomplete")
         decision = routing_decision_from_state(routing_state)
         if decision.intent is None:

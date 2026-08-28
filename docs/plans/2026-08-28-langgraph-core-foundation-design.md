@@ -1,7 +1,9 @@
 # Diseño de la fundación del núcleo LangGraph
 
-**Fecha:** 2026-08-28  
-**Rama:** `feature/langgraph-core-foundation`  
+**Fecha:** 2026-08-28
+
+**Rama:** `feature/langgraph-core-foundation`
+
 **Estado:** aprobado
 
 ## Objetivo

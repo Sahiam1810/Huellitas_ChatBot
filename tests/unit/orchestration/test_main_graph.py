@@ -131,9 +131,7 @@ async def test_empty_registry_follows_the_existing_general_route_without_router(
         context=context(),
     )
 
-    assert message_result_from_state(state["result"]).message == (
-        "general:Quiero ver mis citas"
-    )
+    assert message_result_from_state(state["result"]).message == ("general:Quiero ver mis citas")
     assert state["fallback_reason"] == "module_registry_empty"
     assert general.commands == [current]
 
@@ -215,9 +213,7 @@ async def test_non_selected_routing_falls_back_to_general_processing(
         context=context(),
     )
 
-    assert message_result_from_state(state["result"]).message == (
-        "general:Quiero ver mis citas"
-    )
+    assert message_result_from_state(state["result"]).message == ("general:Quiero ver mis citas")
     assert state["fallback_reason"] == decision.reason
     assert general.commands == [current]
 
