@@ -145,9 +145,7 @@ def build_lifespan(
                 checkpointer=graph_checkpointer,
             )
             graph_metrics = InMemoryGraphMetrics()
-            graph_observer = CompositeGraphRunObserver(
-                (graph_metrics, SafeLoggingGraphObserver())
-            )
+            graph_observer = CompositeGraphRunObserver((graph_metrics, SafeLoggingGraphObserver()))
             graph_handler = LangGraphMessageHandler(main_graph, observer=graph_observer)
             app.state.dependencies.graph_checkpointer = graph_checkpointer
             app.state.dependencies.main_graph = main_graph
