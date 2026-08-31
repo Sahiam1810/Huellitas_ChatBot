@@ -34,6 +34,11 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class CheckpointProvider(StrEnum):
+    MEMORY = "memory"
+    REDIS = "redis"
+
+
 class ActiveModelConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -73,6 +78,13 @@ class ActiveRedisConfiguration(BaseModel):
     max_connections: int
     startup_max_attempts: int
     startup_retry_delay_seconds: float
+
+
+class ActiveCheckpointConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    provider: CheckpointProvider
+    ttl_minutes: int
 
 
 class ActiveEmbeddingConfiguration(BaseModel):
@@ -182,6 +194,9 @@ class Settings(BaseSettings):
     redis_startup_max_attempts: int = Field(default=5, ge=1, le=20)
     redis_startup_retry_delay_seconds: float = Field(default=1.0, ge=0, le=60)
 
+    checkpoint_provider: CheckpointProvider = CheckpointProvider.MEMORY
+    checkpoint_ttl_minutes: int = Field(default=10080, ge=1, le=525600)
+
     embedding_enabled: bool = False
     embedding_provider: EmbeddingProvider = EmbeddingProvider.OPENAI
     embedding_openai_api_key: SecretStr | None = None
@@ -224,6 +239,8 @@ class Settings(BaseSettings):
     def validate_active_provider(self) -> "Settings":
         if self.redis_url.username is not None or self.redis_url.password is not None:
             raise ValueError("Redis URL credentials are not allowed")
+        if self.checkpoint_provider is CheckpointProvider.REDIS and not self.redis_enabled:
+            raise ValueError("Redis must be enabled when Redis checkpoints are selected")
         if self.rag_chunk_overlap_characters >= self.rag_chunk_max_characters:
             raise ValueError("RAG chunk overlap must be smaller than its maximum")
         if self.rag_semantic_medium_threshold >= self.rag_semantic_high_threshold:
@@ -278,6 +295,12 @@ class Settings(BaseSettings):
             max_connections=self.redis_max_connections,
             startup_max_attempts=self.redis_startup_max_attempts,
             startup_retry_delay_seconds=self.redis_startup_retry_delay_seconds,
+        )
+
+    def active_checkpoint_configuration(self) -> ActiveCheckpointConfiguration:
+        return ActiveCheckpointConfiguration(
+            provider=self.checkpoint_provider,
+            ttl_minutes=self.checkpoint_ttl_minutes,
         )
 
     def active_model_configuration(self) -> ActiveModelConfiguration | None:

@@ -93,6 +93,8 @@ def test_documentation_routes_exist_when_enabled() -> None:
     assert "security" not in schema["paths"]["/health/ready"]["get"]
     assert "security" not in schema["paths"]["/api/v1/info"]["get"]
     assert all("embeddings" not in path for path in schema["paths"])
+    assert "HUELLITAS_CHECKPOINT" not in openapi_response.text
+    assert "redis://" not in openapi_response.text
 
 
 def test_documentation_routes_are_absent_when_disabled() -> None:

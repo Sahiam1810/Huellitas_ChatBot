@@ -10,8 +10,8 @@ El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutr
 - .NET conserva el historial canónico y el estado de escalamiento.
 - Python coordinará conversación, módulos, modelos y RAG.
 - Qdrant contiene las colecciones vectoriales y permanece detrás de puertos neutrales.
-- Redis ya está conectado como dependencia técnica opcional, pero todavía no posee
-  responsabilidades de caché, idempotencia, checkpoints ni estado conversacional.
+- Redis mantiene opcionalmente el último checkpoint técnico de LangGraph por conversación;
+  no sustituye el historial canónico administrado por .NET/Oracle.
 - Python nunca accederá directamente a Oracle Database 26ai.
 
 ## Requisitos
@@ -60,7 +60,7 @@ docker compose down
 
 Los volúmenes `huellitas-chatbot_qdrant_storage` y `huellitas-chatbot_redis_storage` conservan los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente ambos almacenamientos locales.
 
-Compose habilita las conexiones del agente mediante `http://qdrant:6333` y `redis://redis:6379`. Redis usa AOF con sincronización cada segundo y persiste en `/data`. Si Qdrant o Redis dejan de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que todas las dependencias habilitadas se recuperen. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita las conexiones del agente mediante `http://qdrant:6333` y `redis://redis:6379`, y selecciona `HUELLITAS_CHECKPOINT_PROVIDER=redis`. Redis usa AOF con sincronización cada segundo y persiste en `/data`, por lo que el último estado técnico de cada hilo sobrevive al reinicio del contenedor del agente. Si Qdrant o Redis dejan de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que todas las dependencias habilitadas se recuperen. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
 
 Para comprobar la degradación y recuperación de Redis sin reiniciar el agente:
 
@@ -73,7 +73,13 @@ docker compose start redis
 docker compose ps
 ```
 
-Fuera de Docker, Redis permanece deshabilitado. Para conectarlo a una instancia standalone configura `HUELLITAS_REDIS_ENABLED`, `HUELLITAS_REDIS_URL` y, cuando corresponda, las variables separadas de usuario y contraseña indicadas en `.env.example`. `redis://` usa conexión normal y `rediss://` habilita TLS. Esta base todavía no utiliza Redis para idempotencia, caché, checkpoints, locks, colas, sesiones, conversaciones ni RAG.
+Fuera de Docker, Redis y los checkpoints Redis permanecen deshabilitados. El valor predeterminado `HUELLITAS_CHECKPOINT_PROVIDER=memory` conserva el comportamiento liviano para pruebas. Para persistir checkpoints configura también `HUELLITAS_REDIS_ENABLED=true` y `HUELLITAS_CHECKPOINT_PROVIDER=redis`; `redis://` usa conexión normal y `rediss://` habilita TLS. Redis todavía no se utiliza para idempotencia, caché, locks, colas, sesiones, historial canónico ni RAG.
+
+## Checkpoints de LangGraph
+
+`HUELLITAS_CHECKPOINT_PROVIDER` acepta `memory` o `redis`. El adaptador Redis usa el saver shallow oficial y conserva únicamente el checkpoint más reciente de cada `conversationId`, utilizado como `thread_id`. `HUELLITAS_CHECKPOINT_TTL_MINUTES` vale `10080` por defecto y la lectura renueva la expiración; por tanto, son datos técnicos temporales y reconstruibles, no un registro de auditoría.
+
+El estado puede contener el mensaje y los identificadores necesarios para reanudar el grafo. Nunca contiene el JWT, headers ni `ExecutionContext`. Si Redis está seleccionado y no responde, no existe fallback a memoria: mensajes y readiness responden `503`, mientras liveness continúa en `200`; el servicio se recupera cuando Redis vuelve. No se implementan historial completo, time travel, endpoints de administración de checkpoints, bloqueo distribuido ni reconstrucción desde .NET.
 
 ## Conexión con Qdrant
 

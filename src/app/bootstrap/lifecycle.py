@@ -4,16 +4,18 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 from fastapi import FastAPI
-from langgraph.checkpoint.memory import InMemorySaver
 
+from app.adapters.checkpoints.checkpoint_store_factory import create_checkpoint_store
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
 from app.adapters.vector_store.vector_store_factory import create_vector_store
 from app.bootstrap.settings import (
+    ActiveCheckpointConfiguration,
     ActiveRedisConfiguration,
     ActiveVectorStoreConfiguration,
+    CheckpointProvider,
     Settings,
 )
 from app.knowledge.document_chunker import DocumentChunker
@@ -22,6 +24,7 @@ from app.knowledge.management_service import KnowledgeManagementService
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
+from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
@@ -29,9 +32,11 @@ from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
+from app.ports.checkpoint_store import CheckpointStore
 from app.ports.runtime_store import RuntimeStore
 from app.ports.vector_store import VectorCollectionDefinition, VectorStore
 from app.shared.exceptions import (
+    CheckpointStoreUnavailableError,
     RuntimeStoreUnavailableError,
     VectorStoreError,
     VectorStoreUnavailableError,
@@ -78,6 +83,34 @@ async def _wait_for_runtime_store(
     return False
 
 
+async def _wait_for_checkpoint_store(
+    checkpoint_store: CheckpointStore,
+    checkpoint_configuration: ActiveCheckpointConfiguration,
+    redis_configuration: ActiveRedisConfiguration | None,
+) -> bool:
+    if checkpoint_configuration.provider is CheckpointProvider.REDIS:
+        assert redis_configuration is not None
+        max_attempts = redis_configuration.startup_max_attempts
+        retry_delay_seconds = redis_configuration.startup_retry_delay_seconds
+    else:
+        max_attempts = 1
+        retry_delay_seconds = 0
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await checkpoint_store.prepare()
+            return True
+        except CheckpointStoreUnavailableError:
+            logger.warning(
+                "checkpoint_store_unavailable attempt=%s max_attempts=%s",
+                attempt,
+                max_attempts,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(retry_delay_seconds)
+    return False
+
+
 def build_lifespan(
     settings: Settings,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
@@ -88,6 +121,8 @@ def build_lifespan(
         app.state.dependencies.vector_store = vector_store
         runtime_store = create_runtime_store(settings)
         app.state.dependencies.runtime_store = runtime_store
+        checkpoint_store = create_checkpoint_store(settings)
+        app.state.dependencies.checkpoint_store = checkpoint_store
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -97,6 +132,16 @@ def build_lifespan(
                 logger.info(
                     "runtime_store_ready" if runtime_available else "runtime_store_degraded"
                 )
+
+            checkpoint_configuration = settings.active_checkpoint_configuration()
+            checkpoint_available = await _wait_for_checkpoint_store(
+                checkpoint_store,
+                checkpoint_configuration,
+                runtime_configuration,
+            )
+            logger.info(
+                "checkpoint_store_ready" if checkpoint_available else "checkpoint_store_degraded"
+            )
 
             vector_configuration = settings.active_vector_store_configuration()
             vector_available = vector_store is None
@@ -177,7 +222,7 @@ def build_lifespan(
                 context_retriever=context_retriever,
                 memory_writer=memory_writer,
             )
-            graph_checkpointer = InMemorySaver()
+            graph_checkpointer = checkpoint_store.saver
             main_graph = build_main_graph(
                 general_processor=general_processor,
                 registry=app.state.dependencies.module_registry,
@@ -197,12 +242,16 @@ def build_lifespan(
                     max_entries=idempotency_configuration.max_entries,
                 )
                 app.state.dependencies.idempotency_store = idempotency_store
-                app.state.dependencies.message_processor = IdempotentMessageProcessor(
+                message_handler = IdempotentMessageProcessor(
                     graph_handler,
                     idempotency_store,
                 )
             else:
-                app.state.dependencies.message_processor = graph_handler
+                message_handler = graph_handler
+            app.state.dependencies.message_processor = CheckpointReadyMessageHandler(
+                message_handler,
+                checkpoint_store,
+            )
             app.state.ready = True
             logger.info(
                 "application_started name=%s version=%s environment=%s",
@@ -230,6 +279,8 @@ def build_lifespan(
             app.state.dependencies.vector_store = None
             runtime_store = app.state.dependencies.runtime_store
             app.state.dependencies.runtime_store = None
+            checkpoint_store = app.state.dependencies.checkpoint_store
+            app.state.dependencies.checkpoint_store = None
             try:
                 if idempotency_store is not None:
                     await idempotency_store.close()
@@ -250,6 +301,10 @@ def build_lifespan(
                                 if runtime_store is not None:
                                     await runtime_store.close()
                             finally:
-                                logger.info("application_stopped name=%s", settings.app_name)
+                                try:
+                                    if checkpoint_store is not None:
+                                        await checkpoint_store.close()
+                                finally:
+                                    logger.info("application_stopped name=%s", settings.app_name)
 
     return lifespan

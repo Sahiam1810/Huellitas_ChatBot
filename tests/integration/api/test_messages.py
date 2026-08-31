@@ -14,6 +14,7 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.observability.tracing import GraphRoute
+from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.ports.chat_model import ChatResponse, ModelProvider
@@ -27,6 +28,7 @@ from app.ports.embedding_model import (
 from app.ports.global_knowledge_store import GlobalKnowledgeKind, GlobalKnowledgeMatch
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import (
+    CheckpointStoreUnavailableError,
     ModelAuthenticationError,
     ModelInvalidResponseError,
     ModelRateLimitError,
@@ -105,6 +107,36 @@ def test_messages_require_bearer_authentication() -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "authentication_required"
+
+
+def test_unavailable_checkpoint_returns_safe_503_before_message_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = SimpleNamespace(generate=AsyncMock(), close=AsyncMock())
+    checkpoint_store = SimpleNamespace(
+        check_health=AsyncMock(side_effect=CheckpointStoreUnavailableError("checkpoint-secret"))
+    )
+    delegate = SimpleNamespace(process=AsyncMock())
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: model)
+    app = create_application(provider_settings())
+    app.dependency_overrides[get_message_processor] = lambda: CheckpointReadyMessageHandler(
+        delegate,
+        checkpoint_store,
+    )
+
+    with authenticated_client(app) as client:
+        response = client.post(
+            "/api/v1/messages",
+            json=payload(message="mensaje-privado"),
+        )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "Application is not ready"
+    assert "checkpoint-secret" not in response.text
+    assert "mensaje-privado" not in response.text
+    delegate.process.assert_not_awaited()
+    model.generate.assert_not_awaited()
 
 
 def test_messages_reject_invalid_bearer_token() -> None:

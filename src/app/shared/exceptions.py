@@ -160,3 +160,11 @@ class RuntimeStoreError(RuntimeError):
 
 class RuntimeStoreUnavailableError(RuntimeStoreError):
     """Raised when runtime storage cannot serve requests."""
+
+
+class CheckpointStoreError(RuntimeError):
+    """Base error for provider-neutral checkpoint storage failures."""
+
+
+class CheckpointStoreUnavailableError(CheckpointStoreError):
+    """Raised when checkpoint storage cannot serve requests."""

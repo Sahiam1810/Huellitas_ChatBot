@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
+from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.ports.chat_model import ChatResponse, ModelProvider
@@ -269,7 +270,8 @@ def test_lifespan_composes_and_closes_in_memory_idempotency() -> None:
     with TestClient(app):
         handler = app.state.dependencies.message_processor
         store = app.state.dependencies.idempotency_store
-        assert isinstance(handler, IdempotentMessageProcessor)
+        assert isinstance(handler, CheckpointReadyMessageHandler)
+        assert isinstance(handler._delegate, IdempotentMessageProcessor)  # noqa: SLF001
         assert store is not None
 
     assert app.state.dependencies.idempotency_store is None
@@ -289,7 +291,9 @@ def test_disabled_idempotency_exposes_graph_message_handler() -> None:
     )
 
     with TestClient(app):
-        assert isinstance(app.state.dependencies.message_processor, LangGraphMessageHandler)
+        handler = app.state.dependencies.message_processor
+        assert isinstance(handler, CheckpointReadyMessageHandler)
+        assert isinstance(handler._delegate, LangGraphMessageHandler)  # noqa: SLF001
         assert app.state.dependencies.idempotency_store is None
 
 

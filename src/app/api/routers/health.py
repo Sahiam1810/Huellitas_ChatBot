@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request
 
 from app.api.schemas.health import HealthResponse, ProblemDetail
 from app.shared.exceptions import (
+    CheckpointStoreUnavailableError,
     RuntimeStoreUnavailableError,
     ServiceNotReadyError,
     VectorStoreUnavailableError,
@@ -45,5 +46,11 @@ async def ready(request: Request) -> HealthResponse:
         try:
             await runtime_store.check_health()
         except RuntimeStoreUnavailableError:
+            raise ServiceNotReadyError from None
+    checkpoint_store = request.app.state.dependencies.checkpoint_store
+    if checkpoint_store is not None:
+        try:
+            await checkpoint_store.check_health()
+        except CheckpointStoreUnavailableError:
             raise ServiceNotReadyError from None
     return HealthResponse(status="ready")

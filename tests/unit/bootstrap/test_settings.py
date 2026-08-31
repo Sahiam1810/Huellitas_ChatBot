@@ -3,7 +3,13 @@ from collections.abc import Iterator
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.bootstrap.settings import Environment, LogLevel, Settings, load_settings
+from app.bootstrap.settings import (
+    CheckpointProvider,
+    Environment,
+    LogLevel,
+    Settings,
+    load_settings,
+)
 from app.ports.chat_model import ModelProvider
 from app.ports.vector_store import VectorDistance
 from tests.support.jwt import AUDIENCE, ISSUER, KEY_ID
@@ -87,6 +93,11 @@ REDIS_ENV_KEYS = (
     "HUELLITAS_REDIS_STARTUP_RETRY_DELAY_SECONDS",
 )
 
+CHECKPOINT_ENV_KEYS = (
+    "HUELLITAS_CHECKPOINT_PROVIDER",
+    "HUELLITAS_CHECKPOINT_TTL_MINUTES",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -98,9 +109,54 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *EMBEDDING_ENV_KEYS,
         *RAG_ENV_KEYS,
         *REDIS_ENV_KEYS,
+        *CHECKPOINT_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
+
+
+def test_checkpoint_configuration_uses_memory_and_seven_days_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    configuration = settings.active_checkpoint_configuration()
+
+    assert settings.checkpoint_provider is CheckpointProvider.MEMORY
+    assert configuration.provider is CheckpointProvider.MEMORY
+    assert configuration.ttl_minutes == 10080
+
+
+def test_checkpoint_configuration_reads_prefixed_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_REDIS_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_CHECKPOINT_PROVIDER", "redis")
+    monkeypatch.setenv("HUELLITAS_CHECKPOINT_TTL_MINUTES", "1440")
+
+    configuration = Settings(_env_file=None).active_checkpoint_configuration()
+
+    assert configuration.provider is CheckpointProvider.REDIS
+    assert configuration.ttl_minutes == 1440
+
+
+def test_redis_checkpoint_requires_enabled_redis_runtime() -> None:
+    with pytest.raises(ValidationError, match="Redis must be enabled"):
+        Settings(checkpoint_provider="redis", redis_enabled=False, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("checkpoint_provider", "filesystem"),
+        ("checkpoint_ttl_minutes", 0),
+        ("checkpoint_ttl_minutes", 525601),
+    ],
+)
+def test_checkpoint_configuration_rejects_unsupported_or_unbounded_values(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
 
 
 def test_redis_is_disabled_by_default() -> None:

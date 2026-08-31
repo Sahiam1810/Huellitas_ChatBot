@@ -28,3 +28,5 @@ def test_info_exposes_only_safe_service_metadata() -> None:
     assert "host" not in response.json()
     assert "port" not in response.json()
     assert "log_level" not in response.json()
+    assert "checkpoint" not in response.text.lower()
+    assert "redis" not in response.text.lower()

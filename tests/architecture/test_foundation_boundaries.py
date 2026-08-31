@@ -20,9 +20,15 @@ PROVIDER_ADAPTER_ROOTS = (
 VECTOR_STORE_ADAPTERS_ROOT = Path("src/app/adapters/vector_store")
 SECURITY_ADAPTERS_ROOT = Path("src/app/adapters/security")
 RUNTIME_STORE_ADAPTERS_ROOT = Path("src/app/adapters/runtime_store")
+REDIS_ADAPTERS_ROOT = Path("src/app/adapters/redis")
+CHECKPOINT_ADAPTERS_ROOT = Path("src/app/adapters/checkpoints")
 LANGGRAPH_IMPORT_SURFACE = {
     Path("src/app/bootstrap/lifecycle.py"),
     Path("src/app/orchestration/main_graph.py"),
+    Path("src/app/ports/checkpoint_store.py"),
+    Path("src/app/adapters/checkpoints/memory.py"),
+    Path("src/app/adapters/checkpoints/redis.py"),
+    Path("src/app/adapters/checkpoints/checkpoint_store_factory.py"),
 }
 
 
@@ -98,12 +104,30 @@ def test_qdrant_sdk_is_isolated_to_vector_store_adapters() -> None:
     assert violations == {}
 
 
-def test_redis_sdk_is_isolated_to_runtime_store_adapters() -> None:
+def test_redis_sdk_is_isolated_to_storage_adapters() -> None:
+    allowed_roots = (
+        REDIS_ADAPTERS_ROOT,
+        RUNTIME_STORE_ADAPTERS_ROOT,
+        CHECKPOINT_ADAPTERS_ROOT,
+    )
     violations = {
         str(path): sorted(imported_roots(path) & {"redis"})
         for path in Path("src/app").rglob("*.py")
-        if not path.is_relative_to(RUNTIME_STORE_ADAPTERS_ROOT) and "redis" in imported_roots(path)
+        if not any(path.is_relative_to(root) for root in allowed_roots)
+        and "redis" in imported_roots(path)
     }
+
+    assert violations == {}
+
+
+def test_langgraph_redis_checkpointer_is_isolated_to_checkpoint_adapters() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app").rglob("*.py"):
+        imports = sorted(
+            name for name in imported_names(path) if name.startswith("langgraph.checkpoint.redis")
+        )
+        if imports and not path.is_relative_to(CHECKPOINT_ADAPTERS_ROOT):
+            violations[str(path)] = imports
 
     assert violations == {}
 
