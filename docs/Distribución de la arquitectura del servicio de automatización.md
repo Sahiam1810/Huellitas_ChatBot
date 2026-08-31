@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose, validación local de los JWT `RS256` emitidos por .NET y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. Redis standalone también está conectado detrás de un puerto neutral, con lifecycle y readiness, aunque todavía no almacena responsabilidades funcionales. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. Historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios y comunicación operacional con .NET todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, la frontera neutral de modelos con adaptadores para OpenRouter, OpenAI directo y Gemini directo, la frontera neutral de embeddings con un adaptador inicial de OpenAI directo, `POST /api/v1/messages`, la administración versionada de documentos globales, un `ModuleManifest` inmutable, un `ModuleRegistry` vacío, el runtime local de Docker Compose, validación local de los JWT `RS256` emitidos por .NET y capacidades Qdrant neutrales para conocimiento global y memoria por conversación. Redis standalone está conectado detrás de puertos neutrales, con lifecycle, readiness y checkpoints shallow de LangGraph persistentes entre reinicios del contenedor del agente. El flujo de mensajes genera una sola representación de la pregunta, recupera ambos alcances y aplica routing semántico configurable: puede reutilizar una respuesta autorizada, generar con contexto o usar el modelo sin contexto. Guarda los intercambios generados dentro de su `conversationId` y permite publicación global solo mediante aprobación explícita. Cuando `isEscalated` indica control humano no invoca modelos, embeddings ni Qdrant. El endpoint también aplica idempotencia temporal dentro de una sola instancia para evitar efectos duplicados durante reintentos. Historial canónico, idempotencia durable y distribuida, clasificadores de complejidad, búsqueda híbrida, ejecución y routing de módulos veterinarios y comunicación operacional con .NET todavía no están implementados.
 
 ---
 
@@ -170,12 +170,12 @@ FastAPI crea un cliente asíncrono REST solamente cuando `HUELLITAS_VECTOR_STORE
 
 ## Redis
 
-La conexión Redis ya existe como infraestructura de runtime, pero todavía no almacena datos de la aplicación. Sus usos futuros autorizados se limitarán a:
+Redis ya cumple dos límites independientes: health técnico mediante `RuntimeStore` y checkpoints temporales mediante `CheckpointStore`. El checkpoint usa expiración, se separa por `conversationId` y nunca sustituye el historial canónico de .NET. Otros usos futuros autorizados se limitarán a:
 
 - Caché técnica.
 - Idempotencia.
 - Bloqueo por conversación.
-- Checkpoints temporales.
+- Checkpoints temporales (implementados con semántica shallow).
 - Contadores limitados de reintentos y aclaraciones.
 
 Cuando esas responsabilidades se implementen, los datos de Redis deberán ser expirables y reconstruibles. No sustituirán el historial guardado por .NET.
@@ -948,11 +948,11 @@ El incremento actual no implementa:
 - Integraciones directas con canales externos.
 - Tablas o migraciones de Oracle Database 26ai.
 - Consulta o persistencia del historial canónico.
-- Bloqueos distribuidos y checkpoints persistentes entre reinicios o réplicas.
+- Bloqueos distribuidos y coordinación segura entre múltiples réplicas.
 - Llamadas al backend .NET.
 - Implementación y registro de los siete módulos veterinarios.
 - Subgrafos veterinarios ejecutables y enrutamiento de intención con un modelo real.
-- Usos funcionales de Redis para idempotencia, caché, checkpoints, locks, colas o sesiones.
+- Usos funcionales adicionales de Redis para idempotencia, caché, locks, colas o sesiones.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
 La implementación futura deberá desarrollarse por incrementos pequeños y luego por módulos, aprobando cada contrato antes de conectar nuevos adaptadores concretos.
@@ -964,7 +964,7 @@ La implementación futura deberá desarrollarse por incrementos pequeños y lueg
 El núcleo de orquestación principal ya está ejecutable y conserva el contrato HTTP existente:
 
 ```text
-HTTP/JWT -> idempotencia -> LangGraph(thread_id=conversationId)
+HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> LangGraph(thread_id=conversationId)
   conversación escalada -> human_controlled
   registro vacío o ruta desconocida -> IA general + RAG adaptativo existentes
   módulo seleccionado -> ModuleExecutor neutral
@@ -985,7 +985,7 @@ HTTP/JWT -> idempotencia -> LangGraph(thread_id=conversationId)
 
 El Bearer JWT y la identidad validada viajan mediante `ExecutionContext` y `Runtime`, no como entrada ni estado del grafo. Por esta razón no aparecen en checkpoints. El contexto incluye además `executionId` y `correlationId`, pero no se registra ni se persiste como memoria conversacional.
 
-La implementación actual usa `InMemorySaver`. Mantiene hilos separados mientras vive un único proceso, pero pierde los checkpoints al reiniciar y no coordina múltiples réplicas. Sustituirlo por Redis y agregar bloqueo distribuido será un incremento independiente; no requerirá cambiar el endpoint ni los contratos neutrales de los módulos.
+La implementación selecciona `memory` o `redis` mediante `HUELLITAS_CHECKPOINT_PROVIDER`. `memory` permanece como valor predeterminado para ejecución local y pruebas. Docker selecciona Redis y usa `AsyncShallowRedisSaver`: conserva únicamente el último checkpoint por hilo, persiste al reiniciar el contenedor del agente y expira tras siete días de inactividad por defecto. Leer el hilo renueva su TTL. Esto no incorpora historial completo, time travel, administración HTTP ni coordinación entre réplicas.
 
 ## Alcance modular disponible
 
@@ -1033,7 +1033,7 @@ Redis standalone -> RedisRuntimeStore -> RuntimeStore
                                       `-> readiness
 ```
 
-`RuntimeStore` expone únicamente `check_health()` y `close()`. El paquete `redis` se importa exclusivamente dentro de `adapters/runtime_store`; health, FastAPI, LangGraph, observabilidad y los módulos dependen del puerto neutral. La factory no crea un cliente cuando `HUELLITAS_REDIS_ENABLED=false`.
+`RuntimeStore` expone únicamente `check_health()` y `close()`. La construcción segura de clientes vive en `adapters/redis`; runtime y checkpoints poseen clientes y pools independientes. Los SDK de Redis permanecen en adaptadores, mientras health, FastAPI, observabilidad y los módulos dependen de puertos neutrales. La factory de runtime no crea un cliente cuando `HUELLITAS_REDIS_ENABLED=false`.
 
 La conexión admite `redis://` y `rediss://`. URL, usuario, contraseña, base, timeouts, conexiones máximas y reintentos se configuran mediante variables `HUELLITAS_REDIS_*`. Las credenciales se entregan por campos separados, nunca dentro de la URL, permanecen en tipos secretos y no aparecen en logs, errores, metadata HTTP ni OpenAPI.
 
@@ -1041,4 +1041,14 @@ Cuando Redis está habilitado, lifecycle crea el pool, ejecuta `PING` con reinte
 
 Docker Compose ejecuta `redis:8.8.2-alpine` en la red `automation`, publica el puerto solo en localhost, habilita AOF con `appendfsync everysec` y conserva `/data` en `redis_storage`. El contenedor del agente usa `redis://redis:6379` y no tiene `depends_on`, permitiendo observar el proceso vivo aunque Redis esté degradado.
 
-Esta base no mueve todavía la idempotencia en memoria, checkpoints de LangGraph, caché, locks, pub/sub, colas, sesiones, conversaciones ni RAG. Cada responsabilidad requerirá un puerto y un incremento especializado antes de utilizar Redis.
+Los checkpoints de LangGraph ya usan Redis cuando se selecciona explícitamente. La idempotencia continúa en memoria y Redis no se usa todavía para caché, locks, pub/sub, colas, sesiones, historial canónico, conversaciones de .NET ni RAG. Cada responsabilidad adicional requerirá un puerto y un incremento especializado.
+
+---
+
+# 26. Checkpoints Redis de LangGraph implementados
+
+La frontera neutral `CheckpointStore` posee el saver y su lifecycle. `MemoryCheckpointStore` mantiene pruebas sin servicios externos. `RedisCheckpointStore` administra un cliente propio y envuelve el saver shallow oficial para traducir fallos operativos a errores neutrales sin filtrar URLs, credenciales, datos del estado ni mensajes.
+
+Docker selecciona Redis; otros entornos conservan memoria salvo configuración explícita. Redis exige `HUELLITAS_REDIS_ENABLED=true`, usa TTL de `10080` minutos renovado al leer y separa cada hilo mediante el `conversationId` ya utilizado por LangGraph. No existe fallback a memoria: una caída deja liveness en `200`, degrada readiness y mensajes a `503`, y permite recuperación en línea cuando Redis vuelve.
+
+El estado persistible puede incluir texto conversacional e identificadores técnicos necesarios para reanudar el grafo. El JWT, headers, clientes y `ExecutionContext` nunca entran al estado. Los checkpoints son temporales y reconstruibles; .NET/Oracle sigue siendo propietario del historial, participantes, escalamiento y auditoría.

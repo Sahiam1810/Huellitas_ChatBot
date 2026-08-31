@@ -120,6 +120,20 @@ def test_redis_sdk_is_isolated_to_storage_adapters() -> None:
     assert violations == {}
 
 
+def test_langgraph_redis_checkpointer_is_isolated_to_checkpoint_adapters() -> None:
+    violations: dict[str, list[str]] = {}
+    for path in Path("src/app").rglob("*.py"):
+        imports = sorted(
+            name
+            for name in imported_names(path)
+            if name.startswith("langgraph.checkpoint.redis")
+        )
+        if imports and not path.is_relative_to(CHECKPOINT_ADAPTERS_ROOT):
+            violations[str(path)] = imports
+
+    assert violations == {}
+
+
 def test_neutral_layers_do_not_import_the_redis_runtime_adapter() -> None:
     roots = (
         Path("src/app/api"),
