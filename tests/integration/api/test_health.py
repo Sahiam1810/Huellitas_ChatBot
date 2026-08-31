@@ -4,11 +4,16 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
-from app.shared.exceptions import RuntimeStoreUnavailableError, VectorStoreUnavailableError
+from app.shared.exceptions import (
+    CheckpointStoreUnavailableError,
+    RuntimeStoreUnavailableError,
+    VectorStoreUnavailableError,
+)
 
 
 def build_test_app() -> FastAPI:
@@ -143,6 +148,42 @@ def test_liveness_survives_and_readiness_recovers_after_runtime_store_failure(
     assert "SENSITIVE REDIS DETAIL" not in degraded.text
     assert recovered.status_code == 200
     assert recovered.json() == {"status": "ready"}
+
+
+def test_liveness_survives_and_readiness_recovers_after_checkpoint_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SimpleNamespace(
+        saver=InMemorySaver(),
+        prepare=AsyncMock(side_effect=CheckpointStoreUnavailableError("SENSITIVE DETAIL")),
+        check_health=AsyncMock(
+            side_effect=[CheckpointStoreUnavailableError("SENSITIVE DETAIL"), None]
+        ),
+        close=AsyncMock(),
+    )
+    monkeypatch.setattr(lifecycle, "create_checkpoint_store", lambda settings: store)
+    runtime_store = SimpleNamespace(check_health=AsyncMock(), close=AsyncMock())
+    monkeypatch.setattr(lifecycle, "create_runtime_store", lambda settings: runtime_store)
+    app = create_application(
+        Settings(
+            environment="test",
+            redis_enabled=True,
+            checkpoint_provider="redis",
+            redis_startup_max_attempts=1,
+            redis_startup_retry_delay_seconds=0,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app) as client:
+        live = client.get("/health/live")
+        degraded = client.get("/health/ready")
+        recovered = client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert degraded.status_code == 503
+    assert "SENSITIVE DETAIL" not in degraded.text
+    assert recovered.status_code == 200
 
 
 def test_readiness_requires_both_vector_and_runtime_store_when_enabled(
