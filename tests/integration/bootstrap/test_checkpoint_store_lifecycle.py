@@ -9,6 +9,7 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
+from app.orchestration.conversation_lock import ConversationLockedMessageHandler
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.shared.exceptions import CheckpointStoreUnavailableError
 
@@ -56,6 +57,10 @@ def test_lifespan_owns_prepares_compiles_and_closes_checkpoint_store(
         handler = app.state.dependencies.message_processor
         assert isinstance(handler, CheckpointReadyMessageHandler)
         assert isinstance(handler._delegate, IdempotentMessageProcessor)  # noqa: SLF001
+        assert isinstance(  # noqa: SLF001
+            handler._delegate._inner,
+            ConversationLockedMessageHandler,
+        )
 
     store.close.assert_awaited_once_with()
     assert app.state.dependencies.checkpoint_store is None
