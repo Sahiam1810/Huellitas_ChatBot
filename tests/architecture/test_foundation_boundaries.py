@@ -27,6 +27,8 @@ LANGGRAPH_IMPORT_SURFACE = {
     Path("src/app/orchestration/main_graph.py"),
     Path("src/app/ports/checkpoint_store.py"),
     Path("src/app/adapters/checkpoints/memory.py"),
+    Path("src/app/adapters/checkpoints/redis.py"),
+    Path("src/app/adapters/checkpoints/checkpoint_store_factory.py"),
 }
 
 
