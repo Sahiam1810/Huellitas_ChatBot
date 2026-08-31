@@ -2,6 +2,10 @@ class ServiceNotReadyError(RuntimeError):
     """Raised when the application cannot receive traffic yet."""
 
 
+class ConversationBusyError(RuntimeError):
+    """Raised when a conversation cannot acquire exclusive execution in time."""
+
+
 class ChatModelError(RuntimeError):
     """Base error for provider-neutral model failures."""
 

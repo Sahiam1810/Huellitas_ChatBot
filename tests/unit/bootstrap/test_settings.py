@@ -5,6 +5,7 @@ from pydantic import SecretStr, ValidationError
 
 from app.bootstrap.settings import (
     CheckpointProvider,
+    ConversationLockProvider,
     Environment,
     LogLevel,
     Settings,
@@ -98,6 +99,11 @@ CHECKPOINT_ENV_KEYS = (
     "HUELLITAS_CHECKPOINT_TTL_MINUTES",
 )
 
+CONVERSATION_LOCK_ENV_KEYS = (
+    "HUELLITAS_CONVERSATION_LOCK_PROVIDER",
+    "HUELLITAS_CONVERSATION_LOCK_TIMEOUT_SECONDS",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -110,9 +116,43 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *RAG_ENV_KEYS,
         *REDIS_ENV_KEYS,
         *CHECKPOINT_ENV_KEYS,
+        *CONVERSATION_LOCK_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
+
+
+def test_conversation_lock_configuration_uses_local_and_thirty_seconds_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    configuration = settings.active_conversation_lock_configuration()
+
+    assert settings.conversation_lock_provider is ConversationLockProvider.LOCAL
+    assert configuration.provider is ConversationLockProvider.LOCAL
+    assert configuration.timeout_seconds == 30
+
+
+def test_conversation_lock_configuration_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_CONVERSATION_LOCK_PROVIDER", "local")
+    monkeypatch.setenv("HUELLITAS_CONVERSATION_LOCK_TIMEOUT_SECONDS", "12.5")
+
+    configuration = Settings(_env_file=None).active_conversation_lock_configuration()
+
+    assert configuration.provider is ConversationLockProvider.LOCAL
+    assert configuration.timeout_seconds == 12.5
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, -1, 301])
+def test_conversation_lock_timeout_rejects_unsafe_values(timeout_seconds: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings(conversation_lock_timeout_seconds=timeout_seconds, _env_file=None)
+
+
+def test_conversation_lock_rejects_unimplemented_redis_provider() -> None:
+    with pytest.raises(ValidationError):
+        Settings(conversation_lock_provider="redis", _env_file=None)
 
 
 def test_checkpoint_configuration_uses_memory_and_seven_days_by_default() -> None:
