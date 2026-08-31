@@ -86,9 +86,7 @@ def test_permanent_checkpoint_failure_keeps_process_alive_without_fallback(
 ) -> None:
     store = checkpoint_store(
         prepare=AsyncMock(side_effect=CheckpointStoreUnavailableError("checkpoint-secret")),
-        check_health=AsyncMock(
-            side_effect=CheckpointStoreUnavailableError("checkpoint-secret")
-        ),
+        check_health=AsyncMock(side_effect=CheckpointStoreUnavailableError("checkpoint-secret")),
     )
     monkeypatch.setattr(lifecycle, "create_checkpoint_store", lambda settings: store)
     app = create_application(redis_checkpoint_settings())

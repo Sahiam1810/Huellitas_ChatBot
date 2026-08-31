@@ -124,9 +124,7 @@ def test_langgraph_redis_checkpointer_is_isolated_to_checkpoint_adapters() -> No
     violations: dict[str, list[str]] = {}
     for path in Path("src/app").rglob("*.py"):
         imports = sorted(
-            name
-            for name in imported_names(path)
-            if name.startswith("langgraph.checkpoint.redis")
+            name for name in imported_names(path) if name.startswith("langgraph.checkpoint.redis")
         )
         if imports and not path.is_relative_to(CHECKPOINT_ADAPTERS_ROOT):
             violations[str(path)] = imports

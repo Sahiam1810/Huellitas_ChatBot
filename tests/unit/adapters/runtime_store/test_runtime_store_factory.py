@@ -44,4 +44,3 @@ def test_factory_builds_the_client_from_active_configuration(
     assert configuration is not None
     constructor.assert_called_once_with(configuration)
     assert "runtime-secret" not in repr(result)
-

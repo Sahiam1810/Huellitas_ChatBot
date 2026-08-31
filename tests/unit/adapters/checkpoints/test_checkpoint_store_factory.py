@@ -28,7 +28,11 @@ def test_redis_selection_uses_shallow_saver_and_refreshing_ttl(
     client_constructor = Mock(return_value=redis_client)
     saver_constructor = Mock(return_value=raw_saver)
     monkeypatch.setattr(checkpoint_store_factory, "create_redis_client", client_constructor)
-    monkeypatch.setattr(checkpoint_store_factory, "AsyncShallowRedisSaver", saver_constructor)
+    monkeypatch.setattr(
+        checkpoint_store_factory,
+        "StrictAsyncShallowRedisSaver",
+        saver_constructor,
+    )
     settings = Settings(
         redis_enabled=True,
         checkpoint_provider="redis",

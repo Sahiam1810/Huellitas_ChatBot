@@ -140,9 +140,7 @@ def build_lifespan(
                 runtime_configuration,
             )
             logger.info(
-                "checkpoint_store_ready"
-                if checkpoint_available
-                else "checkpoint_store_degraded"
+                "checkpoint_store_ready" if checkpoint_available else "checkpoint_store_degraded"
             )
 
             vector_configuration = settings.active_vector_store_configuration()

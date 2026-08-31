@@ -1,7 +1,5 @@
-from langgraph.checkpoint.redis.ashallow import AsyncShallowRedisSaver
-
 from app.adapters.checkpoints.memory import MemoryCheckpointStore
-from app.adapters.checkpoints.redis import RedisCheckpointStore
+from app.adapters.checkpoints.redis import RedisCheckpointStore, StrictAsyncShallowRedisSaver
 from app.adapters.redis.client_factory import create_redis_client
 from app.bootstrap.settings import CheckpointProvider, Settings
 from app.ports.checkpoint_store import CheckpointStore
@@ -15,7 +13,7 @@ def create_checkpoint_store(settings: Settings) -> CheckpointStore:
     redis_configuration = settings.active_redis_configuration()
     assert redis_configuration is not None
     client = create_redis_client(redis_configuration)
-    raw_saver = AsyncShallowRedisSaver(
+    raw_saver = StrictAsyncShallowRedisSaver(
         redis_client=client,
         ttl={
             "default_ttl": checkpoint_configuration.ttl_minutes,
