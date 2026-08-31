@@ -9,6 +9,7 @@ from app.ports.conversation_memory_store import ConversationMemoryStore
 from app.ports.embedding_model import EmbeddingModel
 from app.ports.global_knowledge_store import GlobalKnowledgeStore
 from app.ports.idempotency_store import IdempotencyStore
+from app.ports.runtime_store import RuntimeStore
 from app.ports.token_validator import TokenValidator
 from app.ports.vector_store import VectorStore
 
@@ -28,3 +29,4 @@ class ApplicationDependencies:
     main_graph: object | None = None
     graph_checkpointer: object | None = None
     graph_metrics: InMemoryGraphMetrics | None = None
+    runtime_store: RuntimeStore | None = None

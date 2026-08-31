@@ -19,6 +19,7 @@ PROVIDER_ADAPTER_ROOTS = (
 )
 VECTOR_STORE_ADAPTERS_ROOT = Path("src/app/adapters/vector_store")
 SECURITY_ADAPTERS_ROOT = Path("src/app/adapters/security")
+RUNTIME_STORE_ADAPTERS_ROOT = Path("src/app/adapters/runtime_store")
 LANGGRAPH_IMPORT_SURFACE = {
     Path("src/app/bootstrap/lifecycle.py"),
     Path("src/app/orchestration/main_graph.py"),
@@ -93,6 +94,38 @@ def test_qdrant_sdk_is_isolated_to_vector_store_adapters() -> None:
         sdk_imports = imported_roots(path) & {"qdrant_client"}
         if sdk_imports and not path.is_relative_to(VECTOR_STORE_ADAPTERS_ROOT):
             violations[str(path)] = sorted(sdk_imports)
+
+    assert violations == {}
+
+
+def test_redis_sdk_is_isolated_to_runtime_store_adapters() -> None:
+    violations = {
+        str(path): sorted(imported_roots(path) & {"redis"})
+        for path in Path("src/app").rglob("*.py")
+        if not path.is_relative_to(RUNTIME_STORE_ADAPTERS_ROOT) and "redis" in imported_roots(path)
+    }
+
+    assert violations == {}
+
+
+def test_neutral_layers_do_not_import_the_redis_runtime_adapter() -> None:
+    roots = (
+        Path("src/app/api"),
+        Path("src/app/modules"),
+        Path("src/app/observability"),
+        Path("src/app/orchestration"),
+        Path("src/app/adapters/idempotency"),
+    )
+    violations: dict[str, list[str]] = {}
+    for root in roots:
+        for path in root.rglob("*.py"):
+            forbidden = sorted(
+                name
+                for name in imported_names(path)
+                if name.startswith("app.adapters.runtime_store")
+            )
+            if forbidden:
+                violations[str(path)] = forbidden
 
     assert violations == {}
 

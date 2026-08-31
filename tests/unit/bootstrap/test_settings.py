@@ -74,6 +74,19 @@ RAG_ENV_KEYS = (
     "HUELLITAS_RAG_CHUNK_OVERLAP_CHARACTERS",
 )
 
+REDIS_ENV_KEYS = (
+    "HUELLITAS_REDIS_ENABLED",
+    "HUELLITAS_REDIS_URL",
+    "HUELLITAS_REDIS_USERNAME",
+    "HUELLITAS_REDIS_PASSWORD",
+    "HUELLITAS_REDIS_DATABASE",
+    "HUELLITAS_REDIS_CONNECT_TIMEOUT_SECONDS",
+    "HUELLITAS_REDIS_OPERATION_TIMEOUT_SECONDS",
+    "HUELLITAS_REDIS_MAX_CONNECTIONS",
+    "HUELLITAS_REDIS_STARTUP_MAX_ATTEMPTS",
+    "HUELLITAS_REDIS_STARTUP_RETRY_DELAY_SECONDS",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -84,9 +97,114 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *VECTOR_STORE_ENV_KEYS,
         *EMBEDDING_ENV_KEYS,
         *RAG_ENV_KEYS,
+        *REDIS_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
+
+
+def test_redis_is_disabled_by_default() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_enabled is False
+    assert settings.active_redis_configuration() is None
+
+
+def test_enabled_redis_returns_a_typed_secret_safe_configuration() -> None:
+    settings = Settings(
+        redis_enabled=True,
+        redis_url="rediss://redis.example.test:6380",
+        redis_username="runtime-user",
+        redis_password="runtime-secret",
+        redis_database=2,
+        redis_connect_timeout_seconds=3,
+        redis_operation_timeout_seconds=4,
+        redis_max_connections=25,
+        redis_startup_max_attempts=6,
+        redis_startup_retry_delay_seconds=0.5,
+        _env_file=None,
+    )
+
+    configuration = settings.active_redis_configuration()
+
+    assert configuration is not None
+    assert str(configuration.url).startswith("rediss://redis.example.test:6380")
+    assert configuration.username == "runtime-user"
+    assert configuration.password is not None
+    assert configuration.password.get_secret_value() == "runtime-secret"
+    assert configuration.database == 2
+    assert configuration.connect_timeout_seconds == 3
+    assert configuration.operation_timeout_seconds == 4
+    assert configuration.max_connections == 25
+    assert configuration.startup_max_attempts == 6
+    assert configuration.startup_retry_delay_seconds == 0.5
+    assert "runtime-secret" not in repr(settings)
+    assert "runtime-secret" not in repr(configuration)
+
+
+def test_blank_redis_credentials_are_normalized_as_absent() -> None:
+    configuration = Settings(
+        redis_enabled=True,
+        redis_username="  ",
+        redis_password="  ",
+        _env_file=None,
+    ).active_redis_configuration()
+
+    assert configuration is not None
+    assert configuration.username is None
+    assert configuration.password is None
+
+
+def test_redis_configuration_reads_prefixed_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HUELLITAS_REDIS_ENABLED", "true")
+    monkeypatch.setenv("HUELLITAS_REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("HUELLITAS_REDIS_DATABASE", "3")
+    monkeypatch.setenv("HUELLITAS_REDIS_MAX_CONNECTIONS", "40")
+
+    configuration = Settings(_env_file=None).active_redis_configuration()
+
+    assert configuration is not None
+    assert str(configuration.url).startswith("redis://redis:6379")
+    assert configuration.database == 3
+    assert configuration.max_connections == 40
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("redis_url", "http://redis:6379"),
+        ("redis_url", "redis://embedded:secret@redis:6379"),
+        ("redis_database", -1),
+        ("redis_connect_timeout_seconds", 0),
+        ("redis_operation_timeout_seconds", 301),
+        ("redis_max_connections", 0),
+        ("redis_startup_max_attempts", 0),
+        ("redis_startup_retry_delay_seconds", -1),
+    ],
+)
+def test_redis_rejects_invalid_or_ambiguous_configuration(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(redis_enabled=True, **{field: value}, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    "redis_url",
+    [
+        "redis://redis:6379/2",
+        "redis://redis:6379/?db=2",
+        "redis://redis:6379?socket_timeout=99",
+        "redis://redis:6379?password=redis-query-secret",
+    ],
+)
+def test_redis_url_rejects_paths_and_query_options_without_exposing_input(
+    redis_url: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        Settings(redis_enabled=True, redis_url=redis_url, _env_file=None)
+
+    assert "redis-query-secret" not in str(error.value)
 
 
 def test_settings_use_safe_development_defaults() -> None:

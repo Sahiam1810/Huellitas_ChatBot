@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Request
 
 from app.api.schemas.health import HealthResponse, ProblemDetail
-from app.shared.exceptions import ServiceNotReadyError, VectorStoreUnavailableError
+from app.shared.exceptions import (
+    RuntimeStoreUnavailableError,
+    ServiceNotReadyError,
+    VectorStoreUnavailableError,
+)
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -35,5 +39,11 @@ async def ready(request: Request) -> HealthResponse:
         try:
             await vector_store.check_health()
         except VectorStoreUnavailableError:
+            raise ServiceNotReadyError from None
+    runtime_store = request.app.state.dependencies.runtime_store
+    if runtime_store is not None:
+        try:
+            await runtime_store.check_health()
+        except RuntimeStoreUnavailableError:
             raise ServiceNotReadyError from None
     return HealthResponse(status="ready")

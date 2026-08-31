@@ -152,3 +152,11 @@ class GraphCompositionError(RuntimeError):
 
 class InvalidModuleResultError(RuntimeError):
     """Raised when a module returns data outside its selected contract."""
+
+
+class RuntimeStoreError(RuntimeError):
+    """Base error for provider-neutral runtime storage failures."""
+
+
+class RuntimeStoreUnavailableError(RuntimeStoreError):
+    """Raised when runtime storage cannot serve requests."""

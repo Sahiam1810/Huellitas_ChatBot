@@ -10,7 +10,8 @@ El proyecto implementa actualmente su base operativa de FastAPI, fronteras neutr
 - .NET conserva el historial canónico y el estado de escalamiento.
 - Python coordinará conversación, módulos, modelos y RAG.
 - Qdrant contiene las colecciones vectoriales y permanece detrás de puertos neutrales.
-- Redis se incorporará posteriormente para estado técnico temporal.
+- Redis ya está conectado como dependencia técnica opcional, pero todavía no posee
+  responsabilidades de caché, idempotencia, checkpoints ni estado conversacional.
 - Python nunca accederá directamente a Oracle Database 26ai.
 
 ## Requisitos
@@ -35,7 +36,7 @@ El host y el puerto se leen desde `HUELLITAS_HOST` y `HUELLITAS_PORT`.
 
 ## Ejecución con Docker
 
-Docker Compose ejecuta FastAPI y una instancia local persistente de Qdrant:
+Docker Compose ejecuta FastAPI, Qdrant y una instancia local persistente de Redis:
 
 ```powershell
 Copy-Item .env.example .env
@@ -49,6 +50,7 @@ Servicios locales:
 - Qdrant REST: `http://127.0.0.1:6333`.
 - Qdrant dashboard: `http://127.0.0.1:6333/dashboard`.
 - Qdrant gRPC: `127.0.0.1:6334`.
+- Redis: `127.0.0.1:6379`.
 
 Para detenerlos sin eliminar los vectores:
 
@@ -56,9 +58,22 @@ Para detenerlos sin eliminar los vectores:
 docker compose down
 ```
 
-El volumen `huellitas-chatbot_qdrant_storage` conserva los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente el almacenamiento local de Qdrant.
+Los volúmenes `huellitas-chatbot_qdrant_storage` y `huellitas-chatbot_redis_storage` conservan los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente ambos almacenamientos locales.
 
-Compose habilita la conexión del agente y utiliza la URL interna `http://qdrant:6333`. FastAPI comprueba Qdrant con una operación autenticada y no destructiva; si Qdrant deja de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que la conexión se recupere. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita las conexiones del agente mediante `http://qdrant:6333` y `redis://redis:6379`. Redis usa AOF con sincronización cada segundo y persiste en `/data`. Si Qdrant o Redis dejan de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que todas las dependencias habilitadas se recuperen. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+
+Para comprobar la degradación y recuperación de Redis sin reiniciar el agente:
+
+```powershell
+docker compose logs redis agent-api
+docker compose stop redis
+Invoke-RestMethod http://127.0.0.1:8000/health/live
+Invoke-WebRequest http://127.0.0.1:8000/health/ready -SkipHttpErrorCheck
+docker compose start redis
+docker compose ps
+```
+
+Fuera de Docker, Redis permanece deshabilitado. Para conectarlo a una instancia standalone configura `HUELLITAS_REDIS_ENABLED`, `HUELLITAS_REDIS_URL` y, cuando corresponda, las variables separadas de usuario y contraseña indicadas en `.env.example`. `redis://` usa conexión normal y `rediss://` habilita TLS. Esta base todavía no utiliza Redis para idempotencia, caché, checkpoints, locks, colas, sesiones, conversaciones ni RAG.
 
 ## Conexión con Qdrant
 
