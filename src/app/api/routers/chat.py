@@ -40,7 +40,9 @@ router = APIRouter(tags=["Messages"])
         },
         409: {
             "model": MessageProblemDetail,
-            "description": "The idempotency key was reused with another request.",
+            "description": (
+                "The idempotency key conflicts or the conversation is already processing a message."
+            ),
         },
         401: {"model": MessageProblemDetail, "description": "Authentication is required."},
         403: {

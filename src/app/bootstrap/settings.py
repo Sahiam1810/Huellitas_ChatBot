@@ -39,6 +39,10 @@ class CheckpointProvider(StrEnum):
     REDIS = "redis"
 
 
+class ConversationLockProvider(StrEnum):
+    LOCAL = "local"
+
+
 class ActiveModelConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -85,6 +89,13 @@ class ActiveCheckpointConfiguration(BaseModel):
 
     provider: CheckpointProvider
     ttl_minutes: int
+
+
+class ActiveConversationLockConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    provider: ConversationLockProvider
+    timeout_seconds: float
 
 
 class ActiveEmbeddingConfiguration(BaseModel):
@@ -197,6 +208,9 @@ class Settings(BaseSettings):
     checkpoint_provider: CheckpointProvider = CheckpointProvider.MEMORY
     checkpoint_ttl_minutes: int = Field(default=10080, ge=1, le=525600)
 
+    conversation_lock_provider: ConversationLockProvider = ConversationLockProvider.LOCAL
+    conversation_lock_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
     embedding_enabled: bool = False
     embedding_provider: EmbeddingProvider = EmbeddingProvider.OPENAI
     embedding_openai_api_key: SecretStr | None = None
@@ -301,6 +315,14 @@ class Settings(BaseSettings):
         return ActiveCheckpointConfiguration(
             provider=self.checkpoint_provider,
             ttl_minutes=self.checkpoint_ttl_minutes,
+        )
+
+    def active_conversation_lock_configuration(
+        self,
+    ) -> ActiveConversationLockConfiguration:
+        return ActiveConversationLockConfiguration(
+            provider=self.conversation_lock_provider,
+            timeout_seconds=self.conversation_lock_timeout_seconds,
         )
 
     def active_model_configuration(self) -> ActiveModelConfiguration | None:

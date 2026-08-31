@@ -6,6 +6,9 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from fastapi import FastAPI
 
 from app.adapters.checkpoints.checkpoint_store_factory import create_checkpoint_store
+from app.adapters.conversation_locks.conversation_lock_factory import (
+    create_conversation_lock,
+)
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
 from app.adapters.models.model_factory import create_chat_model
@@ -26,6 +29,7 @@ from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
 from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
 from app.orchestration.context_retriever import ContextRetriever
+from app.orchestration.conversation_lock import ConversationLockedMessageHandler
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
@@ -123,6 +127,8 @@ def build_lifespan(
         app.state.dependencies.runtime_store = runtime_store
         checkpoint_store = create_checkpoint_store(settings)
         app.state.dependencies.checkpoint_store = checkpoint_store
+        conversation_lock = create_conversation_lock(settings)
+        app.state.dependencies.conversation_lock = conversation_lock
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -232,6 +238,10 @@ def build_lifespan(
             graph_metrics = InMemoryGraphMetrics()
             graph_observer = CompositeGraphRunObserver((graph_metrics, SafeLoggingGraphObserver()))
             graph_handler = LangGraphMessageHandler(main_graph, observer=graph_observer)
+            locked_handler = ConversationLockedMessageHandler(
+                graph_handler,
+                conversation_lock,
+            )
             app.state.dependencies.graph_checkpointer = graph_checkpointer
             app.state.dependencies.main_graph = main_graph
             app.state.dependencies.graph_metrics = graph_metrics
@@ -243,11 +253,11 @@ def build_lifespan(
                 )
                 app.state.dependencies.idempotency_store = idempotency_store
                 message_handler = IdempotentMessageProcessor(
-                    graph_handler,
+                    locked_handler,
                     idempotency_store,
                 )
             else:
-                message_handler = graph_handler
+                message_handler = locked_handler
             app.state.dependencies.message_processor = CheckpointReadyMessageHandler(
                 message_handler,
                 checkpoint_store,
@@ -281,30 +291,38 @@ def build_lifespan(
             app.state.dependencies.runtime_store = None
             checkpoint_store = app.state.dependencies.checkpoint_store
             app.state.dependencies.checkpoint_store = None
+            conversation_lock = app.state.dependencies.conversation_lock
+            app.state.dependencies.conversation_lock = None
             try:
                 if idempotency_store is not None:
                     await idempotency_store.close()
             finally:
                 try:
-                    if chat_model is not None:
-                        await chat_model.close()
+                    if conversation_lock is not None:
+                        await conversation_lock.close()
                 finally:
                     try:
-                        if embedding_model is not None:
-                            await embedding_model.close()
+                        if chat_model is not None:
+                            await chat_model.close()
                     finally:
                         try:
-                            if vector_store is not None:
-                                await vector_store.close()
+                            if embedding_model is not None:
+                                await embedding_model.close()
                         finally:
                             try:
-                                if runtime_store is not None:
-                                    await runtime_store.close()
+                                if vector_store is not None:
+                                    await vector_store.close()
                             finally:
                                 try:
-                                    if checkpoint_store is not None:
-                                        await checkpoint_store.close()
+                                    if runtime_store is not None:
+                                        await runtime_store.close()
                                 finally:
-                                    logger.info("application_stopped name=%s", settings.app_name)
+                                    try:
+                                        if checkpoint_store is not None:
+                                            await checkpoint_store.close()
+                                    finally:
+                                        logger.info(
+                                            "application_stopped name=%s", settings.app_name
+                                        )
 
     return lifespan

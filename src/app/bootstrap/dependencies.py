@@ -6,6 +6,7 @@ from app.orchestration.message_handler import MessageHandler
 from app.orchestration.module_registry import ModuleRegistry
 from app.ports.chat_model import ChatModel
 from app.ports.checkpoint_store import CheckpointStore
+from app.ports.conversation_lock import ConversationLock
 from app.ports.conversation_memory_store import ConversationMemoryStore
 from app.ports.embedding_model import EmbeddingModel
 from app.ports.global_knowledge_store import GlobalKnowledgeStore
@@ -32,3 +33,4 @@ class ApplicationDependencies:
     graph_metrics: InMemoryGraphMetrics | None = None
     runtime_store: RuntimeStore | None = None
     checkpoint_store: CheckpointStore | None = None
+    conversation_lock: ConversationLock | None = None

@@ -44,6 +44,7 @@ def test_documentation_routes_exist_when_enabled() -> None:
         "503",
         "504",
     }
+    assert "conversation" in message_operation["responses"]["409"]["description"].lower()
     replay_header = message_operation["responses"]["200"]["headers"]["Idempotency-Replayed"]
     assert replay_header["schema"] == {"type": "string"}
     request_schema = message_operation["requestBody"]["content"]["application/json"]["schema"]

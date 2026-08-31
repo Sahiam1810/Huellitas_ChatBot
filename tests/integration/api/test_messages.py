@@ -29,6 +29,7 @@ from app.ports.global_knowledge_store import GlobalKnowledgeKind, GlobalKnowledg
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import (
     CheckpointStoreUnavailableError,
+    ConversationBusyError,
     ModelAuthenticationError,
     ModelInvalidResponseError,
     ModelRateLimitError,
@@ -107,6 +108,34 @@ def test_messages_require_bearer_authentication() -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "authentication_required"
+
+
+def test_busy_conversation_returns_safe_conflict() -> None:
+    class BusyMessageProcessor:
+        async def process(
+            self,
+            command: MessageCommand,
+            context: ExecutionContext,
+        ) -> MessageResult:
+            raise ConversationBusyError("private detail")
+
+    app = create_application(Settings(environment="test", chat_enabled=False, _env_file=None))
+    app.dependency_overrides[get_message_processor] = BusyMessageProcessor
+
+    with authenticated_client(app) as client:
+        response = client.post("/api/v1/messages", json=payload(is_escalated=True))
+
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json() == {
+        "type": "about:blank",
+        "title": "Conflict",
+        "status": 409,
+        "detail": "Conversation is processing another message",
+        "instance": "/api/v1/messages",
+        "code": "conversation_busy",
+    }
+    assert "private detail" not in response.text
 
 
 def test_unavailable_checkpoint_returns_safe_503_before_message_execution(

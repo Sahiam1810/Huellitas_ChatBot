@@ -9,6 +9,7 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMessageHandler
+from app.orchestration.conversation_lock import ConversationLockedMessageHandler
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.ports.chat_model import ChatResponse, ModelProvider
@@ -293,7 +294,8 @@ def test_disabled_idempotency_exposes_graph_message_handler() -> None:
     with TestClient(app):
         handler = app.state.dependencies.message_processor
         assert isinstance(handler, CheckpointReadyMessageHandler)
-        assert isinstance(handler._delegate, LangGraphMessageHandler)  # noqa: SLF001
+        assert isinstance(handler._delegate, ConversationLockedMessageHandler)  # noqa: SLF001
+        assert isinstance(handler._delegate._delegate, LangGraphMessageHandler)  # noqa: SLF001
         assert app.state.dependencies.idempotency_store is None
 
 

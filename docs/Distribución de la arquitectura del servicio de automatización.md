@@ -964,7 +964,7 @@ La implementación futura deberá desarrollarse por incrementos pequeños y lueg
 El núcleo de orquestación principal ya está ejecutable y conserva el contrato HTTP existente:
 
 ```text
-HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> LangGraph(thread_id=conversationId)
+HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> bloqueo local por conversación -> LangGraph(thread_id=conversationId)
   conversación escalada -> human_controlled
   registro vacío o ruta desconocida -> IA general + RAG adaptativo existentes
   módulo seleccionado -> ModuleExecutor neutral
@@ -1052,3 +1052,31 @@ La frontera neutral `CheckpointStore` posee el saver y su lifecycle. `MemoryChec
 Docker selecciona Redis; otros entornos conservan memoria salvo configuración explícita. Redis exige `HUELLITAS_REDIS_ENABLED=true`, usa TTL de `10080` minutos renovado al leer y separa cada hilo mediante el `conversationId` ya utilizado por LangGraph. No existe fallback a memoria: una caída deja liveness en `200`, degrada readiness y mensajes a `503`, y permite recuperación en línea cuando Redis vuelve.
 
 El estado persistible puede incluir texto conversacional e identificadores técnicos necesarios para reanudar el grafo. El JWT, headers, clientes y `ExecutionContext` nunca entran al estado. Los checkpoints son temporales y reconstruibles; .NET/Oracle sigue siendo propietario del historial, participantes, escalamiento y auditoría.
+
+---
+
+# 27. Bloqueo local por conversación implementado
+
+La frontera neutral `ConversationLock` protege la ejecución real de LangGraph. El
+adaptador `LocalConversationLock` mantiene exclusión por `conversationId`: dos mensajes
+de una misma conversación se procesan en serie, mientras conversaciones diferentes
+continúan en paralelo. El registro interno elimina locks sin usuarios y libera la
+reserva ante respuesta, error, timeout o cancelación.
+
+La composición implementada es:
+
+```text
+HTTP/JWT -> checkpoint ready -> idempotencia -> conversation lock -> LangGraph
+```
+
+La idempotencia permanece por fuera del bloqueo para que solicitudes idénticas
+concurrentes compartan una única operación. Una solicitud diferente espera hasta
+`HUELLITAS_CONVERSATION_LOCK_TIMEOUT_SECONDS`, con 30 segundos por defecto. Si vence,
+la API devuelve `409 conversation_busy` sin cancelar al propietario ni exponer datos
+de la conversación.
+
+`HUELLITAS_CONVERSATION_LOCK_PROVIDER=local` es el único proveedor disponible en este
+incremento. La garantía se limita a un proceso o contenedor y no coordina réplicas. El
+bloqueo distribuido con Redis sigue pendiente y deberá implementarse detrás del mismo
+puerto con adquisición atómica, lease renovable, token de propiedad y liberación
+verificada antes de ejecutar operaciones veterinarias con efectos.

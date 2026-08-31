@@ -207,6 +207,28 @@ Una repetición con la misma identidad y el mismo contenido devuelve exactamente
 
 Este almacenamiento vive únicamente en la memoria del proceso: se pierde al reiniciar y no coordina réplicas. Es una protección local para el desarrollo actual, no la idempotencia durable de producción. Antes de desplegar varias réplicas deberá sustituirse el adaptador por coordinación persistente en .NET/Oracle o Redis sin cambiar el caso de uso. La idempotencia exacta se ejecuta antes del enrutamiento semántico: un reintento idéntico reproduce el resultado sin volver a consultar Qdrant.
 
+## Bloqueo local por conversación
+
+El agente evita que dos mensajes diferentes del mismo `conversationId` ejecuten
+LangGraph simultáneamente. Las conversaciones distintas continúan en paralelo y el
+segundo mensaje de una conversación espera hasta el timeout configurado:
+
+```dotenv
+HUELLITAS_CONVERSATION_LOCK_PROVIDER="local"
+HUELLITAS_CONVERSATION_LOCK_TIMEOUT_SECONDS="30"
+```
+
+Si la espera vence, el endpoint devuelve `409 conversation_busy`; la ejecución que ya
+tenía el bloqueo continúa normalmente. El lock siempre se libera ante respuesta, error
+o cancelación y se aplica dentro de la idempotencia, por lo que reintentos idénticos
+comparten una sola ejecución.
+
+El proveedor actual es exclusivamente local al proceso: protege una instancia o un
+contenedor, pero no coordina varias réplicas. El futuro bloqueo distribuido con Redis
+se implementará detrás del puerto `ConversationLock`, con lease, renovación, token de
+propiedad y liberación segura; `redis` todavía no es un valor aceptado para esta
+configuración.
+
 ## Endpoints disponibles
 
 | Método | Ruta | Propósito |
