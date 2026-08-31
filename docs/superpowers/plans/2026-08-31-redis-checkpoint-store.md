@@ -6,7 +6,7 @@
 
 **Architecture:** A provider-neutral `CheckpointStore` owns the saver lifecycle while LangGraph receives only its `BaseCheckpointSaver`. Memory wraps `InMemorySaver`; Redis owns a dedicated async client and official `AsyncShallowRedisSaver`, protected by an error-translating wrapper and a message-handler availability guard. Redis checkpoint failure degrades readiness and messages without stopping FastAPI or falling back to memory.
 
-**Tech Stack:** Python 3.12, FastAPI lifespan, LangGraph 1.2, `langgraph-checkpoint-redis>=0.5.2,<0.6`, redis-py 8.1, Redis 8.8.2 with RedisJSON/RediSearch, Pydantic Settings, pytest, Ruff, Docker Compose.
+**Tech Stack:** Python 3.12, FastAPI lifespan, LangGraph 1.2, `langgraph-checkpoint-redis>=0.5.2,<0.6`, redis-py 7.1, Redis 8.8.2 with RedisJSON/RediSearch, Pydantic Settings, pytest, Ruff, Docker Compose.
 
 ## Global Constraints
 
