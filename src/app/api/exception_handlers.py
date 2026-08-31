@@ -11,6 +11,7 @@ from app.shared.exceptions import (
     AuthenticationRequiredError,
     AuthorizationError,
     ChatModelError,
+    ConversationBusyError,
     EmbeddingAuthenticationError,
     EmbeddingConfigurationError,
     EmbeddingInvalidResponseError,
@@ -204,6 +205,13 @@ AUTHORIZATION_PROBLEMS: dict[type[AuthorizationError], ProblemSpec] = {
     ),
 }
 
+CONVERSATION_BUSY_PROBLEM = ProblemSpec(
+    "Conflict",
+    409,
+    "Conversation is processing another message",
+    "conversation_busy",
+)
+
 
 def problem_response(problem: MessageProblemDetail) -> JSONResponse:
     return JSONResponse(
@@ -294,6 +302,22 @@ async def idempotency_error_handler(
     )
 
 
+async def conversation_busy_handler(
+    request: Request,
+    _: ConversationBusyError,
+) -> JSONResponse:
+    spec = CONVERSATION_BUSY_PROBLEM
+    return problem_response(
+        MessageProblemDetail(
+            title=spec.title,
+            status=spec.status,
+            detail=spec.detail,
+            instance=request.url.path,
+            code=spec.code,
+        )
+    )
+
+
 async def authentication_error_handler(
     request: Request,
     error: AuthenticationError,
@@ -330,6 +354,7 @@ async def authorization_error_handler(
 
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ServiceNotReadyError, service_not_ready_handler)
+    app.add_exception_handler(ConversationBusyError, conversation_busy_handler)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
     for error_type in MODEL_PROBLEMS:
         app.add_exception_handler(error_type, chat_model_error_handler)
