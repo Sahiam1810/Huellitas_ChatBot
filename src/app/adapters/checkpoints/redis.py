@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import suppress
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -53,6 +54,11 @@ class StrictAsyncShallowRedisSaver(AsyncShallowRedisSaver):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         silence_checkpoint_dependency_logs()
         super().__init__(*args, **kwargs)
+
+    async def asetup(self) -> None:
+        await super().asetup()
+        if self._ttl_enabled:
+            await self._remove_non_expiring_checkpoint_state()
 
     async def aput(
         self,
@@ -132,11 +138,14 @@ class StrictAsyncShallowRedisSaver(AsyncShallowRedisSaver):
     def _refresh_on_read(self) -> bool:
         return bool(self.ttl_config and self.ttl_config.get("refresh_on_read"))
 
-    async def _require_expiration(self, keys: Sequence[str]) -> None:
-        for key in keys:
-            if await self._redis.ttl(key) <= 0:
-                await self._redis.delete(*keys)
-                raise RedisError("Checkpoint expiration was not applied")
+    async def _require_expiration(self, keys: Sequence[str | bytes]) -> None:
+        try:
+            for key in keys:
+                if await self._redis.ttl(key) <= 0:
+                    raise RedisError("Checkpoint expiration was not applied")
+        except CHECKPOINT_OPERATION_ERRORS:
+            await self._remove_after_expiration_failure(keys)
+            raise
 
     async def _refresh_thread_expiration(
         self,
@@ -146,15 +155,41 @@ class StrictAsyncShallowRedisSaver(AsyncShallowRedisSaver):
     ) -> None:
         safe_checkpoint_ns = to_storage_safe_str(checkpoint_ns)
         registry_key = f"write_keys_zset:{thread_id}:{safe_checkpoint_ns}:shallow"
-        write_keys = await self._redis.zrange(registry_key, 0, -1)
-        decoded_keys = tuple(key.decode() if isinstance(key, bytes) else key for key in write_keys)
-        keys = (checkpoint_key, *decoded_keys, registry_key) if decoded_keys else (checkpoint_key,)
-        ttl_seconds = int(self.ttl_config["default_ttl"] * 60)
-        for key in keys:
-            if await self._redis.expire(key, ttl_seconds) is not True:
-                await self._redis.delete(*keys)
-                raise RedisError("Checkpoint expiration was not applied")
+        keys: tuple[str | bytes, ...] = (checkpoint_key, registry_key)
+        try:
+            write_keys = await self._redis.zrange(registry_key, 0, -1)
+            decoded_keys = tuple(
+                key.decode() if isinstance(key, bytes) else key for key in write_keys
+            )
+            keys = (
+                (checkpoint_key, *decoded_keys, registry_key) if decoded_keys else (checkpoint_key,)
+            )
+            ttl_seconds = int(self.ttl_config["default_ttl"] * 60)
+            for key in keys:
+                if await self._redis.expire(key, ttl_seconds) is not True:
+                    raise RedisError("Checkpoint expiration was not applied")
+        except CHECKPOINT_OPERATION_ERRORS:
+            await self._remove_after_expiration_failure(keys)
+            raise
         await self._require_expiration(keys)
+
+    async def _remove_after_expiration_failure(
+        self,
+        keys: Sequence[str | bytes],
+    ) -> None:
+        with suppress(*CHECKPOINT_OPERATION_ERRORS):
+            await self._redis.delete(*keys)
+
+    async def _remove_non_expiring_checkpoint_state(self) -> None:
+        patterns = (
+            f"{self._checkpoint_prefix}:*",
+            f"{self._checkpoint_write_prefix}:*",
+            "write_keys_zset:*:shallow",
+        )
+        for pattern in patterns:
+            async for key in self._redis.scan_iter(match=pattern, count=100):
+                if await self._redis.ttl(key) == -1:
+                    await self._redis.delete(key)
 
 
 class SafeAsyncCheckpointSaver(BaseCheckpointSaver):

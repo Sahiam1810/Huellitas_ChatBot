@@ -286,6 +286,77 @@ async def test_strict_saver_removes_checkpoint_when_ttl_is_not_applied(
 
 
 @pytest.mark.anyio
+async def test_strict_saver_removes_checkpoint_when_ttl_check_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.adapters.checkpoints.redis.AsyncShallowRedisSaver.aput",
+        AsyncMock(return_value={"configurable": {"thread_id": "thread-a"}}),
+    )
+    client = SimpleNamespace(
+        ttl=AsyncMock(side_effect=RedisError("connection lost")),
+        delete=AsyncMock(),
+    )
+    saver = object.__new__(StrictAsyncShallowRedisSaver)
+    saver._redis = client
+    saver.ttl_config = {"default_ttl": 10080, "refresh_on_read": True}
+    monkeypatch.setattr(
+        saver,
+        "_make_shallow_redis_checkpoint_key_cached",
+        lambda thread_id, checkpoint_ns: "checkpoint:thread-a:",
+    )
+
+    with pytest.raises(RedisError, match="connection lost"):
+        await saver.aput(
+            {"configurable": {"thread_id": "thread-a"}},
+            {"id": "checkpoint"},
+            {},
+            {},
+        )
+
+    client.delete.assert_awaited_once_with("checkpoint:thread-a:")
+
+
+@pytest.mark.anyio
+async def test_strict_saver_setup_removes_only_non_expiring_checkpoint_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.adapters.checkpoints.redis.AsyncShallowRedisSaver.asetup",
+        AsyncMock(),
+    )
+    keys_by_pattern = {
+        "checkpoint:*": [b"checkpoint:orphan", b"checkpoint:healthy"],
+        "checkpoint_write:*": [b"checkpoint_write:orphan"],
+        "write_keys_zset:*:shallow": [b"write_keys_zset:orphan:__empty__:shallow"],
+    }
+
+    async def scan_iter(*, match: str, count: int) -> AsyncIterator[bytes]:
+        assert count == 100
+        for key in keys_by_pattern[match]:
+            yield key
+
+    client = SimpleNamespace(
+        scan_iter=scan_iter,
+        ttl=AsyncMock(side_effect=[-1, 600, -1, -1]),
+        delete=AsyncMock(),
+    )
+    saver = object.__new__(StrictAsyncShallowRedisSaver)
+    saver._redis = client
+    saver._checkpoint_prefix = "checkpoint"
+    saver._checkpoint_write_prefix = "checkpoint_write"
+    saver.ttl_config = {"default_ttl": 10080, "refresh_on_read": True}
+
+    await saver.asetup()
+
+    assert client.delete.await_args_list == [
+        ((b"checkpoint:orphan",),),
+        ((b"checkpoint_write:orphan",),),
+        ((b"write_keys_zset:orphan:__empty__:shallow",),),
+    ]
+
+
+@pytest.mark.anyio
 async def test_strict_saver_refreshes_all_thread_keys_or_removes_partial_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
