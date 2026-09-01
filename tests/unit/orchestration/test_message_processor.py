@@ -25,6 +25,7 @@ def command(
     *,
     is_escalated: bool = False,
     publish_as_global_knowledge: bool = False,
+    roles: tuple[str, ...] = ("customer",),
 ) -> MessageCommand:
     return MessageCommand(
         message="Necesito información",
@@ -33,7 +34,7 @@ def command(
         pet_id=None,
         channel="whatsapp",
         language="es-CO",
-        roles=("customer",),
+        roles=roles,
         is_escalated=is_escalated,
         correlation_id=CORRELATION_ID,
         idempotency_key="message-001",
@@ -252,6 +253,58 @@ async def test_processor_reuses_query_vector_after_model_success() -> None:
         CONVERSATION_ID,
         allow_direct=False,
     )
+
+
+@pytest.mark.anyio
+async def test_guest_uses_policy_prompt_and_cannot_publish_global_knowledge() -> None:
+    model = chat_model()
+    retriever = SimpleNamespace(
+        retrieve=AsyncMock(
+            return_value=RetrievedRagContext(
+                status=RagStatus.EMPTY,
+                route=SemanticRoute.GENERAL,
+                query_vector=(0.1, 0.2, 0.3),
+            )
+        )
+    )
+
+    async def write(**values: object) -> RagWriteResult:
+        return RagWriteResult(
+            memory_stored=True,
+            knowledge_published=bool(values["publish_as_global_knowledge"]),
+        )
+
+    writer = SimpleNamespace(write=AsyncMock(side_effect=write))
+    processor = MessageProcessor(
+        chat_model=model,
+        max_output_tokens=1024,
+        rag_enabled=True,
+        context_retriever=retriever,
+        memory_writer=writer,
+    )
+
+    current = command(
+        roles=("TelegramGuest",),
+        publish_as_global_knowledge=True,
+    )
+    result = await processor.process(current)
+
+    retriever.retrieve.assert_awaited_once_with(
+        current.message,
+        CONVERSATION_ID,
+        allow_direct=False,
+    )
+    request = model.generate.await_args.args[0]
+    assert request.messages[0].role is ChatRole.SYSTEM
+    assert "/vincular" in request.messages[0].content
+    writer.write.assert_awaited_once_with(
+        conversation_id=CONVERSATION_ID,
+        question=current.message,
+        answer="Respuesta",
+        query_vector=(0.1, 0.2, 0.3),
+        publish_as_global_knowledge=False,
+    )
+    assert result.rag.knowledge_published is False
 
 
 @pytest.mark.anyio

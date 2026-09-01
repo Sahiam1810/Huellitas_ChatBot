@@ -6,6 +6,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
 from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.guest_access import GUEST_FALLBACK_REASON, is_guest
 from app.orchestration.intent_router import IntentRouter, RoutingKind
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
@@ -54,6 +55,8 @@ def build_main_graph(
         return {"result": message_result_to_state(build_human_controlled_result(command))}
 
     async def route_intent(state: MainGraphState) -> MainGraphState:
+        if is_guest(message_command_from_state(state["command"]).roles):
+            return {"fallback_reason": GUEST_FALLBACK_REASON}
         manifests = registry.list_manifests()
         if not manifests:
             return {"fallback_reason": "module_registry_empty"}

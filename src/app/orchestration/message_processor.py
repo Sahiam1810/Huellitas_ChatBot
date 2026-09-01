@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
+from app.orchestration.guest_access import GUEST_SYSTEM_PROMPT, is_guest
 from app.orchestration.rag_contracts import (
     RagMessageResult,
     RagStatus,
@@ -78,7 +79,12 @@ class MessageProcessor:
             )
 
         retrieved = await self._retrieve_context(command)
-        if retrieved.route is SemanticRoute.DIRECT and retrieved.direct_answer is not None:
+        guest = is_guest(command.roles)
+        if (
+            not guest
+            and retrieved.route is SemanticRoute.DIRECT
+            and retrieved.direct_answer is not None
+        ):
             return MessageResult(
                 message=retrieved.direct_answer,
                 conversation_id=command.conversation_id,
@@ -90,10 +96,11 @@ class MessageProcessor:
         if self._chat_model is None:
             raise ModelConfigurationError("Chat model is not configured")
 
-        messages = [ChatMessage(role=ChatRole.USER, content=command.message)]
+        messages: list[ChatMessage] = []
+        if guest:
+            messages.append(ChatMessage(role=ChatRole.SYSTEM, content=GUEST_SYSTEM_PROMPT))
         if retrieved.prompt_context is not None:
-            messages.insert(
-                0,
+            messages.append(
                 ChatMessage(
                     role=ChatRole.SYSTEM,
                     content=(
@@ -104,6 +111,7 @@ class MessageProcessor:
                     ),
                 ),
             )
+        messages.append(ChatMessage(role=ChatRole.USER, content=command.message))
         response = await self._chat_model.generate(
             ChatRequest(
                 messages=tuple(messages),
@@ -137,7 +145,9 @@ class MessageProcessor:
         return await self._context_retriever.retrieve(
             command.message,
             command.conversation_id,
-            allow_direct=not command.publish_as_global_knowledge,
+            allow_direct=(
+                not command.publish_as_global_knowledge and not is_guest(command.roles)
+            ),
         )
 
     async def _store_exchange(
@@ -153,7 +163,9 @@ class MessageProcessor:
             question=command.message,
             answer=answer,
             query_vector=retrieved.query_vector,
-            publish_as_global_knowledge=command.publish_as_global_knowledge,
+            publish_as_global_knowledge=(
+                command.publish_as_global_knowledge and not is_guest(command.roles)
+            ),
         )
 
     @staticmethod

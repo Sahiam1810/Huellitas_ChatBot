@@ -329,6 +329,12 @@ El backend .NET emite el JWT. FastAPI valida:
 - Identificador de clave `kid` exacto.
 - Claims `sub`, `person_id`, `role_id`, `role`, `preferred_username`, `email`, `jti`, `iat`, `nbf` y `exp`.
 
+Para Telegram sin vinculación, .NET puede emitir una identidad interna firmada
+con el rol exacto `TelegramGuest`. Sus identificadores son determinísticos y
+aislados, pero no representan ni crean un usuario en Oracle. Se mantiene la
+misma validación de firma, claims e igualdad entre `userId` y `person_id`; no
+existe una excepción de autenticación para invitados.
+
 `sub` identifica la cuenta de autenticación y `person_id` identifica la persona de `Users.Id`; por ello `MessageRequest.userId` debe coincidir con `person_id`. El rol efectivo siempre procede del token. Mensajes acepta cualquier principal válido y la administración documental requiere el rol exacto `Administrador`, configurable por entorno. Health, info y documentación permanecen públicos.
 
 El token nunca se entrega al modelo, prompts o Qdrant, y debe redactarse de logs y trazas. Una autenticación inválida termina en la frontera HTTP y no activa un fallback conversacional.
@@ -978,6 +984,14 @@ HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> bloqueo local por co
 - El registro admite asociaciones entre `ModuleManifest` y `ModuleExecutor`, pero producción lo mantiene intencionalmente vacío hasta implementar el primer módulo veterinario.
 - Una conversación marcada como escalada finaliza antes del routing, el modelo, Qdrant o cualquier ejecutor modular.
 - Una intención desconocida o ambigua utiliza el fallback general y nunca inventa un módulo.
+
+El rol exacto `TelegramGuest` activa una compuerta previa al routing modular:
+la ejecución utiliza el fallback cerrado `guest_general_only` y solo llega al
+procesador general. Aunque el request solicite publicación global o exista una
+coincidencia directa en memoria, el agente deshabilita ambas posibilidades.
+El prompt limita la respuesta a orientación veterinaria general e información
+pública, y deriva a `/vincular` cuando se requieren datos u operaciones
+personales. Un principal vinculado conserva sin cambios el routing normal.
 
 ## Estado, seguridad y checkpoints
 
