@@ -194,6 +194,29 @@ async def test_selected_module_receives_only_the_neutral_request_and_runtime_con
 
 
 @pytest.mark.anyio
+async def test_telegram_guest_never_calls_router_or_module_executor() -> None:
+    general = GeneralProcessor()
+    executor = Executor()
+    registry = ModuleRegistry()
+    registry.register(manifest(), executor)
+    router = Router(RoutingDecision.module(intent="appointments.list", module_id="appointments"))
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    current = command(roles=("TelegramGuest",))
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    assert message_result_from_state(state["result"]).message == "general:Quiero ver mis citas"
+    assert state["fallback_reason"] == "guest_general_only"
+    assert general.commands == [current]
+    assert router.calls == 0
+    assert executor.requests == []
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "decision",
     [RoutingDecision.unknown("not matched"), RoutingDecision.ambiguous("several matches")],
