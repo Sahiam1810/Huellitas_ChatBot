@@ -85,6 +85,21 @@ $accessToken = $session.accessToken
 $authorization = @{ Authorization = "Bearer $accessToken" }
 ```
 
+## Identidad invitada de Telegram
+
+Cuando el modo invitado está habilitado en .NET, el backend crea para cada
+llamada un JWT delegado `RS256` con el rol exacto `TelegramGuest`. El token
+incluye los mismos claims obligatorios y conserva `userId == person_id`; el
+agente no relaja `identity_mismatch` ni acepta una identidad fabricada por el
+cliente.
+
+Esta identidad permite exclusivamente preguntas generales. El grafo no
+consulta ni ejecuta módulos veterinarios, no reutiliza respuestas RAG directas
+y no publica conocimiento global. Para datos de mascotas, citas, vacunas,
+historias clínicas u operaciones, el usuario debe completar `/vincular` en
+Telegram. Los identificadores invitados no se registran en logs ni se
+persisten como usuarios o conversaciones canónicas.
+
 ## Probar desde Swagger
 
 Abre `http://127.0.0.1:8000/docs`, pulsa **Authorize** y pega únicamente el valor de
