@@ -8,6 +8,8 @@ from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_executor import ModuleExecutionRequest
+from app.orchestration.rag_contracts import RagStatus, SemanticRoute
+from app.ports.service_knowledge_gateway import ServiceKnowledgeResult
 from app.ports.services_catalog_gateway import (
     ServiceCatalogItem,
     ServicesCatalogAuthenticationError,
@@ -52,6 +54,16 @@ class CatalogGateway(ServicesCatalogGateway):
 
     async def close(self) -> None:
         return None
+
+
+class KnowledgeGateway:
+    def __init__(self, result: ServiceKnowledgeResult) -> None:
+        self.result = result
+        self.queries: list[str] = []
+
+    async def describe(self, query: str) -> ServiceKnowledgeResult:
+        self.queries.append(query)
+        return self.result
 
 
 def context() -> ExecutionContext:
@@ -146,3 +158,56 @@ async def test_gateway_errors_are_translated_to_safe_module_messages(
 
     assert expected in (result.message or "")
     assert "safe" not in (result.message or "")
+
+
+@pytest.mark.anyio
+async def test_single_service_appends_scoped_knowledge_without_replacing_official_data() -> None:
+    knowledge = KnowledgeGateway(
+        ServiceKnowledgeResult(
+            status=RagStatus.USED,
+            description="Incluye valoración clínica preventiva.",
+            match_count=1,
+            top_score=0.91,
+        )
+    )
+
+    result = await ServicesCatalogModuleExecutor(
+        CatalogGateway(), knowledge_gateway=knowledge
+    ).execute(request("Cuánto cuesta la consulta general", "services.detail"), context())
+
+    assert "30 minutos" in (result.message or "")
+    assert "$55.000 COP" in (result.message or "")
+    assert "Información adicional: Incluye valoración clínica preventiva." in (
+        result.message or ""
+    )
+    assert knowledge.queries == ["Consulta general"]
+    assert result.rag.status is RagStatus.USED
+    assert result.rag.route is SemanticRoute.CONTEXTUAL
+    assert result.rag.global_matches == 1
+    assert result.rag.top_score == 0.91
+
+
+@pytest.mark.anyio
+async def test_list_does_not_query_optional_service_knowledge() -> None:
+    knowledge = KnowledgeGateway(ServiceKnowledgeResult(status=RagStatus.EMPTY))
+
+    result = await ServicesCatalogModuleExecutor(
+        CatalogGateway(), knowledge_gateway=knowledge
+    ).execute(request("Qué servicios ofrecen", "services.list"), context())
+
+    assert knowledge.queries == []
+    assert result.rag.status is RagStatus.DISABLED
+
+
+@pytest.mark.anyio
+async def test_degraded_knowledge_keeps_official_service_response() -> None:
+    knowledge = KnowledgeGateway(ServiceKnowledgeResult(status=RagStatus.DEGRADED))
+
+    result = await ServicesCatalogModuleExecutor(
+        CatalogGateway(), knowledge_gateway=knowledge
+    ).execute(request("Cuánto cuesta la consulta general", "services.detail"), context())
+
+    assert "Consulta general" in (result.message or "")
+    assert "$55.000 COP" in (result.message or "")
+    assert result.rag.status is RagStatus.DEGRADED
+    assert result.rag.route is SemanticRoute.DEGRADED
