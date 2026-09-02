@@ -12,6 +12,7 @@ from app.ports.pet_profile_gateway import (
     PetProfileForbiddenError,
     PetProfileInvalidResponseError,
     PetProfileNotFoundError,
+    PetProfileOwnerProfileNotFoundError,
     PetProfilePatch,
     PetProfileUnavailableError,
     PetProfileVersionConflictError,
@@ -36,7 +37,12 @@ class DotNetPetProfileGateway:
         self._max_response_bytes = max_response_bytes
 
     async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
-        response = await self._request("GET", "/api/pets/mine", bearer_token)
+        try:
+            response = await self._request("GET", "/api/pets/mine", bearer_token)
+        except PetProfileNotFoundError:
+            raise PetProfileOwnerProfileNotFoundError(
+                "Authenticated owner profile was not found"
+            ) from None
         payload = self._json(response)
         if not isinstance(payload, list):
             raise PetProfileInvalidResponseError("Backend returned an invalid pet list")

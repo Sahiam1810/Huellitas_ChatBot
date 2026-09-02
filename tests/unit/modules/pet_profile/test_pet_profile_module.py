@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+import app.ports.pet_profile_gateway as pet_profile_ports
 from app.modules.pet_profile.graph import PetProfileModuleExecutor
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
@@ -116,6 +117,32 @@ async def test_linked_account_without_pets_is_explained_explicitly() -> None:
 
     assert "cuenta está vinculada" in (result.message or "").casefold()
     assert "no encontré mascotas" in (result.message or "").casefold()
+
+
+@pytest.mark.anyio
+async def test_linked_account_without_client_profile_receives_actionable_message() -> None:
+    error_type = getattr(
+        pet_profile_ports,
+        "PetProfileOwnerProfileNotFoundError",
+        None,
+    )
+    assert error_type is not None
+
+    class MissingOwnerProfileGateway(EmptyGateway):
+        async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
+            raise error_type("Client profile is missing")
+
+    executor = PetProfileModuleExecutor(MissingOwnerProfileGateway())
+
+    result = await executor.execute(
+        ModuleExecutionRequest(command("¿Qué mascotas tengo?"), "pets.list", PET_PROFILE_MANIFEST),
+        context(),
+    )
+
+    message = (result.message or "").casefold()
+    assert "perfil de cliente" in message
+    assert "completa" in message
+    assert "más tarde" not in message
 
 
 @pytest.mark.anyio

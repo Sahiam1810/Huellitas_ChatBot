@@ -26,6 +26,7 @@ from app.ports.pet_profile_gateway import (
     PetProfileForbiddenError,
     PetProfileGateway,
     PetProfileGatewayError,
+    PetProfileOwnerProfileNotFoundError,
     PetProfileVersionConflictError,
 )
 from app.shared.enums import MessageResponseType
@@ -60,6 +61,12 @@ class PetProfileModuleExecutor:
             return {"result": self._message("No pude verificar tu identidad.")}
         try:
             result = await self._dispatch(request, context)
+        except PetProfileOwnerProfileNotFoundError:
+            result = self._message(
+                "Tu cuenta de Telegram está vinculada, pero todavía no tienes "
+                "un perfil de cliente en Huellitas. Completa tu registro como "
+                "cliente para poder consultar y registrar mascotas."
+            )
         except (PetProfileAuthenticationError, PetProfileForbiddenError):
             result = self._message(
                 "No pude autorizar la consulta de tus mascotas. "
