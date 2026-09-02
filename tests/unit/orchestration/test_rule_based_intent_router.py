@@ -2,6 +2,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
+from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
 from app.orchestration.intent_router import RoutingKind
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
@@ -46,3 +48,17 @@ async def test_router_returns_unknown_when_no_rule_matches() -> None:
     decision = await router.route(command("hola"), ())
 
     assert decision.kind is RoutingKind.UNKNOWN
+
+
+@pytest.mark.anyio
+async def test_pet_profile_routes_registration_without_using_general_model() -> None:
+    router = RuleBasedIntentRouter(PET_PROFILE_ROUTING_RULES)
+
+    decision = await router.route(
+        command("Quiero registrar una mascota"),
+        (PET_PROFILE_MANIFEST,),
+    )
+
+    assert decision.kind is RoutingKind.MODULE
+    assert decision.intent == "pets.register"
+    assert decision.module_id == "pet_profile"

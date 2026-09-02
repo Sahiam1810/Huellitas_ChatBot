@@ -10,7 +10,12 @@ from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_executor import ModuleExecutionRequest
-from app.ports.pet_profile_gateway import CatalogItem, PetProfile, PetProfilePatch
+from app.ports.pet_profile_gateway import (
+    CatalogItem,
+    PetProfile,
+    PetProfilePatch,
+    PetRegistration,
+)
 from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.enums import MessageResponseType
 
@@ -34,6 +39,7 @@ class Gateway:
             updated_at=VERSION,
         )
         self.patches: list[PetProfilePatch] = []
+        self.registrations: list[PetRegistration] = []
 
     async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
         assert bearer_token == "jwt-secret"
@@ -51,6 +57,20 @@ class Gateway:
 
     async def list_races(self, bearer_token: str) -> tuple[CatalogItem, ...]:
         return (CatalogItem(self.profile.race_id, "Mestizo"),)
+
+    async def create_owned(
+        self, bearer_token: str, registration: PetRegistration
+    ) -> PetProfile:
+        assert bearer_token == "jwt-secret"
+        self.registrations.append(registration)
+        return replace(
+            self.profile,
+            name=registration.name,
+            age=registration.age,
+            gender=registration.gender,
+            weight=registration.weight,
+            observations=registration.observations,
+        )
 
     async def close(self) -> None:
         return None
@@ -175,3 +195,98 @@ async def test_update_waits_for_explicit_confirmation_before_patch() -> None:
     assert gateway.patches[0].weight == 13.5
     assert confirmed.pending_confirmation is None
     assert "actualizado" in (confirmed.message or "").casefold()
+
+
+@pytest.mark.anyio
+async def test_registration_collects_all_fields_and_creates_only_after_confirmation() -> None:
+    gateway = Gateway()
+    executor = PetProfileModuleExecutor(gateway)
+    current = await executor.execute(
+        ModuleExecutionRequest(
+            command("Quiero registrar una mascota"),
+            "pets.register",
+            PET_PROFILE_MANIFEST,
+        ),
+        context(),
+    )
+    assert "llama" in (current.message or "").casefold()
+
+    for value in ("Luna", "Canino", "Mestizo", "4", "hembra", "12,5 kg", "ninguna"):
+        assert current.pending_confirmation is not None
+        current = await executor.execute(
+            ModuleExecutionRequest(
+                command(value),
+                "pet_profile.registration",
+                PET_PROFILE_MANIFEST,
+                current.pending_confirmation,
+            ),
+            context(),
+        )
+
+    assert gateway.registrations == []
+    assert current.pending_confirmation is not None
+    assert current.pending_confirmation.action == "pets.register"
+    assert "¿confirmas?" in (current.message or "").casefold()
+
+    confirmed = await executor.execute(
+        ModuleExecutionRequest(
+            command("sí"),
+            "pet_profile.registration",
+            PET_PROFILE_MANIFEST,
+            current.pending_confirmation,
+        ),
+        context(),
+    )
+
+    registration = gateway.registrations[0]
+    assert registration.name == "Luna"
+    assert registration.gender == "F"
+    assert registration.weight == 12.5
+    assert confirmed.pending_confirmation is None
+    assert "registrada" in (confirmed.message or "").casefold()
+
+
+@pytest.mark.anyio
+async def test_registration_keeps_same_step_for_invalid_input_and_can_cancel() -> None:
+    gateway = Gateway()
+    executor = PetProfileModuleExecutor(gateway)
+    pending = await executor.execute(
+        ModuleExecutionRequest(command("registrar mascota"), "pets.register", PET_PROFILE_MANIFEST),
+        context(),
+    )
+    for value in ("Luna", "Canino", "Mestizo"):
+        pending = await executor.execute(
+            ModuleExecutionRequest(
+                command(value),
+                "pet_profile.registration",
+                PET_PROFILE_MANIFEST,
+                pending.pending_confirmation,
+            ),
+            context(),
+        )
+
+    invalid = await executor.execute(
+        ModuleExecutionRequest(
+            command("cuatro"),
+            "pet_profile.registration",
+            PET_PROFILE_MANIFEST,
+            pending.pending_confirmation,
+        ),
+        context(),
+    )
+    assert invalid.pending_confirmation is not None
+    assert invalid.pending_confirmation.payload["step"] == "age"
+    assert "número" in (invalid.message or "").casefold()
+
+    cancelled = await executor.execute(
+        ModuleExecutionRequest(
+            command("cancelar"),
+            "pet_profile.registration",
+            PET_PROFILE_MANIFEST,
+            invalid.pending_confirmation,
+        ),
+        context(),
+    )
+    assert cancelled.pending_confirmation is None
+    assert gateway.registrations == []
+    assert "cancel" in (cancelled.message or "").casefold()
