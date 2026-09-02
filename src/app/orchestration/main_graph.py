@@ -88,18 +88,12 @@ def build_main_graph(
         if router is None:
             raise GraphCompositionError("Intent router is not configured")
         decision = await router.route(command, manifests)
-        if guest:
-            if decision.kind is RoutingKind.MODULE:
+        if decision.kind is not RoutingKind.MODULE:
+            if guest:
                 return {
                     "routing": routing_decision_to_state(decision),
-                    "fallback_reason": "guest_link_required",
-                    "guest_link_required": True,
+                    "fallback_reason": GUEST_FALLBACK_REASON,
                 }
-            return {
-                "routing": routing_decision_to_state(decision),
-                "fallback_reason": GUEST_FALLBACK_REASON,
-            }
-        if decision.kind is not RoutingKind.MODULE:
             return {
                 "routing": routing_decision_to_state(decision),
                 "fallback_reason": decision.reason,
@@ -112,6 +106,12 @@ def build_main_graph(
             raise GraphCompositionError("Router selected an unregistered module") from None
         if decision.intent not in registration.manifest.intents:
             raise GraphCompositionError("Router selected an intent outside the module manifest")
+        if guest and not registration.manifest.guest_accessible:
+            return {
+                "routing": routing_decision_to_state(decision),
+                "fallback_reason": "guest_link_required",
+                "guest_link_required": True,
+            }
         return {
             "routing": routing_decision_to_state(decision),
             "selected_module_id": registration.manifest.module_id,
