@@ -1,9 +1,10 @@
+from datetime import datetime
 from typing import TypedDict
 from uuid import UUID
 
 from app.orchestration.intent_router import RoutingDecision, RoutingKind
 from app.orchestration.message_processor import MessageCommand, MessageResult
-from app.orchestration.module_executor import ModuleResult
+from app.orchestration.module_executor import ModuleResult, PendingConfirmation
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import MessageResponseType
@@ -63,6 +64,7 @@ class ModuleResultState(TypedDict):
     input_tokens: int | None
     output_tokens: int | None
     rag: RagMessageResultState
+    pending_confirmation: dict[str, object] | None
 
 
 class MainGraphState(TypedDict, total=False):
@@ -194,6 +196,7 @@ def module_result_to_state(result: ModuleResult) -> ModuleResultState:
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
         "rag": rag_result_to_state(result.rag),
+        "pending_confirmation": confirmation_to_state(result.pending_confirmation),
     }
 
 
@@ -208,10 +211,43 @@ def module_result_from_state(state: ModuleResultState) -> ModuleResult:
         input_tokens=state["input_tokens"],
         output_tokens=state["output_tokens"],
         rag=rag_result_from_state(state["rag"]),
+        pending_confirmation=confirmation_from_state(state.get("pending_confirmation")),
     )
 
 
-def initial_run_update(command: MessageCommandState) -> MainGraphState:
+def confirmation_to_state(
+    confirmation: PendingConfirmation | None,
+) -> dict[str, object] | None:
+    if confirmation is None:
+        return None
+    return {
+        "module_id": confirmation.module_id,
+        "action": confirmation.action,
+        "payload": confirmation.payload,
+        "expires_at": confirmation.expires_at.isoformat(),
+        "intent": confirmation.intent,
+    }
+
+
+def confirmation_from_state(state: dict[str, object] | None) -> PendingConfirmation | None:
+    if state is None:
+        return None
+    payload = state["payload"]
+    if not isinstance(payload, dict):
+        raise ValueError("confirmation payload must be an object")
+    return PendingConfirmation(
+        module_id=str(state["module_id"]),
+        action=str(state["action"]),
+        payload=payload,
+        expires_at=datetime.fromisoformat(str(state["expires_at"])),
+        intent=str(state["intent"]),
+    )
+
+
+def initial_run_update(
+    command: MessageCommandState,
+    confirmation: dict[str, object] | None = None,
+) -> MainGraphState:
     return {
         "command": command,
         "routing": None,
@@ -220,6 +256,6 @@ def initial_run_update(command: MessageCommandState) -> MainGraphState:
         "result": None,
         "fallback_reason": None,
         "safe_error": None,
-        "confirmation": None,
+        "confirmation": confirmation,
         "schema_version": 1,
     }

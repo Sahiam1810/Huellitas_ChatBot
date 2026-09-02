@@ -7,7 +7,7 @@ from langgraph.runtime import Runtime
 
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.guest_access import GUEST_FALLBACK_REASON, is_guest
-from app.orchestration.intent_router import IntentRouter, RoutingKind
+from app.orchestration.intent_router import IntentRouter, RoutingDecision, RoutingKind
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.module_registry import ModuleNotFoundError, ModuleRegistry
@@ -17,6 +17,8 @@ from app.orchestration.response_builder import (
 )
 from app.orchestration.state import (
     MainGraphState,
+    confirmation_from_state,
+    confirmation_to_state,
     initial_run_update,
     message_command_from_state,
     message_result_to_state,
@@ -45,7 +47,7 @@ def build_main_graph(
         raise GraphCompositionError("Every registered module requires an executor")
 
     async def initialize_run(state: MainGraphState) -> MainGraphState:
-        return initial_run_update(state["command"])
+        return initial_run_update(state["command"], state.get("confirmation"))
 
     async def check_escalation(_: MainGraphState) -> MainGraphState:
         return {}
@@ -57,6 +59,22 @@ def build_main_graph(
     async def route_intent(state: MainGraphState) -> MainGraphState:
         if is_guest(message_command_from_state(state["command"]).roles):
             return {"fallback_reason": GUEST_FALLBACK_REASON}
+        pending = confirmation_from_state(state.get("confirmation"))
+        if pending is not None:
+            try:
+                registration = registry.get_registration(pending.module_id)
+            except ModuleNotFoundError:
+                return {"confirmation": None, "fallback_reason": "confirmation_module_missing"}
+            if pending.intent not in registration.manifest.intents:
+                return {"confirmation": None, "fallback_reason": "confirmation_intent_missing"}
+            decision = RoutingDecision.module(
+                intent=pending.intent,
+                module_id=pending.module_id,
+            )
+            return {
+                "routing": routing_decision_to_state(decision),
+                "selected_module_id": pending.module_id,
+            }
         manifests = registry.list_manifests()
         if not manifests:
             return {"fallback_reason": "module_registry_empty"}
@@ -104,10 +122,14 @@ def build_main_graph(
                 command=message_command_from_state(state["command"]),
                 intent=decision.intent,
                 manifest=registration.manifest,
+                pending_confirmation=confirmation_from_state(state.get("confirmation")),
             ),
             runtime.context,
         )
-        return {"module_result": module_result_to_state(result)}
+        return {
+            "module_result": module_result_to_state(result),
+            "confirmation": confirmation_to_state(result.pending_confirmation),
+        }
 
     async def normalize_result(state: MainGraphState) -> MainGraphState:
         module_result_state = state.get("module_result")

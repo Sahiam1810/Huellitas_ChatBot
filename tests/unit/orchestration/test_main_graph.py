@@ -7,7 +7,11 @@ from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.intent_router import RoutingDecision
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageCommand, MessageResult
-from app.orchestration.module_executor import ModuleExecutionRequest, ModuleResult
+from app.orchestration.module_executor import (
+    ModuleExecutionRequest,
+    ModuleResult,
+    PendingConfirmation,
+)
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.module_registry import ModuleRegistry
 from app.orchestration.state import message_command_to_state, message_result_from_state
@@ -56,7 +60,7 @@ def manifest() -> ModuleManifest:
         module_id="appointments",
         version="1.0.0",
         description="Appointment operations",
-        intents=("appointments.list",),
+        intents=("appointments.list", "appointments.confirmation"),
     )
 
 
@@ -107,6 +111,33 @@ class Executor:
             module_id=self.module_id,
             message="Tienes una cita mañana",
             response_type=MessageResponseType.AI_GENERATED,
+        )
+
+
+class ConfirmingExecutor(Executor):
+    async def execute(
+        self,
+        request: ModuleExecutionRequest,
+        execution_context: ExecutionContext,
+    ) -> ModuleResult:
+        self.requests.append(request)
+        self.contexts.append(execution_context)
+        if request.pending_confirmation is None:
+            return ModuleResult(
+                module_id="appointments",
+                message="¿Confirmas?",
+                response_type=MessageResponseType.RETRIEVED,
+                pending_confirmation=PendingConfirmation.create(
+                    module_id="appointments",
+                    action="appointments.cancel",
+                    payload={"appointment_id": "a-1"},
+                    ttl_seconds=600,
+                ),
+            )
+        return ModuleResult(
+            module_id="appointments",
+            message="Confirmado",
+            response_type=MessageResponseType.RETRIEVED,
         )
 
 
@@ -187,10 +218,41 @@ async def test_selected_module_receives_only_the_neutral_request_and_runtime_con
             command=current,
             intent="appointments.list",
             manifest=selected_manifest,
+            pending_confirmation=None,
         )
     ]
     assert executor.contexts == [execution_context]
     assert general.commands == []
+
+
+@pytest.mark.anyio
+async def test_pending_confirmation_survives_and_returns_to_the_same_module() -> None:
+    general = GeneralProcessor()
+    executor = ConfirmingExecutor()
+    registry = ModuleRegistry()
+    registry.register(manifest(), executor)
+    router = Router(RoutingDecision.module(intent="appointments.list", module_id="appointments"))
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command()
+
+    first_state = await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(message="sí", idempotency_key="message-002")
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    assert first_state["confirmation"]["module_id"] == "appointments"
+    assert executor.requests[-1].intent == "appointments.confirmation"
+    assert executor.requests[-1].pending_confirmation is not None
+    assert executor.requests[-1].pending_confirmation.payload == {"appointment_id": "a-1"}
+    assert second_state["confirmation"] is None
+    assert router.calls == 1
 
 
 @pytest.mark.anyio
