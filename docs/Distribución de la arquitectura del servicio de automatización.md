@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y el primer módulo veterinario ejecutable: `pet_profile`. Este módulo se registra solo cuando la comunicación con .NET está habilitada, usa routing determinístico, consulta perfiles propios mediante un puerto HTTP y conserva confirmaciones serializables en el checkpoint antes de solicitar una modificación. .NET sigue siendo la autoridad de identidad, propiedad, reglas y Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, idempotencia durable/distribuida, búsqueda híbrida y los módulos veterinarios restantes todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y dos módulos veterinarios ejecutables: `pet_profile` y `services_catalog`. Ambos se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional. .NET sigue siendo la autoridad de identidad, propiedad, reglas y Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, idempotencia durable/distribuida, búsqueda híbrida y los módulos veterinarios restantes todavía no están implementados.
 
 ---
 
@@ -394,7 +394,7 @@ No incorpora campos privados de citas, orientación, perfiles o recordatorios.
 
 ## Registro de módulos
 
-Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile` únicamente cuando `HUELLITAS_BACKEND_ENABLED=true`; con la integración deshabilitada conserva un registro vacío. Los conflictos de identificador y de intención exacta se rechazan. El router genérico recibe reglas declaradas por el módulo y el grafo principal no contiene condiciones específicas de mascotas.
+Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile` y `services_catalog` únicamente cuando `HUELLITAS_BACKEND_ENABLED=true`; con la integración deshabilitada conserva un registro vacío. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas o servicios.
 
 Cada manifiesto declara:
 
@@ -432,7 +432,9 @@ Agendar, reprogramar y cancelar son subflujos del mismo módulo. .NET valida y e
 
 ## `services_catalog`
 
-Responde sobre servicios, sedes, horarios y precios. Utiliza .NET para datos dinámicos y Qdrant para contenido descriptivo autorizado.
+Lista, busca y detalla servicios veterinarios activos. Obtiene nombre, categoría, duración y precio exclusivamente desde `GET /api/services/available` de .NET y nunca permite que el modelo o Qdrant inventen o sustituyan esos campos. El módulo es de solo lectura, no agenda citas y no publica todavía sedes u horarios.
+
+El manifiesto permite su ejecución para `TelegramGuest`, aunque toda solicitud sigue llegando con un JWT interno válido emitido por .NET. Cuando RAG está disponible, consulta como máximo dos fragmentos activos de conocimiento global usando obligatoriamente la etiqueta `services_catalog`; el contenido recuperado solo se agrega como descripción complementaria. Una ausencia o falla de embeddings/Qdrant produce `empty` o `degraded` y mantiene intacta la respuesta oficial.
 
 ## `pet_profile`
 

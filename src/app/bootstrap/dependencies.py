@@ -13,6 +13,7 @@ from app.ports.global_knowledge_store import GlobalKnowledgeStore
 from app.ports.idempotency_store import IdempotencyStore
 from app.ports.pet_profile_gateway import PetProfileGateway
 from app.ports.runtime_store import RuntimeStore
+from app.ports.services_catalog_gateway import ServicesCatalogGateway
 from app.ports.token_validator import TokenValidator
 from app.ports.vector_store import VectorStore
 
@@ -36,3 +37,4 @@ class ApplicationDependencies:
     checkpoint_store: CheckpointStore | None = None
     conversation_lock: ConversationLock | None = None
     pet_profile_gateway: PetProfileGateway | None = None
+    services_catalog_gateway: ServicesCatalogGateway | None = None
