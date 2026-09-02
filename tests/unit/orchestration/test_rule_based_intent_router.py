@@ -4,6 +4,8 @@ import pytest
 
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
+from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
+from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
 from app.orchestration.intent_router import RoutingKind
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
@@ -62,3 +64,22 @@ async def test_pet_profile_routes_registration_without_using_general_model() -> 
     assert decision.kind is RoutingKind.MODULE
     assert decision.intent == "pets.register"
     assert decision.module_id == "pet_profile"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "intent"),
+    [
+        ("¿Qué servicios ofrecen?", "services.list"),
+        ("¿Cuánto cuesta la consulta general?", "services.detail"),
+        ("¿Tienen vacunación?", "services.search"),
+    ],
+)
+async def test_services_catalog_routes_deterministically(message: str, intent: str) -> None:
+    router = RuleBasedIntentRouter(SERVICES_CATALOG_ROUTING_RULES)
+
+    decision = await router.route(command(message), (SERVICES_CATALOG_MANIFEST,))
+
+    assert decision.kind is RoutingKind.MODULE
+    assert decision.intent == intent
+    assert decision.module_id == "services_catalog"
