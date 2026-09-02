@@ -123,6 +123,30 @@ Consulta la [guía de autenticación JWT](docs/jwt-authentication.md) para confi
 obtener el token desde `/api/auth/login`, usar Swagger y entender la relación entre `person_id`,
 `userId` y `role`.
 
+## Módulo de perfil de mascotas
+
+`pet_profile` es el primer módulo veterinario ejecutable. Consulta exclusivamente
+`GET /api/pets/mine` del backend y permite preparar cambios de nombre, edad, género, peso,
+observaciones, especie o raza. Ningún cambio se envía a .NET hasta que el usuario responde
+explícitamente `sí`; `no` cancela la operación y una confirmación vence a los 10 minutos por defecto.
+
+Para habilitarlo al ejecutar ambos servicios directamente en Windows:
+
+```dotenv
+HUELLITAS_BACKEND_ENABLED="true"
+HUELLITAS_BACKEND_BASE_URL="http://127.0.0.1:5233"
+HUELLITAS_BACKEND_TIMEOUT_SECONDS="10"
+HUELLITAS_PET_PROFILE_CONFIRMATION_TTL_SECONDS="600"
+```
+
+Si el agente corre dentro de Docker y el backend .NET corre en el host, usa
+`HUELLITAS_BACKEND_BASE_URL="http://host.docker.internal:5233"`. El agente reenvía internamente
+el JWT de la solicitud; nunca se configura un token fijo. Si `HUELLITAS_BACKEND_ENABLED=false`,
+el módulo no se registra y los mensajes conservan la ruta general existente.
+
+Ejemplos iniciales: `¿Qué mascotas tengo?`, `Muéstrame el perfil de Luna`,
+`Actualiza el peso de Luna a 13.5 kg` y luego `sí`.
+
 ## Proveedor de embeddings
 
 Embeddings es una capacidad independiente del chat y está deshabilitada por defecto. Para preparar el adaptador de OpenAI directo configura:
