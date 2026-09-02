@@ -125,10 +125,13 @@ obtener el token desde `/api/auth/login`, usar Swagger y entender la relación e
 
 ## Módulo de perfil de mascotas
 
-`pet_profile` es el primer módulo veterinario ejecutable. Consulta exclusivamente
-`GET /api/pets/mine` del backend y permite preparar cambios de nombre, edad, género, peso,
-observaciones, especie o raza. Ningún cambio se envía a .NET hasta que el usuario responde
-explícitamente `sí`; `no` cancela la operación y una confirmación vence a los 10 minutos por defecto.
+`pet_profile` es el primer módulo veterinario ejecutable. Consulta `GET /api/pets/mine`, registra
+mascotas propias mediante `POST /api/pets/mine` y permite preparar cambios de nombre, edad,
+género, peso, observaciones, especie o raza. Para registrar, el agente solicita nombre, especie,
+raza, edad, sexo, peso y observaciones; especie y raza se validan contra los catálogos de .NET.
+Ninguna creación o modificación se envía hasta que el usuario responde explícitamente `sí`;
+`no` cancela la confirmación, `cancelar` abandona la captura y el borrador vence a los 10 minutos
+por defecto.
 
 Para habilitarlo al ejecutar ambos servicios directamente en Windows:
 
@@ -145,7 +148,9 @@ el JWT de la solicitud; nunca se configura un token fijo. Si `HUELLITAS_BACKEND_
 el módulo no se registra y los mensajes conservan la ruta general existente.
 
 Ejemplos iniciales: `¿Qué mascotas tengo?`, `Muéstrame el perfil de Luna`,
-`Actualiza el peso de Luna a 13.5 kg` y luego `sí`.
+`Actualiza el peso de Luna a 13.5 kg` o `Quiero registrar una mascota`. La creación solo está
+disponible para una cuenta vinculada con perfil de cliente; .NET deriva el propietario desde el JWT
+y crea la mascota junto con `ClientPet` como propietario principal.
 
 ## Proveedor de embeddings
 

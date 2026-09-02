@@ -436,7 +436,9 @@ Responde sobre servicios, sedes, horarios y precios. Utiliza .NET para datos din
 
 ## `pet_profile`
 
-Consulta las mascotas del cliente autenticado mediante `GET /api/pets/mine`, lista o presenta su perfil y prepara cambios parciales de nombre, edad, género, peso, observaciones, especie o raza. La confirmación pendiente se conserva por `conversationId`; solo una aceptación explícita ejecuta `PATCH /api/pets/mine/{petId}`. El agente no guarda ni modifica perfiles directamente: .NET deriva el propietario del JWT, comprueba `ClientPet`, valida catálogos y aplica control optimista con `expectedUpdatedAt`.
+Consulta las mascotas del cliente autenticado mediante `GET /api/pets/mine`, lista o presenta su perfil, registra mascotas y prepara cambios parciales de nombre, edad, género, peso, observaciones, especie o raza. El alta recopila un borrador primitivo por pasos, resuelve especie y raza contra los catálogos de .NET y exige confirmación antes de ejecutar `POST /api/pets/mine`. .NET deriva el cliente desde el JWT y crea `Pet` junto con `ClientPet` como propietario principal en un único guardado; el agente nunca recibe un `clientId`.
+
+Las continuaciones pendientes se conservan por `conversationId`: `pets.register.collect` identifica la captura, `pets.register` la confirmación final y `pets.update` una modificación existente. Solo una aceptación explícita ejecuta `POST /api/pets/mine` o `PATCH /api/pets/mine/{petId}`. El agente no guarda perfiles directamente: .NET comprueba propiedad, valida catálogos y aplica control optimista con `expectedUpdatedAt` en las actualizaciones.
 
 ## `veterinary_guidance`
 
