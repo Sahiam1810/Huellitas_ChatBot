@@ -16,6 +16,8 @@ services:
       HUELLITAS_REDIS_ENABLED: "true"
       HUELLITAS_REDIS_URL: "redis://redis:6379"
       HUELLITAS_CHECKPOINT_PROVIDER: "redis"
+      HUELLITAS_BACKEND_ENABLED: "true"
+      HUELLITAS_BACKEND_BASE_URL: "http://host.docker.internal:5233"
       PYTHONDONTWRITEBYTECODE: "1"
     ports:
       - "127.0.0.1:8000:8000"
