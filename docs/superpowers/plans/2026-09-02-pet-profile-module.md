@@ -184,4 +184,3 @@
 - [ ] Documentar variables, límites de seguridad, ejemplos conversacionales y URL Docker `http://host.docker.internal:5233`.
 - [ ] Ejecutar pruebas dirigidas de pet_profile, router, main graph y los dos tests .NET de Pets; no ejecutar toda la suite.
 - [ ] Commit: `docs(pet-profile): 📝 document executable module`.
-
