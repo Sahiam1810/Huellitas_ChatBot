@@ -16,6 +16,7 @@ from app.ports.pet_profile_gateway import (
     PetProfilePatch,
     PetProfileUnavailableError,
     PetProfileVersionConflictError,
+    PetRegistration,
 )
 
 
@@ -69,6 +70,25 @@ class DotNetPetProfileGateway:
             body["observations"] = patch.observations
         response = await self._request(
             "PATCH", f"/api/pets/mine/{pet_id}", bearer_token, json=body
+        )
+        return self._profile(self._json(response))
+
+    async def create_owned(
+        self, bearer_token: str, registration: PetRegistration
+    ) -> PetProfile:
+        response = await self._request(
+            "POST",
+            "/api/pets/mine",
+            bearer_token,
+            json={
+                "name": registration.name,
+                "age": registration.age,
+                "gender": registration.gender,
+                "weight": registration.weight,
+                "observations": registration.observations,
+                "speciesId": str(registration.species_id),
+                "raceId": str(registration.race_id),
+            },
         )
         return self._profile(self._json(response))
 

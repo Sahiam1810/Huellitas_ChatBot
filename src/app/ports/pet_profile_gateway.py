@@ -70,12 +70,27 @@ class PetProfilePatch:
     race_id: UUID | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PetRegistration:
+    name: str
+    age: int
+    gender: str
+    weight: float
+    observations: str | None
+    species_id: UUID
+    race_id: UUID
+
+
 @runtime_checkable
 class PetProfileGateway(Protocol):
     async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]: ...
 
     async def update_owned(
         self, bearer_token: str, pet_id: UUID, patch: PetProfilePatch
+    ) -> PetProfile: ...
+
+    async def create_owned(
+        self, bearer_token: str, registration: PetRegistration
     ) -> PetProfile: ...
 
     async def list_species(self, bearer_token: str) -> tuple[CatalogItem, ...]: ...
