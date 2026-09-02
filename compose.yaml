@@ -20,6 +20,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - automation
 
