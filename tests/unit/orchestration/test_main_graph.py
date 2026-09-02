@@ -256,7 +256,7 @@ async def test_pending_confirmation_survives_and_returns_to_the_same_module() ->
 
 
 @pytest.mark.anyio
-async def test_telegram_guest_never_calls_router_or_module_executor() -> None:
+async def test_telegram_guest_requesting_private_module_receives_linking_instructions() -> None:
     general = GeneralProcessor()
     executor = Executor()
     registry = ModuleRegistry()
@@ -271,10 +271,12 @@ async def test_telegram_guest_never_calls_router_or_module_executor() -> None:
         context=context(),
     )
 
-    assert message_result_from_state(state["result"]).message == "general:Quiero ver mis citas"
-    assert state["fallback_reason"] == "guest_general_only"
-    assert general.commands == [current]
-    assert router.calls == 0
+    result = message_result_from_state(state["result"])
+    assert "no está vinculado" in (result.message or "").casefold()
+    assert "/vincular" in (result.message or "")
+    assert state["fallback_reason"] == "guest_link_required"
+    assert general.commands == []
+    assert router.calls == 1
     assert executor.requests == []
 
 

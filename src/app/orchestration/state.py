@@ -76,6 +76,7 @@ class MainGraphState(TypedDict, total=False):
     fallback_reason: str | None
     safe_error: str | None
     confirmation: dict[str, object] | None
+    guest_link_required: bool
     schema_version: int
 
 
@@ -257,5 +258,6 @@ def initial_run_update(
         "fallback_reason": None,
         "safe_error": None,
         "confirmation": confirmation,
+        "guest_link_required": False,
         "schema_version": 1,
     }

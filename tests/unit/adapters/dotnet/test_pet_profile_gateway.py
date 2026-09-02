@@ -4,6 +4,7 @@ from uuid import UUID
 import httpx
 import pytest
 
+import app.ports.pet_profile_gateway as pet_profile_ports
 from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.ports.pet_profile_gateway import PetProfilePatch, PetProfileVersionConflictError
 
@@ -65,6 +66,35 @@ async def test_update_owned_maps_conflict_without_leaking_token() -> None:
             UUID("11111111-1111-1111-1111-111111111111"),
             patch,
         )
+
+    assert "jwt-secret" not in str(captured.value)
+    await gateway.close()
+
+
+@pytest.mark.anyio
+async def test_list_owned_maps_missing_client_profile_separately() -> None:
+    error_type = getattr(
+        pet_profile_ports,
+        "PetProfileOwnerProfileNotFoundError",
+        None,
+    )
+    assert error_type is not None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/pets/mine"
+        return httpx.Response(
+            404,
+            json={"detail": "El usuario autenticado no tiene un perfil de cliente asociado."},
+        )
+
+    gateway = DotNetPetProfileGateway(
+        "http://backend.test",
+        5,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(error_type) as captured:
+        await gateway.list_owned("jwt-secret")
 
     assert "jwt-secret" not in str(captured.value)
     await gateway.close()

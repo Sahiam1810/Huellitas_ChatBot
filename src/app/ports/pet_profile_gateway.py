@@ -20,6 +20,10 @@ class PetProfileNotFoundError(PetProfileGatewayError):
     pass
 
 
+class PetProfileOwnerProfileNotFoundError(PetProfileGatewayError):
+    pass
+
+
 class PetProfileVersionConflictError(PetProfileGatewayError):
     pass
 
