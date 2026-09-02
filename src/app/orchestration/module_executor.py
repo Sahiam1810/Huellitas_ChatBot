@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from app.orchestration.execution_context import ExecutionContext
@@ -10,10 +11,38 @@ from app.shared.enums import MessageResponseType
 
 
 @dataclass(frozen=True, slots=True)
+class PendingConfirmation:
+    module_id: str
+    action: str
+    payload: dict[str, object]
+    expires_at: datetime
+    intent: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        module_id: str,
+        action: str,
+        payload: dict[str, object],
+        ttl_seconds: int,
+        intent: str | None = None,
+    ) -> "PendingConfirmation":
+        return cls(
+            module_id=module_id,
+            action=action,
+            payload=payload,
+            expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+            intent=intent or f"{module_id}.confirmation",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleExecutionRequest:
     command: MessageCommand
     intent: str
     manifest: ModuleManifest
+    pending_confirmation: PendingConfirmation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +55,7 @@ class ModuleResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     rag: RagMessageResult = field(default_factory=RagMessageResult.disabled)
+    pending_confirmation: PendingConfirmation | None = None
 
 
 @runtime_checkable

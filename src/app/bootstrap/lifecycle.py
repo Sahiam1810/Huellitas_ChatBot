@@ -9,11 +9,13 @@ from app.adapters.checkpoints.checkpoint_store_factory import create_checkpoint_
 from app.adapters.conversation_locks.conversation_lock_factory import (
     create_conversation_lock,
 )
+from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
 from app.adapters.vector_store.vector_store_factory import create_vector_store
+from app.bootstrap.module_registry import build_module_registry
 from app.bootstrap.settings import (
     ActiveCheckpointConfiguration,
     ActiveRedisConfiguration,
@@ -24,6 +26,7 @@ from app.bootstrap.settings import (
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.document_lock import DocumentWriteLock
 from app.knowledge.management_service import KnowledgeManagementService
+from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
@@ -35,6 +38,7 @@ from app.orchestration.idempotent_message_processor import IdempotentMessageProc
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
+from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.checkpoint_store import CheckpointStore
 from app.ports.runtime_store import RuntimeStore
@@ -129,6 +133,18 @@ def build_lifespan(
         app.state.dependencies.checkpoint_store = checkpoint_store
         conversation_lock = create_conversation_lock(settings)
         app.state.dependencies.conversation_lock = conversation_lock
+        backend_configuration = settings.active_backend_configuration()
+        pet_profile_gateway = None
+        if backend_configuration is not None:
+            pet_profile_gateway = DotNetPetProfileGateway(
+                str(backend_configuration.base_url),
+                backend_configuration.timeout_seconds,
+            )
+            app.state.dependencies.pet_profile_gateway = pet_profile_gateway
+            app.state.dependencies.module_registry = build_module_registry(
+                pet_profile_gateway,
+                confirmation_ttl_seconds=settings.pet_profile_confirmation_ttl_seconds,
+            )
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -229,10 +245,14 @@ def build_lifespan(
                 memory_writer=memory_writer,
             )
             graph_checkpointer = checkpoint_store.saver
+            module_registry = app.state.dependencies.module_registry
+            intent_router = None
+            if module_registry.list_registrations():
+                intent_router = RuleBasedIntentRouter(PET_PROFILE_ROUTING_RULES)
             main_graph = build_main_graph(
                 general_processor=general_processor,
-                registry=app.state.dependencies.module_registry,
-                router=None,
+                registry=module_registry,
+                router=intent_router,
                 checkpointer=graph_checkpointer,
             )
             graph_metrics = InMemoryGraphMetrics()
@@ -293,36 +313,43 @@ def build_lifespan(
             app.state.dependencies.checkpoint_store = None
             conversation_lock = app.state.dependencies.conversation_lock
             app.state.dependencies.conversation_lock = None
+            pet_profile_gateway = app.state.dependencies.pet_profile_gateway
+            app.state.dependencies.pet_profile_gateway = None
             try:
-                if idempotency_store is not None:
-                    await idempotency_store.close()
+                if pet_profile_gateway is not None:
+                    await pet_profile_gateway.close()
             finally:
                 try:
-                    if conversation_lock is not None:
-                        await conversation_lock.close()
+                    if idempotency_store is not None:
+                        await idempotency_store.close()
                 finally:
                     try:
-                        if chat_model is not None:
-                            await chat_model.close()
+                        if conversation_lock is not None:
+                            await conversation_lock.close()
                     finally:
                         try:
-                            if embedding_model is not None:
-                                await embedding_model.close()
+                            if chat_model is not None:
+                                await chat_model.close()
                         finally:
                             try:
-                                if vector_store is not None:
-                                    await vector_store.close()
+                                if embedding_model is not None:
+                                    await embedding_model.close()
                             finally:
                                 try:
-                                    if runtime_store is not None:
-                                        await runtime_store.close()
+                                    if vector_store is not None:
+                                        await vector_store.close()
                                 finally:
                                     try:
-                                        if checkpoint_store is not None:
-                                            await checkpoint_store.close()
+                                        if runtime_store is not None:
+                                            await runtime_store.close()
                                     finally:
-                                        logger.info(
-                                            "application_stopped name=%s", settings.app_name
-                                        )
+                                        try:
+                                            if checkpoint_store is not None:
+                                                await checkpoint_store.close()
+                                        finally:
+                                            logger.info(
+                                                "application_stopped name=%s",
+                                                settings.app_name,
+                                            )
 
     return lifespan
