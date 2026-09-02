@@ -139,6 +139,13 @@ class ActiveJwtConfiguration(BaseModel):
     knowledge_admin_role: str
 
 
+class ActiveBackendConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    base_url: AnyHttpUrl
+    timeout_seconds: float
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HUELLITAS_",
@@ -164,6 +171,10 @@ class Settings(BaseSettings):
     jwt_key_id: str | None = None
     jwt_clock_skew_seconds: int = Field(default=0, ge=0, le=300)
     knowledge_admin_role: str = "Administrador"
+
+    backend_enabled: bool = False
+    backend_base_url: AnyHttpUrl | None = None
+    backend_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER
@@ -270,6 +281,8 @@ class Settings(BaseSettings):
                 raise ValueError(f"API key is required for {self.chat_provider.value}")
             if model is None or not model.strip():
                 raise ValueError(f"Model is required for {self.chat_provider.value}")
+        if self.backend_enabled and self.backend_base_url is None:
+            raise ValueError("Backend base URL is required when backend integration is enabled")
         if self.embedding_enabled:
             if (
                 self.embedding_openai_api_key is None
@@ -309,6 +322,15 @@ class Settings(BaseSettings):
             max_connections=self.redis_max_connections,
             startup_max_attempts=self.redis_startup_max_attempts,
             startup_retry_delay_seconds=self.redis_startup_retry_delay_seconds,
+        )
+
+    def active_backend_configuration(self) -> ActiveBackendConfiguration | None:
+        if not self.backend_enabled:
+            return None
+        assert self.backend_base_url is not None
+        return ActiveBackendConfiguration(
+            base_url=self.backend_base_url,
+            timeout_seconds=self.backend_timeout_seconds,
         )
 
     def active_checkpoint_configuration(self) -> ActiveCheckpointConfiguration:
