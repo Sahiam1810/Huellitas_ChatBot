@@ -90,7 +90,7 @@ class PetProfileModuleExecutor:
         pet = identify_pet(profiles, request.command.message, request.command.pet_id)
         if pet is None:
             if not profiles:
-                return self._message("No encontré mascotas vinculadas a tu cuenta.")
+                return self._message(format_pet_list(profiles))
             names = ", ".join(profile.name for profile in profiles)
             return self._message(f"Indícame cuál mascota quieres consultar: {names}.")
         if request.intent == "pets.view":

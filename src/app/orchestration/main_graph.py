@@ -12,6 +12,7 @@ from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.module_registry import ModuleNotFoundError, ModuleRegistry
 from app.orchestration.response_builder import (
+    build_guest_link_required_result,
     build_human_controlled_result,
     normalize_module_result,
 )
@@ -56,11 +57,15 @@ def build_main_graph(
         command = message_command_from_state(state["command"])
         return {"result": message_result_to_state(build_human_controlled_result(command))}
 
+    async def build_guest_link_required(state: MainGraphState) -> MainGraphState:
+        command = message_command_from_state(state["command"])
+        return {"result": message_result_to_state(build_guest_link_required_result(command))}
+
     async def route_intent(state: MainGraphState) -> MainGraphState:
-        if is_guest(message_command_from_state(state["command"]).roles):
-            return {"fallback_reason": GUEST_FALLBACK_REASON}
+        command = message_command_from_state(state["command"])
+        guest = is_guest(command.roles)
         pending = confirmation_from_state(state.get("confirmation"))
-        if pending is not None:
+        if pending is not None and not guest:
             try:
                 registration = registry.get_registration(pending.module_id)
             except ModuleNotFoundError:
@@ -77,10 +82,23 @@ def build_main_graph(
             }
         manifests = registry.list_manifests()
         if not manifests:
-            return {"fallback_reason": "module_registry_empty"}
+            return {
+                "fallback_reason": (GUEST_FALLBACK_REASON if guest else "module_registry_empty")
+            }
         if router is None:
             raise GraphCompositionError("Intent router is not configured")
-        decision = await router.route(message_command_from_state(state["command"]), manifests)
+        decision = await router.route(command, manifests)
+        if guest:
+            if decision.kind is RoutingKind.MODULE:
+                return {
+                    "routing": routing_decision_to_state(decision),
+                    "fallback_reason": "guest_link_required",
+                    "guest_link_required": True,
+                }
+            return {
+                "routing": routing_decision_to_state(decision),
+                "fallback_reason": GUEST_FALLBACK_REASON,
+            }
         if decision.kind is not RoutingKind.MODULE:
             return {
                 "routing": routing_decision_to_state(decision),
@@ -151,12 +169,15 @@ def build_main_graph(
         return "human" if state["command"]["is_escalated"] else "route"
 
     def after_routing(state: MainGraphState) -> str:
+        if state.get("guest_link_required"):
+            return "guest_link_required"
         return "module" if state.get("selected_module_id") is not None else "general"
 
     builder = StateGraph(MainGraphState, context_schema=ExecutionContext)
     builder.add_node("initialize_run", initialize_run)
     builder.add_node("check_escalation", check_escalation)
     builder.add_node("build_human_controlled", build_human_controlled)
+    builder.add_node("build_guest_link_required", build_guest_link_required)
     builder.add_node("route_intent", route_intent)
     builder.add_node("execute_general", execute_general)
     builder.add_node("execute_module", execute_module)
@@ -172,8 +193,13 @@ def build_main_graph(
     builder.add_conditional_edges(
         "route_intent",
         after_routing,
-        {"general": "execute_general", "module": "execute_module"},
+        {
+            "general": "execute_general",
+            "module": "execute_module",
+            "guest_link_required": "build_guest_link_required",
+        },
     )
+    builder.add_edge("build_guest_link_required", END)
     builder.add_edge("execute_general", END)
     builder.add_edge("execute_module", "normalize_result")
     builder.add_edge("normalize_result", END)

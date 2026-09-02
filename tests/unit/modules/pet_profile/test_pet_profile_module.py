@@ -55,6 +55,11 @@ class Gateway:
         return None
 
 
+class EmptyGateway(Gateway):
+    async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
+        return ()
+
+
 def command(message: str) -> MessageCommand:
     return MessageCommand(
         message=message,
@@ -98,6 +103,19 @@ async def test_list_returns_owned_pet_without_calling_a_model() -> None:
     assert result.response_type is MessageResponseType.RETRIEVED
     assert "Luna" in (result.message or "")
     assert "Canino" in (result.message or "")
+
+
+@pytest.mark.anyio
+async def test_linked_account_without_pets_is_explained_explicitly() -> None:
+    executor = PetProfileModuleExecutor(EmptyGateway())
+
+    result = await executor.execute(
+        ModuleExecutionRequest(command("¿Qué mascotas tengo?"), "pets.list", PET_PROFILE_MANIFEST),
+        context(),
+    )
+
+    assert "cuenta está vinculada" in (result.message or "").casefold()
+    assert "no encontré mascotas" in (result.message or "").casefold()
 
 
 @pytest.mark.anyio

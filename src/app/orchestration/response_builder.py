@@ -16,6 +16,20 @@ def build_human_controlled_result(command: MessageCommand) -> MessageResult:
     )
 
 
+def build_guest_link_required_result(command: MessageCommand) -> MessageResult:
+    return MessageResult(
+        message=(
+            "Este chat de Telegram no está vinculado a una cuenta de Huellitas, "
+            "por eso no puedo consultar información privada. Envía /vincular y completa "
+            "la vinculación una sola vez; después podré consultar tus mascotas."
+        ),
+        conversation_id=command.conversation_id,
+        correlation_id=command.correlation_id,
+        response_type=MessageResponseType.RETRIEVED,
+        rag=RagMessageResult.skipped(),
+    )
+
+
 def normalize_module_result(
     command: MessageCommand,
     selected_manifest: ModuleManifest,
