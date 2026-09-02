@@ -44,11 +44,13 @@ cuenta válida sin mascotas obtiene una lista vacía.
 3. comprueba la relación `ClientPet`;
 4. compara `expectedUpdatedAt`;
 5. combina los campos omitidos con el perfil actual;
-6. valida especie, raza y que la raza pertenezca a la especie;
+6. valida que especie y raza existan en sus catálogos independientes;
 7. actualiza mediante el agregado `PetEntity` y una sola unidad de trabajo.
 
 Una mascota ajena se representa como `404` para no revelar su existencia. Un
 perfil modificado desde que se preparó la confirmación devuelve `409`.
+El modelo actual no relaciona `RaceEntity` con `SpeciesEntity`; exigir esa
+correspondencia requeriría una evolución de esquema y migración independiente.
 
 ## Frontera HTTP del agente
 
