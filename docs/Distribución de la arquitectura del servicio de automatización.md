@@ -989,9 +989,14 @@ El rol exacto `TelegramGuest` activa una compuerta previa al routing modular:
 la ejecución utiliza el fallback cerrado `guest_general_only` y solo llega al
 procesador general. Aunque el request solicite publicación global o exista una
 coincidencia directa en memoria, el agente deshabilita ambas posibilidades.
-El prompt limita la respuesta a orientación veterinaria general e información
-pública, y deriva a `/vincular` cuando se requieren datos u operaciones
-personales. Un principal vinculado conserva sin cambios el routing normal.
+El prompt permite responder orientación veterinaria general e información
+pública sin agregar un recordatorio repetitivo. Deriva a `/vincular` solamente
+cuando la solicitud actual requiere datos u operaciones personales; si la
+persona no tiene cuenta, la remite al registro seguro en la aplicación y nunca
+solicita contraseña, identificación o datos de registro mediante Telegram. La
+compuerta continúa impidiendo router, módulos, respuesta RAG directa y
+publicación global. Un principal vinculado conserva sin cambios el routing
+normal.
 
 ## Estado, seguridad y checkpoints
 
