@@ -113,6 +113,7 @@ class DotNetAppointmentsGateway:
         try:
             return tuple(
                 AppointmentBookingSlot(
+                    availability_id=UUID(str(item["availabilityId"])),
                     scheduled_start_utc=self._datetime(item["scheduledStartUtc"]),
                     scheduled_end_utc=self._datetime(item["scheduledEndUtc"]),
                 )

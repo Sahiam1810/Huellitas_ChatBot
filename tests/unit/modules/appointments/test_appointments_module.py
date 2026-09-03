@@ -27,6 +27,7 @@ from app.ports.appointments_gateway import (
 from app.ports.token_validator import AuthenticatedPrincipal
 
 DEFAULT_ACCOUNT_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+SLOT_AVAILABILITY_ID = UUID("77777777-7777-7777-7777-777777777777")
 
 
 def appointment(*, pet: str = "Luna", service: str = "Consulta general") -> AppointmentItem:
@@ -95,6 +96,7 @@ class Gateway(AppointmentsGateway):
         assert booking_date == date(2026, 9, 10)
         return (
             AppointmentBookingSlot(
+                SLOT_AVAILABILITY_ID,
                 datetime(2026, 9, 10, 15, tzinfo=UTC),
                 datetime(2026, 9, 10, 15, 30, tzinfo=UTC),
             ),
@@ -316,12 +318,14 @@ async def test_booking_does_not_shift_a_displayed_slot_when_availability_changes
             if self.slot_call_count == 1:
                 return (
                     AppointmentBookingSlot(
+                        SLOT_AVAILABILITY_ID,
                         datetime(2026, 9, 10, 15, tzinfo=UTC),
                         datetime(2026, 9, 10, 15, 30, tzinfo=UTC),
                     ),
                 )
             return (
                 AppointmentBookingSlot(
+                    SLOT_AVAILABILITY_ID,
                     datetime(2026, 9, 10, 16, tzinfo=UTC),
                     datetime(2026, 9, 10, 16, 30, tzinfo=UTC),
                 ),
@@ -564,6 +568,9 @@ async def test_reschedule_slot_step_asks_for_phone() -> None:
     assert "teléfono" in (result.message or "").lower()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.payload.get("step") == "phone"
+    assert result.pending_confirmation.payload.get("new_availability_id") == str(
+        SLOT_AVAILABILITY_ID
+    )
 
 
 @pytest.mark.anyio
@@ -580,6 +587,7 @@ async def test_reschedule_phone_step_sends_otp_and_awaits_code() -> None:
         service_id="44444444-4444-4444-4444-444444444444",
         veterinarian_id="33333333-3333-3333-3333-333333333333",
         booking_date="2026-09-10",
+        new_availability_id=str(SLOT_AVAILABILITY_ID),
         new_scheduled_start_utc="2026-09-10T15:00:00+00:00",
         new_scheduled_end_utc="2026-09-10T15:30:00+00:00",
     )
@@ -598,6 +606,7 @@ async def test_reschedule_phone_step_sends_otp_and_awaits_code() -> None:
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.action == "appointments.reschedule.otp"
     assert len(gateway.reschedule_code_calls) == 1
+    assert gateway.reschedule_code_calls[0][2] == SLOT_AVAILABILITY_ID
 
 
 @pytest.mark.anyio

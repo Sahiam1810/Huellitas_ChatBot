@@ -12,7 +12,7 @@ def safe_appointments_error(error: AppointmentsGatewayError) -> str:
     if isinstance(error, AppointmentsConflictError):
         return (
             "Ese horario acaba de dejar de estar disponible. "
-            "Escribe agendar cita para elegir uno nuevo."
+            "Elige otro horario o vuelve a intentar la operación."
         )
     if isinstance(error, AppointmentsAuthenticationError):
         return "No pude validar tu sesión. Vuelve a iniciar sesión o vincula tu cuenta."
@@ -22,8 +22,8 @@ def safe_appointments_error(error: AppointmentsGatewayError) -> str:
         return "No encontré esa cita entre las citas asociadas a tu cuenta."
     if isinstance(error, AppointmentsRequestError):
         return (
-            "La fecha, el horario o el teléfono no son válidos para agendar. "
-            "Escribe agendar cita para elegir los datos nuevamente."
+            "Los datos enviados no son válidos (fecha, horario, teléfono o código). "
+            "Revisa e inténtalo de nuevo."
         )
     return (
         "No pude consultar el sistema veterinario en este momento. Inténtalo nuevamente más tarde."

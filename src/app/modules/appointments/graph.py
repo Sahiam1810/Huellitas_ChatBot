@@ -258,8 +258,8 @@ class AppointmentsModuleExecutor:
                 code,
                 context.bearer_token,
             )
-        except Exception:
-            result_msg = "El código no es válido o venció."
+        except AppointmentsGatewayError as error:
+            result_msg = safe_appointments_error(error)
         return self._message(result_msg)
 
     @staticmethod
