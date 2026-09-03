@@ -15,6 +15,7 @@ from app.ports.idempotency_store import IdempotencyStore
 from app.ports.pet_profile_gateway import PetProfileGateway
 from app.ports.runtime_store import RuntimeStore
 from app.ports.services_catalog_gateway import ServicesCatalogGateway
+from app.ports.vaccinations_gateway import VaccinationsGateway
 from app.ports.token_validator import TokenValidator
 from app.ports.vector_store import VectorStore
 
@@ -40,3 +41,4 @@ class ApplicationDependencies:
     pet_profile_gateway: PetProfileGateway | None = None
     services_catalog_gateway: ServicesCatalogGateway | None = None
     appointments_gateway: AppointmentsGateway | None = None
+    vaccinations_gateway: VaccinationsGateway | None = None
