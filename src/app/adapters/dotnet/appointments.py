@@ -145,6 +145,66 @@ class DotNetAppointmentsGateway:
         )
         return self._appointment(self._json(response))
 
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        await self._request(
+            f"/api/appointments/mine/{appointment_id}/cancel",
+            bearer_token,
+            method="PATCH",
+            json_body={"comment": comment},
+        )
+
+    async def request_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        availability_id: UUID,
+        scheduled_start_utc: datetime,
+        scheduled_end_utc: datetime,
+        bearer_token: str,
+    ) -> UUID:
+        response = await self._request(
+            f"/api/appointments/mine/{appointment_id}/request-code",
+            bearer_token,
+            method="POST",
+            json_body={
+                "phoneNumber": phone,
+                "action": "Reschedule",
+                "reschedule": {
+                    "availabilityId": str(availability_id),
+                    "scheduledStart": self._utc_iso(scheduled_start_utc),
+                    "scheduledEnd": self._utc_iso(scheduled_end_utc),
+                    "notes": None,
+                },
+            },
+        )
+        payload = self._json(response)
+        if not isinstance(payload, dict) or "sessionId" not in payload:
+            raise AppointmentsInvalidResponseError("Backend returned invalid session response")
+        try:
+            return UUID(str(payload["sessionId"]))
+        except (TypeError, ValueError) as exc:
+            raise AppointmentsInvalidResponseError("Backend returned invalid session ID") from exc
+
+    async def confirm_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        code: str,
+        bearer_token: str,
+    ) -> None:
+        await self._request(
+            f"/api/appointments/mine/{appointment_id}/confirm-code",
+            bearer_token,
+            method="POST",
+            json_body={
+                "phoneNumber": phone,
+                "code": code,
+                "action": "Reschedule",
+            },
+        )
+
     async def _request(
         self,
         path: str,

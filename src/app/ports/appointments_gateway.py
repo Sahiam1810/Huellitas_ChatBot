@@ -129,4 +129,26 @@ class AppointmentsGateway(Protocol):
         bearer_token: str,
     ) -> AppointmentItem: ...
 
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None: ...
+
+    async def request_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        availability_id: UUID,
+        scheduled_start_utc: datetime,
+        scheduled_end_utc: datetime,
+        bearer_token: str,
+    ) -> UUID: ...
+
+    async def confirm_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        code: str,
+        bearer_token: str,
+    ) -> None: ...
+
     async def close(self) -> None: ...
