@@ -109,6 +109,31 @@ class Gateway(AppointmentsGateway):
         self.created.append((booking, idempotency_key))
         return appointment()
 
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        raise NotImplementedError
+
+    async def request_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        availability_id: UUID,
+        scheduled_start_utc: datetime,
+        scheduled_end_utc: datetime,
+        bearer_token: str,
+    ) -> UUID:
+        raise NotImplementedError
+
+    async def confirm_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        code: str,
+        bearer_token: str,
+    ) -> None:
+        raise NotImplementedError
+
     async def close(self) -> None:
         return None
 
@@ -332,3 +357,289 @@ async def test_booking_request_routes_to_appointments_without_llm() -> None:
 
     assert decision.module_id == "appointments"
     assert decision.intent == "appointments.book"
+
+
+# ---------------------------------------------------------------------------
+# Cancel flow
+# ---------------------------------------------------------------------------
+
+
+class GatewayWithCancel(Gateway):
+    def __init__(self, items: tuple[AppointmentItem, ...] = (appointment(),)) -> None:
+        super().__init__(items)
+        self.cancelled: list[tuple[UUID, str, str | None]] = []
+
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        self.cancelled.append((appointment_id, bearer_token, comment))
+
+
+@pytest.mark.anyio
+async def test_cancel_start_with_one_appointment_shows_summary_and_awaits_confirmation() -> None:
+    gateway = GatewayWithCancel()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    assert "Encontré esta cita" in (result.message or "")
+    assert "¿Confirmas que deseas cancelarla?" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == "appointments.cancel"
+    assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_start_with_no_appointments_returns_no_appointments_message() -> None:
+    gateway = GatewayWithCancel(())
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    assert "No tienes citas agendadas" in (result.message or "")
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() -> None:
+    gateway = GatewayWithCancel()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    result = await executor.execute(
+        request("sí", "appointments.canceling", started.pending_confirmation), context()
+    )
+    assert "cancelada correctamente" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert len(gateway.cancelled) == 1
+    assert gateway.cancelled[0][0] == UUID("11111111-1111-1111-1111-111111111111")
+
+
+@pytest.mark.anyio
+async def test_cancel_confirmation_no_aborts_without_calling_cancel() -> None:
+    gateway = GatewayWithCancel()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    result = await executor.execute(
+        request("no", "appointments.canceling", started.pending_confirmation), context()
+    )
+    assert "no se realizaron cambios" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_intent_is_routed_by_rule_based_router() -> None:
+    command = request("Cancelar mi cita", "appointments.cancel").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+    assert decision.module_id == "appointments"
+    assert decision.intent == "appointments.cancel"
+
+
+# ---------------------------------------------------------------------------
+# Reschedule flow
+# ---------------------------------------------------------------------------
+
+
+class GatewayWithReschedule(Gateway):
+    def __init__(self, items: tuple[AppointmentItem, ...] = (appointment(),)) -> None:
+        super().__init__(items)
+        self.reschedule_code_calls: list[tuple] = []
+        self.reschedule_confirm_calls: list[tuple] = []
+        self._fixed_otp_id = UUID("aaaabbbb-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        raise NotImplementedError
+
+    async def request_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        availability_id: UUID,
+        scheduled_start_utc: datetime,
+        scheduled_end_utc: datetime,
+        bearer_token: str,
+    ) -> UUID:
+        self.reschedule_code_calls.append(
+            (appointment_id, phone, availability_id, scheduled_start_utc, scheduled_end_utc, bearer_token)
+        )
+        return self._fixed_otp_id
+
+    async def confirm_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        code: str,
+        bearer_token: str,
+    ) -> None:
+        self.reschedule_confirm_calls.append((appointment_id, phone, code, bearer_token))
+
+
+@pytest.mark.anyio
+async def test_reschedule_start_with_one_appointment_asks_for_date() -> None:
+    gateway = GatewayWithReschedule()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    )
+    assert "Encontré esta cita" in (result.message or "")
+    assert "dd/mm/yyyy" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == "appointments.reschedule.collect"
+
+
+@pytest.mark.anyio
+async def test_reschedule_start_with_no_appointments_returns_no_appointments_message() -> None:
+    gateway = GatewayWithReschedule(())
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    )
+    assert "No tienes citas para reprogramar" in (result.message or "")
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_reschedule_date_step_shows_available_slots() -> None:
+    from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+    from app.orchestration.module_executor import PendingConfirmation
+
+    draft = AppointmentRescheduleDraft(
+        account_id=str(DEFAULT_ACCOUNT_ID),
+        appointment_id="11111111-1111-1111-1111-111111111111",
+        availability_id="66666666-6666-6666-6666-666666666666",
+        appointment_summary="Luna — Consulta general",
+        step="date",
+        service_id="44444444-4444-4444-4444-444444444444",
+        veterinarian_id="33333333-3333-3333-3333-333333333333",
+    )
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.collect",
+        payload=draft.to_payload(),
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
+    gateway = GatewayWithReschedule()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("10/09/2026", "appointments.rescheduling", pending), context()
+    )
+    assert "Horarios disponibles" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload.get("step") == "slot"
+
+
+@pytest.mark.anyio
+async def test_reschedule_slot_step_asks_for_phone() -> None:
+    from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+    from app.orchestration.module_executor import PendingConfirmation
+
+    draft = AppointmentRescheduleDraft(
+        account_id=str(DEFAULT_ACCOUNT_ID),
+        appointment_id="11111111-1111-1111-1111-111111111111",
+        availability_id="66666666-6666-6666-6666-666666666666",
+        appointment_summary="Luna — Consulta general",
+        step="slot",
+        service_id="44444444-4444-4444-4444-444444444444",
+        veterinarian_id="33333333-3333-3333-3333-333333333333",
+        booking_date="2026-09-10",
+        advertised_slot_starts_utc=("2026-09-10 15:00:00+00:00",),
+    )
+    payload = draft.to_payload()
+    payload["advertised_slot_ends_utc"] = ["2026-09-10 15:30:00+00:00"]
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.collect",
+        payload=payload,
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
+    gateway = GatewayWithReschedule()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("1", "appointments.rescheduling", pending), context()
+    )
+    assert "teléfono" in (result.message or "").lower()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload.get("step") == "phone"
+
+
+@pytest.mark.anyio
+async def test_reschedule_phone_step_sends_otp_and_awaits_code() -> None:
+    from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+    from app.orchestration.module_executor import PendingConfirmation
+
+    draft = AppointmentRescheduleDraft(
+        account_id=str(DEFAULT_ACCOUNT_ID),
+        appointment_id="11111111-1111-1111-1111-111111111111",
+        availability_id="66666666-6666-6666-6666-666666666666",
+        appointment_summary="Luna — Consulta general",
+        step="phone",
+        service_id="44444444-4444-4444-4444-444444444444",
+        veterinarian_id="33333333-3333-3333-3333-333333333333",
+        booking_date="2026-09-10",
+        new_scheduled_start_utc="2026-09-10T15:00:00+00:00",
+        new_scheduled_end_utc="2026-09-10T15:30:00+00:00",
+    )
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.collect",
+        payload=draft.to_payload(),
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
+    gateway = GatewayWithReschedule()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("3001234567", "appointments.rescheduling", pending), context()
+    )
+    assert "código" in (result.message or "").lower()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == "appointments.reschedule.otp"
+    assert len(gateway.reschedule_code_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_reschedule_otp_step_confirms_and_reports_success() -> None:
+    from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+    from app.orchestration.module_executor import PendingConfirmation
+
+    draft = AppointmentRescheduleDraft(
+        account_id=str(DEFAULT_ACCOUNT_ID),
+        appointment_id="11111111-1111-1111-1111-111111111111",
+        availability_id="66666666-6666-6666-6666-666666666666",
+        appointment_summary="Luna — Consulta general",
+        step="otp_sent",
+        service_id="44444444-4444-4444-4444-444444444444",
+        veterinarian_id="33333333-3333-3333-3333-333333333333",
+        booking_date="2026-09-10",
+        new_scheduled_start_utc="2026-09-10T15:00:00+00:00",
+        new_scheduled_end_utc="2026-09-10T15:30:00+00:00",
+        requester_phone="3001234567",
+    )
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.otp",
+        payload=draft.to_payload(),
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
+    gateway = GatewayWithReschedule()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("123456", "appointments.rescheduling", pending), context()
+    )
+    assert "reprogramada correctamente" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert len(gateway.reschedule_confirm_calls) == 1
+    assert gateway.reschedule_confirm_calls[0][2] == "123456"
+
+
+@pytest.mark.anyio
+async def test_reschedule_intent_is_routed_by_rule_based_router() -> None:
+    command = request("Reprogramar mi cita", "appointments.reschedule").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+    assert decision.module_id == "appointments"
+    assert decision.intent == "appointments.reschedule"
