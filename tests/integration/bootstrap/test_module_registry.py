@@ -6,6 +6,7 @@ from app.bootstrap.settings import Settings
 from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
+from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
 from app.orchestration.module_registry import ModuleRegistry
 
 
@@ -95,7 +96,17 @@ def test_lifecycle_registers_both_backend_modules() -> None:
             for manifest in app.state.dependencies.module_registry.list_manifests()
         }
 
-    assert module_ids == {"appointments", "pet_profile", "services_catalog"}
+    assert module_ids == {"appointments", "pet_profile", "services_catalog", "veterinary_guidance"}
+
+
+def test_backend_gateway_registers_guest_accessible_guidance_module() -> None:
+    registry = build_module_registry(PetGateway())  # type: ignore[arg-type]
+
+    registration = registry.get_registration("veterinary_guidance")
+
+    assert registration.manifest == VETERINARY_GUIDANCE_MANIFEST
+    assert registration.manifest.guest_accessible is True
+    assert registration.executor is not None
 
 
 def test_backend_gateway_registers_private_appointments_module() -> None:
