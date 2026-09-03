@@ -13,6 +13,7 @@ from app.ports.appointments_gateway import (
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
+    AppointmentsRequestError,
     AppointmentsUnavailableError,
 )
 
@@ -175,6 +176,7 @@ async def test_create_owned_sends_idempotency_header_and_minimal_body() -> None:
         (401, AppointmentsAuthenticationError),
         (403, AppointmentsForbiddenError),
         (404, AppointmentNotFoundError),
+        (422, AppointmentsRequestError),
         (503, AppointmentsUnavailableError),
     ],
 )

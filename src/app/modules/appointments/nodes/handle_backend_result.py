@@ -4,6 +4,7 @@ from app.ports.appointments_gateway import (
     AppointmentsConflictError,
     AppointmentsForbiddenError,
     AppointmentsGatewayError,
+    AppointmentsRequestError,
 )
 
 
@@ -19,6 +20,11 @@ def safe_appointments_error(error: AppointmentsGatewayError) -> str:
         return "Tu cuenta no tiene acceso a las citas solicitadas."
     if isinstance(error, AppointmentNotFoundError):
         return "No encontré esa cita entre las citas asociadas a tu cuenta."
+    if isinstance(error, AppointmentsRequestError):
+        return (
+            "La fecha, el horario o el teléfono no son válidos para agendar. "
+            "Escribe agendar cita para elegir los datos nuevamente."
+        )
     return (
         "No pude consultar el sistema veterinario en este momento. Inténtalo nuevamente más tarde."
     )

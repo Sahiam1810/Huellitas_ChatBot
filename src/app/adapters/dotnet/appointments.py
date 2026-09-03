@@ -19,6 +19,7 @@ from app.ports.appointments_gateway import (
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
+    AppointmentsRequestError,
     AppointmentsUnavailableError,
 )
 
@@ -171,6 +172,8 @@ class DotNetAppointmentsGateway:
             raise AppointmentNotFoundError("Appointment was not found")
         if response.status_code == 409:
             raise AppointmentsConflictError("Appointment booking conflicts with current state")
+        if response.status_code in {400, 422}:
+            raise AppointmentsRequestError("Backend rejected appointment booking data")
         if response.status_code >= 500:
             raise AppointmentsUnavailableError("Veterinary appointments are unavailable")
         if response.status_code >= 400:

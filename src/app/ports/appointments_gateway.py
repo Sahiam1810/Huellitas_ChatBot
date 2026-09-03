@@ -35,6 +35,10 @@ class AppointmentsInvalidResponseError(AppointmentsGatewayError):
     pass
 
 
+class AppointmentsRequestError(AppointmentsGatewayError):
+    pass
+
+
 class AppointmentsConflictError(AppointmentsGatewayError):
     pass
 
