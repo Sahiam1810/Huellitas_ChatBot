@@ -12,9 +12,11 @@ from app.adapters.conversation_locks.conversation_lock_factory import (
 from app.adapters.dotnet.appointments import DotNetAppointmentsGateway
 from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.adapters.dotnet.services_catalog import DotNetServicesCatalogGateway
+from app.adapters.dotnet.vaccinations import DotNetVaccinationsGateway
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
 from app.adapters.knowledge.guidance_knowledge import GuidanceKnowledgeRetriever
+from app.adapters.knowledge.preventive_knowledge import PreventiveKnowledgeRetriever
 from app.adapters.knowledge.service_knowledge import ServiceKnowledgeRetriever
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
@@ -33,6 +35,7 @@ from app.knowledge.management_service import KnowledgeManagementService
 from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
 from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
 from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
+from app.modules.preventive_care.routing import PREVENTIVE_CARE_ROUTING_RULES
 from app.modules.veterinary_guidance.routing import VETERINARY_GUIDANCE_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
@@ -144,6 +147,7 @@ def build_lifespan(
         pet_profile_gateway = None
         services_catalog_gateway = None
         appointments_gateway = None
+        vaccinations_gateway = None
         if backend_configuration is not None:
             pet_profile_gateway = DotNetPetProfileGateway(
                 str(backend_configuration.base_url),
@@ -157,9 +161,14 @@ def build_lifespan(
                 str(backend_configuration.base_url),
                 backend_configuration.timeout_seconds,
             )
+            vaccinations_gateway = DotNetVaccinationsGateway(
+                str(backend_configuration.base_url),
+                backend_configuration.timeout_seconds,
+            )
             app.state.dependencies.pet_profile_gateway = pet_profile_gateway
             app.state.dependencies.services_catalog_gateway = services_catalog_gateway
             app.state.dependencies.appointments_gateway = appointments_gateway
+            app.state.dependencies.vaccinations_gateway = vaccinations_gateway
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -254,6 +263,7 @@ def build_lifespan(
                 )
             service_knowledge_gateway = None
             guidance_knowledge_gateway = None
+            preventive_knowledge_gateway = None
             if (
                 rag_configuration is not None
                 and embedding_model is not None
@@ -269,6 +279,11 @@ def build_lifespan(
                     app.state.dependencies.global_knowledge_store,
                     score_threshold=rag_configuration.score_threshold,
                 )
+                preventive_knowledge_gateway = PreventiveKnowledgeRetriever(
+                    embedding_model,
+                    app.state.dependencies.global_knowledge_store,
+                    score_threshold=rag_configuration.score_threshold,
+                )
             module_registry = app.state.dependencies.module_registry
             if backend_configuration is not None:
                 module_registry = build_module_registry(
@@ -276,6 +291,8 @@ def build_lifespan(
                     services_catalog_gateway=services_catalog_gateway,
                     service_knowledge_gateway=service_knowledge_gateway,
                     guidance_knowledge_gateway=guidance_knowledge_gateway,
+                    preventive_knowledge_gateway=preventive_knowledge_gateway,
+                    vaccinations_gateway=vaccinations_gateway,
                     appointments_gateway=appointments_gateway,
                     display_time_zone=settings.display_time_zone,
                     confirmation_ttl_seconds=settings.pet_profile_confirmation_ttl_seconds,
@@ -297,6 +314,7 @@ def build_lifespan(
                     + SERVICES_CATALOG_ROUTING_RULES
                     + APPOINTMENTS_ROUTING_RULES
                     + VETERINARY_GUIDANCE_ROUTING_RULES
+                    + PREVENTIVE_CARE_ROUTING_RULES
                 )
             main_graph = build_main_graph(
                 general_processor=general_processor,
