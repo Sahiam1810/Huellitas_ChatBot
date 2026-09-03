@@ -119,10 +119,7 @@ class AppointmentsModuleExecutor:
                 self._gateway, request, context.bearer_token, self._time_zone
             )
         except (TypeError, ValueError):
-            message = (
-                "No pude continuar el agendamiento guardado. "
-                "Escribe agendar cita para comenzar de nuevo."
-            )
+            message = _invalid_pending_flow_message(request.intent)
         except AppointmentsGatewayError as error:
             message = safe_appointments_error(error)
         return {"result": self._message(message)}
@@ -258,8 +255,8 @@ class AppointmentsModuleExecutor:
                 code,
                 context.bearer_token,
             )
-        except Exception:
-            result_msg = "El código no es válido o venció."
+        except AppointmentsGatewayError as error:
+            result_msg = safe_appointments_error(error)
         return self._message(result_msg)
 
     @staticmethod
@@ -271,3 +268,20 @@ class AppointmentsModuleExecutor:
             rag=RagMessageResult.disabled(),
             pending_confirmation=pending,
         )
+
+
+def _invalid_pending_flow_message(intent: str) -> str:
+    if intent in {"appointments.cancel", "appointments.canceling"}:
+        return (
+            "No pude continuar la cancelación guardada. "
+            "Escribe cancelar mi cita para comenzar de nuevo."
+        )
+    if intent in {"appointments.reschedule", "appointments.rescheduling"}:
+        return (
+            "No pude continuar la reprogramación guardada. "
+            "Escribe reprogramar mi cita para comenzar de nuevo."
+        )
+    return (
+        "No pude continuar el agendamiento guardado. "
+        "Escribe agendar cita para comenzar de nuevo."
+    )
