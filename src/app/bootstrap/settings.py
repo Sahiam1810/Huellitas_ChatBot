@@ -178,6 +178,7 @@ class Settings(BaseSettings):
     backend_base_url: AnyHttpUrl | None = None
     backend_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     pet_profile_confirmation_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+    appointment_booking_ttl_seconds: int = Field(default=600, ge=60, le=3600)
 
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER

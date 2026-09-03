@@ -1,17 +1,25 @@
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
 import httpx
 
 from app.ports.appointments_gateway import (
+    AppointmentBookingOptions,
+    AppointmentBookingPet,
+    AppointmentBookingRequest,
+    AppointmentBookingService,
+    AppointmentBookingSlot,
+    AppointmentBookingVeterinarian,
     AppointmentItem,
     AppointmentNotFoundError,
     AppointmentsAuthenticationError,
+    AppointmentsConflictError,
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
+    AppointmentsRequestError,
     AppointmentsUnavailableError,
 )
 
@@ -48,12 +56,109 @@ class DotNetAppointmentsGateway:
         response = await self._request(f"/api/appointments/mine/{appointment_id}", bearer_token)
         return self._appointment(self._json(response))
 
-    async def _request(
-        self, path: str, bearer_token: str, *, params: dict[str, str] | None = None
-    ) -> httpx.Response:
+    async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
+        response = await self._request("/api/appointments/booking/options", bearer_token)
+        payload = self._json(response)
+        if not isinstance(payload, Mapping):
+            raise AppointmentsInvalidResponseError("Backend returned invalid booking options")
         try:
-            response = await self._client.get(
-                path, params=params, headers={"Authorization": f"Bearer {bearer_token}"}
+            pets = tuple(
+                AppointmentBookingPet(id=UUID(str(item["id"])), name=self._text(item, "name"))
+                for item in self._items(payload, "pets")
+            )
+            services = tuple(
+                AppointmentBookingService(
+                    id=UUID(str(item["id"])),
+                    name=self._text(item, "name"),
+                    duration_minutes=self._positive_int(item, "durationMinutes"),
+                )
+                for item in self._items(payload, "services")
+            )
+            veterinarians = tuple(
+                AppointmentBookingVeterinarian(
+                    id=UUID(str(item["id"])),
+                    full_name=self._text(item, "fullName"),
+                    specialty_name=self._text(item, "specialtyName"),
+                )
+                for item in self._items(payload, "veterinarians")
+            )
+            requires_phone = payload["requiresRequesterPhoneNumber"]
+            if not isinstance(requires_phone, bool):
+                raise ValueError("requiresRequesterPhoneNumber")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AppointmentsInvalidResponseError(
+                "Backend returned invalid booking options"
+            ) from exc
+        return AppointmentBookingOptions(pets, services, veterinarians, requires_phone)
+
+    async def list_booking_slots(
+        self,
+        veterinarian_id: UUID,
+        service_id: UUID,
+        booking_date: date,
+        bearer_token: str,
+    ) -> tuple[AppointmentBookingSlot, ...]:
+        response = await self._request(
+            "/api/appointments/booking/slots",
+            bearer_token,
+            params={
+                "veterinarianId": str(veterinarian_id),
+                "serviceId": str(service_id),
+                "date": booking_date.isoformat(),
+            },
+        )
+        payload = self._json(response)
+        if not isinstance(payload, list) or any(not isinstance(item, Mapping) for item in payload):
+            raise AppointmentsInvalidResponseError("Backend returned invalid booking slots")
+        try:
+            return tuple(
+                AppointmentBookingSlot(
+                    scheduled_start_utc=self._datetime(item["scheduledStartUtc"]),
+                    scheduled_end_utc=self._datetime(item["scheduledEndUtc"]),
+                )
+                for item in payload
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AppointmentsInvalidResponseError(
+                "Backend returned invalid booking slots"
+            ) from exc
+
+    async def create_owned(
+        self,
+        booking: AppointmentBookingRequest,
+        idempotency_key: str,
+        bearer_token: str,
+    ) -> AppointmentItem:
+        response = await self._request(
+            "/api/appointments/mine",
+            bearer_token,
+            method="POST",
+            json_body={
+                "petId": str(booking.pet_id),
+                "veterinarianId": str(booking.veterinarian_id),
+                "serviceId": str(booking.service_id),
+                "scheduledStartUtc": self._utc_iso(booking.scheduled_start_utc),
+                "notes": booking.notes,
+                "requesterPhoneNumber": booking.requester_phone_number,
+            },
+            extra_headers={"Idempotency-Key": idempotency_key},
+        )
+        return self._appointment(self._json(response))
+
+    async def _request(
+        self,
+        path: str,
+        bearer_token: str,
+        *,
+        method: str = "GET",
+        params: dict[str, str] | None = None,
+        json_body: dict[str, object] | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        headers = {"Authorization": f"Bearer {bearer_token}", **(extra_headers or {})}
+        try:
+            response = await self._client.request(
+                method, path, params=params, json=json_body, headers=headers
             )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise AppointmentsUnavailableError("Veterinary appointments are unavailable") from exc
@@ -65,6 +170,10 @@ class DotNetAppointmentsGateway:
             raise AppointmentsForbiddenError("Backend denied appointment access")
         if response.status_code == 404:
             raise AppointmentNotFoundError("Appointment was not found")
+        if response.status_code == 409:
+            raise AppointmentsConflictError("Appointment booking conflicts with current state")
+        if response.status_code in {400, 422}:
+            raise AppointmentsRequestError("Backend rejected appointment booking data")
         if response.status_code >= 500:
             raise AppointmentsUnavailableError("Veterinary appointments are unavailable")
         if response.status_code >= 400:
@@ -123,6 +232,33 @@ class DotNetAppointmentsGateway:
         if parsed.tzinfo is None:
             raise ValueError("date timezone")
         return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _utc_iso(value: datetime) -> str:
+        if value.tzinfo is None:
+            raise AppointmentsInvalidResponseError("Appointment start must include a timezone")
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _items(payload: Mapping[str, object], key: str) -> tuple[Mapping[str, object], ...]:
+        values = payload[key]
+        if not isinstance(values, list) or any(not isinstance(item, Mapping) for item in values):
+            raise ValueError(key)
+        return tuple(values)
+
+    @staticmethod
+    def _text(value: Mapping[str, object], key: str) -> str:
+        text = value[key]
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(key)
+        return text.strip()
+
+    @staticmethod
+    def _positive_int(value: Mapping[str, object], key: str) -> int:
+        number = value[key]
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            raise ValueError(key)
+        return number
 
     async def close(self) -> None:
         if self._owns_client:

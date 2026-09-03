@@ -1,4 +1,5 @@
-from datetime import UTC
+import json
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import httpx
@@ -6,11 +7,13 @@ import pytest
 
 from app.adapters.dotnet.appointments import DotNetAppointmentsGateway
 from app.ports.appointments_gateway import (
+    AppointmentBookingRequest,
     AppointmentNotFoundError,
     AppointmentsAuthenticationError,
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
+    AppointmentsRequestError,
     AppointmentsUnavailableError,
 )
 
@@ -65,12 +68,115 @@ async def test_get_owned_uses_owned_detail_route() -> None:
 
 
 @pytest.mark.anyio
+async def test_get_booking_options_parses_owned_catalog() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/appointments/booking/options"
+        assert request.headers["Authorization"] == "Bearer token"
+        return httpx.Response(
+            200,
+            json={
+                "pets": [{"id": "22222222-2222-2222-2222-222222222222", "name": "Luna"}],
+                "services": [
+                    {
+                        "id": "44444444-4444-4444-4444-444444444444",
+                        "name": "Consulta general",
+                        "durationMinutes": 30,
+                    }
+                ],
+                "veterinarians": [
+                    {
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "fullName": "Dra. Ana",
+                        "specialtyName": "Medicina general",
+                    }
+                ],
+                "requiresRequesterPhoneNumber": True,
+            },
+        )
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    options = await gateway.get_booking_options("token")
+
+    assert options.pets[0].name == "Luna"
+    assert options.services[0].duration_minutes == 30
+    assert options.veterinarians[0].specialty_name == "Medicina general"
+    assert options.requires_requester_phone_number is True
+
+
+@pytest.mark.anyio
+async def test_list_booking_slots_sends_iso_date_and_parses_utc() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/appointments/booking/slots"
+        assert request.url.params["date"] == "2026-09-10"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "scheduledStartUtc": "2026-09-10T15:00:00Z",
+                    "scheduledEndUtc": "2026-09-10T15:30:00Z",
+                }
+            ],
+        )
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    slots = await gateway.list_booking_slots(
+        UUID("33333333-3333-3333-3333-333333333333"),
+        UUID("44444444-4444-4444-4444-444444444444"),
+        date(2026, 9, 10),
+        "token",
+    )
+
+    assert slots[0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
+
+
+@pytest.mark.anyio
+async def test_create_owned_sends_idempotency_header_and_minimal_body() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/appointments/mine"
+        assert request.headers["Idempotency-Key"] == "message-001"
+        body = json.loads(request.content)
+        assert set(body) == {
+            "petId",
+            "veterinarianId",
+            "serviceId",
+            "scheduledStartUtc",
+            "notes",
+            "requesterPhoneNumber",
+        }
+        return httpx.Response(201, json=payload())
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    booking = AppointmentBookingRequest(
+        pet_id=UUID("22222222-2222-2222-2222-222222222222"),
+        veterinarian_id=UUID("33333333-3333-3333-3333-333333333333"),
+        service_id=UUID("44444444-4444-4444-4444-444444444444"),
+        scheduled_start_utc=datetime(2026, 9, 3, 15, tzinfo=UTC),
+        notes="Control",
+        requester_phone_number="3000000000",
+    )
+
+    created = await gateway.create_owned(booking, "message-001", "token")
+
+    assert created.id == UUID("11111111-1111-1111-1111-111111111111")
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("status", "error"),
     [
         (401, AppointmentsAuthenticationError),
         (403, AppointmentsForbiddenError),
         (404, AppointmentNotFoundError),
+        (422, AppointmentsRequestError),
         (503, AppointmentsUnavailableError),
     ],
 )
