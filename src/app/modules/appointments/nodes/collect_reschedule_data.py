@@ -200,9 +200,11 @@ async def advance_reschedule(
                 new_pending,
             )
 
+        matched = next(s for s in live_slots if str(s.scheduled_start_utc) == chosen_start_str)
         new_draft = _replace(
             draft,
             step="phone",
+            new_availability_id=str(matched.availability_id),
             new_scheduled_start_utc=chosen_start_str,
             new_scheduled_end_utc=chosen_end_str,
         )
@@ -216,11 +218,17 @@ async def advance_reschedule(
         digits = message.strip().replace(" ", "").replace("-", "")
         if not (digits.isdigit() and 7 <= len(digits) <= 20):
             return "El teléfono debe tener entre 7 y 20 dígitos.", pending
+        if not draft.new_availability_id:
+            return (
+                "Falta el bloque de disponibilidad del nuevo horario. "
+                "Escribe reprogramar mi cita para comenzar de nuevo.",
+                None,
+            )
         # Call request_reschedule_code
         await gateway.request_reschedule_code(
             appointment_id=UUID(draft.appointment_id),
             phone=digits,
-            availability_id=UUID(draft.availability_id),
+            availability_id=UUID(draft.new_availability_id),
             scheduled_start_utc=datetime.fromisoformat(draft.new_scheduled_start_utc),  # type: ignore[arg-type]
             scheduled_end_utc=datetime.fromisoformat(draft.new_scheduled_end_utc),  # type: ignore[arg-type]
             bearer_token=bearer_token,

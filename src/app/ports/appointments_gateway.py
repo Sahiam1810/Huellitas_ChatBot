@@ -90,6 +90,7 @@ class AppointmentBookingOptions:
 
 @dataclass(frozen=True, slots=True)
 class AppointmentBookingSlot:
+    availability_id: UUID
     scheduled_start_utc: datetime
     scheduled_end_utc: datetime
 

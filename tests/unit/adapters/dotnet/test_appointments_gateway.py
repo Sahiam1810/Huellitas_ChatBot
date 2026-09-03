@@ -115,6 +115,7 @@ async def test_list_booking_slots_sends_iso_date_and_parses_utc() -> None:
             200,
             json=[
                 {
+                    "availabilityId": "77777777-7777-7777-7777-777777777777",
                     "scheduledStartUtc": "2026-09-10T15:00:00Z",
                     "scheduledEndUtc": "2026-09-10T15:30:00Z",
                 }
@@ -133,6 +134,7 @@ async def test_list_booking_slots_sends_iso_date_and_parses_utc() -> None:
     )
 
     assert slots[0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
+    assert slots[0].availability_id == UUID("77777777-7777-7777-7777-777777777777")
 
 
 @pytest.mark.anyio

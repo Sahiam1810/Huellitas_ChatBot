@@ -74,6 +74,7 @@ def build_module_registry(
                 vaccinations_gateway,
                 display_time_zone,
                 knowledge_gateway=preventive_knowledge_gateway,
+                confirmation_ttl_seconds=confirmation_ttl_seconds,
             ),
         )
     return registry
