@@ -11,8 +11,8 @@ from app.ports.appointments_gateway import (
 def safe_appointments_error(error: AppointmentsGatewayError) -> str:
     if isinstance(error, AppointmentsConflictError):
         return (
-            "Ese horario acaba de dejar de estar disponible. "
-            "Elige otro horario o vuelve a intentar la operación."
+            "Ese horario o esa cita acaba de dejar de estar disponible. "
+            "Elige otra opción o vuelve a intentar la operación."
         )
     if isinstance(error, AppointmentsAuthenticationError):
         return "No pude validar tu sesión. Vuelve a iniciar sesión o vincula tu cuenta."

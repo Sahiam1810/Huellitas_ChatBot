@@ -22,7 +22,16 @@ APPOINTMENTS_ROUTING_RULES = (
     IntentRule(
         "appointments",
         "appointments.view",
-        ("detalle de mi cita", "cuando es mi cita", "cuándo es mi cita", "cita de"),
+        (
+            "detalle de mi cita",
+            "cuando es mi cita",
+            "cuándo es mi cita",
+            "cita de",
+            "datos de mi cita",
+            "datos de la cita",
+            "informacion de mi cita",
+            "información de mi cita",
+        ),
     ),
     IntentRule(
         "appointments",
@@ -32,7 +41,15 @@ APPOINTMENTS_ROUTING_RULES = (
     IntentRule(
         "appointments",
         "appointments.cancel",
-        ("cancelar mi cita", "cancelar cita", "quiero cancelar", "anular cita", "anular mi cita"),
+        (
+            "cancelar mi cita",
+            "cancelar cita",
+            "quiero cancelar mi cita",
+            "quiero cancelar la cita",
+            "quiero cancelar una cita",
+            "anular cita",
+            "anular mi cita",
+        ),
     ),
     IntentRule(
         "appointments",

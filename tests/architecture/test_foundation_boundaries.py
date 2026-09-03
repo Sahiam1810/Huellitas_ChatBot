@@ -29,7 +29,7 @@ LANGGRAPH_IMPORT_SURFACE = {
     Path("src/app/adapters/checkpoints/memory.py"),
     Path("src/app/adapters/checkpoints/redis.py"),
     Path("src/app/adapters/checkpoints/checkpoint_store_factory.py"),
-}
+} | set(Path("src/app/modules").glob("*/graph.py"))
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -333,7 +333,7 @@ def test_module_registry_is_independent_from_http_and_adapters() -> None:
 
 def test_veterinary_modules_respect_isolation_boundaries() -> None:
     modules_root = Path("src/app/modules")
-    forbidden_prefixes = ("app.api", "app.adapters", "app.bootstrap", "langgraph")
+    forbidden_prefixes = ("app.api", "app.adapters", "app.bootstrap")
     violations: dict[str, list[str]] = {}
 
     for path in modules_root.rglob("*.py"):
@@ -344,10 +344,12 @@ def test_veterinary_modules_respect_isolation_boundaries() -> None:
             imports_sibling_module = name.startswith("app.modules.") and not (
                 name == own_module or name.startswith(f"{own_module}.")
             )
+            imports_langgraph_outside_graph = name.startswith("langgraph") and path.name != "graph.py"
             if (
                 name.startswith(forbidden_prefixes)
                 or name == "app.modules"
                 or imports_sibling_module
+                or imports_langgraph_outside_graph
             ):
                 forbidden.append(name)
         if forbidden:

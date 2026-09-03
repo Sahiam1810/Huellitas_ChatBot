@@ -72,7 +72,8 @@ async def test_pet_profile_routes_registration_without_using_general_model() -> 
     [
         ("¿Qué servicios ofrecen?", "services.list"),
         ("¿Cuánto cuesta la consulta general?", "services.detail"),
-        ("¿Tienen vacunación?", "services.search"),
+        ("¿Tienen servicio de vacunación?", "services.search"),
+        ("¿Ofrecen consulta general?", "services.search"),
     ],
 )
 async def test_services_catalog_routes_deterministically(message: str, intent: str) -> None:

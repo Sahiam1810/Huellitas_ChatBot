@@ -56,6 +56,7 @@ def test_initial_run_update_clears_every_transient_checkpoint_value() -> None:
         "fallback_reason": None,
         "safe_error": None,
         "confirmation": None,
+        "guest_link_required": False,
         "schema_version": 1,
     }
 

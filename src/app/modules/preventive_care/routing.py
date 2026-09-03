@@ -24,6 +24,12 @@ PREVENTIVE_CARE_ROUTING_RULES = (
             "qué vacunas tiene",
             "mis vacunas",
             "registro de vacunas",
+            "tienen vacunacion",
+            "tienen vacunación",
+            "tienen vacunas",
+            "ofrecen vacunacion",
+            "ofrecen vacunación",
+            "ofrecen vacunas",
         ),
     ),
     IntentRule(
