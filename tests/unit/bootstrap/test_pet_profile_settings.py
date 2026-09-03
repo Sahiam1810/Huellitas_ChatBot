@@ -8,6 +8,7 @@ def test_backend_configuration_is_optional_by_default() -> None:
     settings = Settings(environment="test", _env_file=None)
 
     assert settings.active_backend_configuration() is None
+    assert settings.appointment_booking_ttl_seconds == 600
 
 
 def test_enabled_backend_requires_an_http_base_url() -> None:

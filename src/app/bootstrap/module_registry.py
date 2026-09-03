@@ -19,6 +19,7 @@ def build_module_registry(
     appointments_gateway: AppointmentsGateway | None = None,
     display_time_zone: str = "America/Bogota",
     confirmation_ttl_seconds: int = 600,
+    appointment_booking_ttl_seconds: int = 600,
 ) -> ModuleRegistry:
     registry = ModuleRegistry()
     if pet_profile_gateway is not None:
@@ -40,6 +41,10 @@ def build_module_registry(
     if appointments_gateway is not None:
         registry.register(
             APPOINTMENTS_MANIFEST,
-            AppointmentsModuleExecutor(appointments_gateway, display_time_zone),
+            AppointmentsModuleExecutor(
+                appointments_gateway,
+                display_time_zone,
+                booking_ttl_seconds=appointment_booking_ttl_seconds,
+            ),
         )
     return registry

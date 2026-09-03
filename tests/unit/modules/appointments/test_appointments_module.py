@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
@@ -11,6 +11,12 @@ from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.rag_contracts import RagStatus
 from app.ports.appointments_gateway import (
+    AppointmentBookingOptions,
+    AppointmentBookingPet,
+    AppointmentBookingRequest,
+    AppointmentBookingService,
+    AppointmentBookingSlot,
+    AppointmentBookingVeterinarian,
     AppointmentItem,
     AppointmentScope,
     AppointmentsGateway,
@@ -42,6 +48,7 @@ class Gateway(AppointmentsGateway):
         self.items = items
         self.scopes: list[AppointmentScope] = []
         self.error: Exception | None = None
+        self.created: list[tuple[AppointmentBookingRequest, str]] = []
 
     async def list_owned(
         self, scope: AppointmentScope, bearer_token: str
@@ -53,6 +60,50 @@ class Gateway(AppointmentsGateway):
 
     async def get_owned(self, appointment_id: UUID, bearer_token: str) -> AppointmentItem:
         return self.items[0]
+
+    async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
+        return AppointmentBookingOptions(
+            pets=(AppointmentBookingPet(UUID("22222222-2222-2222-2222-222222222222"), "Luna"),),
+            services=(
+                AppointmentBookingService(
+                    UUID("44444444-4444-4444-4444-444444444444"),
+                    "Consulta general",
+                    30,
+                ),
+            ),
+            veterinarians=(
+                AppointmentBookingVeterinarian(
+                    UUID("33333333-3333-3333-3333-333333333333"),
+                    "Dra. Ana PÃ©rez",
+                    "Medicina general",
+                ),
+            ),
+            requires_requester_phone_number=True,
+        )
+
+    async def list_booking_slots(
+        self,
+        veterinarian_id: UUID,
+        service_id: UUID,
+        booking_date: date,
+        bearer_token: str,
+    ) -> tuple[AppointmentBookingSlot, ...]:
+        assert booking_date == date(2026, 9, 10)
+        return (
+            AppointmentBookingSlot(
+                datetime(2026, 9, 10, 15, tzinfo=UTC),
+                datetime(2026, 9, 10, 15, 30, tzinfo=UTC),
+            ),
+        )
+
+    async def create_owned(
+        self,
+        booking: AppointmentBookingRequest,
+        idempotency_key: str,
+        bearer_token: str,
+    ) -> AppointmentItem:
+        self.created.append((booking, idempotency_key))
+        return appointment()
 
     async def close(self) -> None:
         return None
@@ -75,7 +126,7 @@ def context() -> ExecutionContext:
     )
 
 
-def request(message: str, intent: str) -> ModuleExecutionRequest:
+def request(message: str, intent: str, pending=None) -> ModuleExecutionRequest:
     return ModuleExecutionRequest(
         command=MessageCommand(
             message=message,
@@ -92,6 +143,7 @@ def request(message: str, intent: str) -> ModuleExecutionRequest:
         ),
         intent=intent,
         manifest=APPOINTMENTS_MANIFEST,
+        pending_confirmation=pending,
     )
 
 
@@ -149,3 +201,49 @@ async def test_gateway_failure_is_safe() -> None:
     )
     assert "sistema veterinario" in (result.message or "")
     assert "secret" not in (result.message or "")
+
+
+@pytest.mark.anyio
+async def test_booking_collects_official_options_and_creates_only_after_confirmation() -> None:
+    gateway = Gateway()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+
+    result = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    assert "Luna" in (result.message or "")
+
+    for answer in ("1", "1", "1", "10/09/2026", "1", "3001234567"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    assert "Confirmas" in (result.message or "")
+    assert gateway.created == []
+
+    result = await executor.execute(
+        request("sí", "appointments.booking", result.pending_confirmation), context()
+    )
+
+    assert "agendada correctamente" in (result.message or "")
+    assert gateway.created[0][0].pet_id == UUID("22222222-2222-2222-2222-222222222222")
+    assert gateway.created[0][0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
+    assert gateway.created[0][1] == "appointment-1"
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
+    gateway = Gateway()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Quiero reservar una cita", "appointments.book"), context()
+    )
+
+    result = await executor.execute(
+        request("cancelar", "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert "Cancelé" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert gateway.created == []

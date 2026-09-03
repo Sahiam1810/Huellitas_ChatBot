@@ -3,6 +3,19 @@ from app.orchestration.rule_based_intent_router import IntentRule
 APPOINTMENTS_ROUTING_RULES = (
     IntentRule(
         "appointments",
+        "appointments.book",
+        (
+            "agendar una cita",
+            "agendar cita",
+            "reservar una cita",
+            "reservar cita",
+            "sacar una cita",
+            "pedir una cita",
+            "quiero una cita",
+        ),
+    ),
+    IntentRule(
+        "appointments",
         "appointments.history",
         ("historial de citas", "citas pasadas", "citas anteriores", "citas canceladas"),
     ),

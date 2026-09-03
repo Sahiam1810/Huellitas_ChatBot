@@ -19,7 +19,7 @@ MONTHS = (
 )
 
 
-def _local(value: datetime, time_zone: ZoneInfo) -> str:
+def format_local_datetime(value: datetime, time_zone: ZoneInfo) -> str:
     local = value.astimezone(time_zone)
     hour = local.hour % 12 or 12
     marker = "a. m." if local.hour < 12 else "p. m."
@@ -32,7 +32,7 @@ def _local(value: datetime, time_zone: ZoneInfo) -> str:
 def format_summary(item: AppointmentItem, time_zone: ZoneInfo) -> str:
     return (
         f"• {item.pet_name} — {item.service_name} — "
-        f"{_local(item.scheduled_start, time_zone)} — {item.status_name}"
+        f"{format_local_datetime(item.scheduled_start, time_zone)} — {item.status_name}"
     )
 
 
@@ -46,8 +46,8 @@ def format_detail(item: AppointmentItem, time_zone: ZoneInfo) -> str:
         f"Cita de {item.pet_name}\n"
         f"Servicio: {item.service_name}\n"
         f"Veterinario: {item.veterinarian_name}\n"
-        f"Inicio: {_local(item.scheduled_start, time_zone)}\n"
-        f"Fin: {_local(item.scheduled_end, time_zone)}\n"
+        f"Inicio: {format_local_datetime(item.scheduled_start, time_zone)}\n"
+        f"Fin: {format_local_datetime(item.scheduled_end, time_zone)}\n"
         f"Estado: {item.status_name}\n"
         f"Notas: {notes}"
     )

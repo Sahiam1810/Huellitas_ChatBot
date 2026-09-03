@@ -1,0 +1,202 @@
+import re
+from dataclasses import replace
+from datetime import UTC, datetime
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from app.modules.appointments.contracts_booking import AppointmentBookingDraft
+from app.modules.appointments.nodes.check_availability import (
+    current_slots,
+    format_slots,
+    parse_booking_date,
+)
+from app.modules.appointments.nodes.present_options import choose_option, numbered_options
+from app.modules.appointments.nodes.request_confirmation import booking_summary
+from app.orchestration.module_executor import PendingConfirmation
+from app.orchestration.rule_based_intent_router import normalize_for_routing
+from app.ports.appointments_gateway import AppointmentBookingOptions, AppointmentsGateway
+
+COLLECTION_ACTION = "appointments.book.collect"
+CONFIRMATION_ACTION = "appointments.book"
+BOOKING_INTENT = "appointments.booking"
+
+
+async def start_booking(
+    gateway: AppointmentsGateway,
+    bearer_token: str,
+    ttl_seconds: int,
+) -> tuple[str, PendingConfirmation | None]:
+    options = await gateway.get_booking_options(bearer_token)
+    unavailable = _unavailable_reason(options)
+    if unavailable is not None:
+        return unavailable, None
+    draft = AppointmentBookingDraft()
+    return _pet_prompt(options), _pending(draft, ttl_seconds)
+
+
+async def advance_booking(
+    gateway: AppointmentsGateway,
+    bearer_token: str,
+    pending: PendingConfirmation,
+    message: str,
+    zone: ZoneInfo,
+) -> tuple[str, PendingConfirmation]:
+    draft = AppointmentBookingDraft.from_payload(pending.payload)
+    options = await gateway.get_booking_options(bearer_token)
+    if draft.step == "pet":
+        selected = choose_option(message, tuple((str(item.id), item.name) for item in options.pets))
+        if selected is None:
+            return "No identifiqué la mascota. " + _pet_prompt(options), pending
+        draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
+        return _service_prompt(options), _replace_pending(pending, draft)
+    if draft.step == "service":
+        selected = choose_option(
+            message, tuple((str(item.id), item.name) for item in options.services)
+        )
+        if selected is None:
+            return "No identifiqué el servicio. " + _service_prompt(options), pending
+        draft = replace(
+            draft, service_id=selected[0], service_name=selected[1], step="veterinarian"
+        )
+        return _veterinarian_prompt(options), _replace_pending(pending, draft)
+    if draft.step == "veterinarian":
+        selected = choose_option(
+            message,
+            tuple(
+                (str(item.id), f"{item.full_name} — {item.specialty_name}")
+                for item in options.veterinarians
+            ),
+        )
+        if selected is None:
+            return "No identifiqué el veterinario. " + _veterinarian_prompt(options), pending
+        veterinarian_name = selected[1].split(" — ", maxsplit=1)[0]
+        draft = replace(
+            draft,
+            veterinarian_id=selected[0],
+            veterinarian_name=veterinarian_name,
+            step="date",
+        )
+        return (
+            "Indica la fecha que prefieres en formato AAAA-MM-DD o DD/MM/AAAA.",
+            _replace_pending(pending, draft),
+        )
+    if draft.step == "date":
+        booking_date = parse_booking_date(message)
+        if booking_date is None:
+            return "No entendí la fecha. Escríbela como 2026-09-10 o 10/09/2026.", pending
+        slots = await _slots(gateway, draft, booking_date, bearer_token)
+        if not slots:
+            return "No hay horarios disponibles ese día. Indica otra fecha.", pending
+        draft = replace(draft, booking_date=booking_date.isoformat(), step="slot")
+        return (
+            "Elige un horario respondiendo con su número:\n" + format_slots(slots, zone),
+            _replace_pending(pending, draft),
+        )
+    if draft.step == "slot":
+        if draft.booking_date is None:
+            raise ValueError("missing booking date")
+        booking_date = datetime.fromisoformat(draft.booking_date).date()
+        slots = await _slots(gateway, draft, booking_date, bearer_token)
+        if not slots:
+            draft = replace(draft, booking_date=None, step="date")
+            return (
+                "Ese día ya no tiene horarios disponibles. Indica otra fecha.",
+                _replace_pending(pending, draft),
+            )
+        index = int(message.strip()) - 1 if message.strip().isdigit() else -1
+        if index < 0 or index >= len(slots):
+            return (
+                "El horario no es válido. Elige uno de estos números:\n"
+                + format_slots(slots, zone),
+                pending,
+            )
+        selected = slots[index]
+        step = "phone" if options.requires_requester_phone_number else "confirmation"
+        draft = replace(
+            draft,
+            scheduled_start_utc=selected.scheduled_start_utc.astimezone(UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            step=step,
+        )
+        action = CONFIRMATION_ACTION if step == "confirmation" else COLLECTION_ACTION
+        next_pending = _replace_pending(pending, draft, action=action)
+        if step == "phone":
+            return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending
+        return booking_summary(draft, zone), next_pending
+    if draft.step == "phone":
+        phone = re.sub(r"\D", "", message)
+        if not 7 <= len(phone) <= 20:
+            return "El teléfono debe contener entre 7 y 20 dígitos.", pending
+        draft = replace(draft, requester_phone_number=phone, step="confirmation")
+        return booking_summary(draft, zone), _replace_pending(
+            pending, draft, action=CONFIRMATION_ACTION
+        )
+    return booking_summary(draft, zone), pending
+
+
+def booking_cancelled(message: str) -> bool:
+    return normalize_for_routing(message) in {"cancelar", "cancela", "cancelo"}
+
+
+def booking_expired(pending: PendingConfirmation) -> bool:
+    return pending.expires_at <= datetime.now(UTC)
+
+
+async def _slots(gateway, draft, booking_date, bearer_token):
+    if draft.veterinarian_id is None or draft.service_id is None:
+        raise ValueError("missing booking selection")
+    return await current_slots(
+        gateway,
+        UUID(draft.veterinarian_id),
+        UUID(draft.service_id),
+        booking_date,
+        bearer_token,
+    )
+
+
+def _pending(draft: AppointmentBookingDraft, ttl_seconds: int) -> PendingConfirmation:
+    return PendingConfirmation.create(
+        module_id="appointments",
+        action=COLLECTION_ACTION,
+        payload=draft.to_payload(),
+        ttl_seconds=ttl_seconds,
+        intent=BOOKING_INTENT,
+    )
+
+
+def _replace_pending(
+    pending: PendingConfirmation,
+    draft: AppointmentBookingDraft,
+    *,
+    action: str = COLLECTION_ACTION,
+) -> PendingConfirmation:
+    return replace(pending, action=action, payload=draft.to_payload(), intent=BOOKING_INTENT)
+
+
+def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:
+    if not options.pets:
+        return "No tienes mascotas registradas. Registra una mascota antes de agendar una cita."
+    if not options.services:
+        return "No hay servicios activos disponibles para agendar en este momento."
+    if not options.veterinarians:
+        return "No hay veterinarios activos disponibles para agendar en este momento."
+    return None
+
+
+def _pet_prompt(options: AppointmentBookingOptions) -> str:
+    items = tuple((str(item.id), item.name) for item in options.pets)
+    return "¿Para cuál mascota es la cita? Responde con el número:\n" + numbered_options(items)
+
+
+def _service_prompt(options: AppointmentBookingOptions) -> str:
+    items = tuple((str(item.id), item.name) for item in options.services)
+    return "Elige el servicio respondiendo con el número:\n" + numbered_options(items)
+
+
+def _veterinarian_prompt(options: AppointmentBookingOptions) -> str:
+    items = tuple(
+        (str(item.id), f"{item.full_name} — {item.specialty_name}")
+        for item in options.veterinarians
+    )
+    return "Elige el veterinario respondiendo con el número:\n" + numbered_options(items)
