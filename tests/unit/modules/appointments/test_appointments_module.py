@@ -26,6 +26,8 @@ from app.ports.appointments_gateway import (
 )
 from app.ports.token_validator import AuthenticatedPrincipal
 
+DEFAULT_ACCOUNT_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
 
 def appointment(*, pet: str = "Luna", service: str = "Consulta general") -> AppointmentItem:
     return AppointmentItem(
@@ -111,11 +113,13 @@ class Gateway(AppointmentsGateway):
         return None
 
 
-def context() -> ExecutionContext:
+def context(
+    account_id: UUID = DEFAULT_ACCOUNT_ID,
+) -> ExecutionContext:
     return ExecutionContext(
         bearer_token="token",
         principal=AuthenticatedPrincipal(
-            account_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            account_id=account_id,
             person_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             role_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             role="Cliente",
@@ -248,6 +252,73 @@ async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
 
     assert "Cancelé" in (result.message or "")
     assert result.pending_confirmation is None
+    assert gateway.created == []
+
+
+@pytest.mark.anyio
+async def test_booking_pending_state_cannot_be_resumed_by_another_account() -> None:
+    gateway = Gateway()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Quiero reservar una cita", "appointments.book"), context()
+    )
+
+    result = await executor.execute(
+        request("1", "appointments.booking", started.pending_confirmation),
+        context(UUID("99999999-9999-9999-9999-999999999999")),
+    )
+
+    assert "no pertenece a esta cuenta" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert gateway.created == []
+
+
+@pytest.mark.anyio
+async def test_booking_does_not_shift_a_displayed_slot_when_availability_changes() -> None:
+    class ChangingSlotsGateway(Gateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_call_count = 0
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_call_count += 1
+            if self.slot_call_count == 1:
+                return (
+                    AppointmentBookingSlot(
+                        datetime(2026, 9, 10, 15, tzinfo=UTC),
+                        datetime(2026, 9, 10, 15, 30, tzinfo=UTC),
+                    ),
+                )
+            return (
+                AppointmentBookingSlot(
+                    datetime(2026, 9, 10, 16, tzinfo=UTC),
+                    datetime(2026, 9, 10, 16, 30, tzinfo=UTC),
+                ),
+            )
+
+    gateway = ChangingSlotsGateway()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    result = await executor.execute(
+        request("Quiero reservar una cita", "appointments.book"), context()
+    )
+    for answer in ("1", "1", "1", "10/09/2026"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request("1", "appointments.booking", result.pending_confirmation), context()
+    )
+
+    assert "ya no está disponible" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
     assert gateway.created == []
 
 

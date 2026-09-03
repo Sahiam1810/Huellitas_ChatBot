@@ -452,11 +452,14 @@ JWT, aplica propiedad y devuelve fechas UTC.
 El agendamiento recopila mascota, servicio, veterinario y fecha; .NET calcula los horarios libres
 con información oficial. El agente solicita teléfono solo cuando el perfil no lo contiene,
 presenta un resumen y exige confirmación explícita antes de crear. El borrador serializable se
-conserva en `PendingConfirmation` dentro del checkpoint de su `conversationId`, vence según
-`HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS` y se elimina al cancelar, expirar o terminar.
+conserva en `PendingConfirmation` dentro del checkpoint de su `conversationId`, se vincula al
+`accountId` autenticado, vence según `HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS` y se elimina al
+cancelar, expirar o terminar. Los horarios anunciados se guardan como instantes UTC: al elegir un
+número se verifica que ese mismo instante continúe libre, sin reasignar el número a otra hora.
 
 `POST /api/appointments/mine` no acepta estado, disponibilidad ni hora final. .NET resuelve esos
-datos, bloquea la disponibilidad en la transacción Oracle, revalida solapamientos y usa
+datos, bloquea la disponibilidad en la transacción Oracle con el mismo mecanismo utilizado por los
+demás escritores de citas, revalida solapamientos y usa
 `Idempotency-Key` para devolver la misma cita ante reintentos equivalentes. Todo el flujo es
 determinista y mantiene LLM, embeddings y RAG fuera de las decisiones de negocio.
 

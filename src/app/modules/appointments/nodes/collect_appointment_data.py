@@ -25,12 +25,13 @@ async def start_booking(
     gateway: AppointmentsGateway,
     bearer_token: str,
     ttl_seconds: int,
+    account_id: UUID,
 ) -> tuple[str, PendingConfirmation | None]:
     options = await gateway.get_booking_options(bearer_token)
     unavailable = _unavailable_reason(options)
     if unavailable is not None:
         return unavailable, None
-    draft = AppointmentBookingDraft()
+    draft = AppointmentBookingDraft(account_id=str(account_id))
     return _pet_prompt(options), _pending(draft, ttl_seconds)
 
 
@@ -87,7 +88,16 @@ async def advance_booking(
         slots = await _slots(gateway, draft, booking_date, bearer_token)
         if not slots:
             return "No hay horarios disponibles ese día. Indica otra fecha.", pending
-        draft = replace(draft, booking_date=booking_date.isoformat(), step="slot")
+        advertised_starts = tuple(
+            slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            for slot in slots
+        )
+        draft = replace(
+            draft,
+            booking_date=booking_date.isoformat(),
+            advertised_slot_starts_utc=advertised_starts,
+            step="slot",
+        )
         return (
             "Elige un horario respondiendo con su número:\n" + format_slots(slots, zone),
             _replace_pending(pending, draft),
@@ -95,22 +105,37 @@ async def advance_booking(
     if draft.step == "slot":
         if draft.booking_date is None:
             raise ValueError("missing booking date")
-        booking_date = datetime.fromisoformat(draft.booking_date).date()
-        slots = await _slots(gateway, draft, booking_date, bearer_token)
-        if not slots:
-            draft = replace(draft, booking_date=None, step="date")
-            return (
-                "Ese día ya no tiene horarios disponibles. Indica otra fecha.",
-                _replace_pending(pending, draft),
-            )
         index = int(message.strip()) - 1 if message.strip().isdigit() else -1
-        if index < 0 or index >= len(slots):
+        if index < 0 or index >= len(draft.advertised_slot_starts_utc):
             return (
-                "El horario no es válido. Elige uno de estos números:\n"
-                + format_slots(slots, zone),
+                "El horario no es válido. Elige uno de los números mostrados.",
                 pending,
             )
-        selected = slots[index]
+        advertised_start = draft.advertised_slot_starts_utc[index]
+        booking_date = datetime.fromisoformat(draft.booking_date).date()
+        slots = await _slots(gateway, draft, booking_date, bearer_token)
+        selected = next(
+            (
+                slot
+                for slot in slots
+                if slot.scheduled_start_utc.astimezone(UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+                == advertised_start
+            ),
+            None,
+        )
+        if selected is None:
+            draft = replace(
+                draft,
+                booking_date=None,
+                advertised_slot_starts_utc=(),
+                step="date",
+            )
+            return (
+                "Ese horario ya no está disponible. Indica otra fecha para consultar horarios.",
+                _replace_pending(pending, draft),
+            )
         step = "phone" if options.requires_requester_phone_number else "confirmation"
         draft = replace(
             draft,

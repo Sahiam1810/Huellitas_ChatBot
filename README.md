@@ -180,8 +180,10 @@ nueva. Para lectura usa `GET /api/appointments/mine?scope=upcoming|history|all` 
 
 El flujo solicita mascota, servicio, veterinario, fecha y horario; solo pide teléfono cuando el
 perfil no lo tiene. Antes de crear muestra un resumen y exige una respuesta explícita `sí` o `no`.
-El borrador se conserva en el checkpoint del `conversationId`, vence en 10 minutos por defecto y
-puede abandonarse escribiendo `cancelar`. Una identidad invitada debe vincular primero su cuenta;
+El borrador se conserva en el checkpoint del `conversationId`, queda ligado a la cuenta autenticada,
+vence en 10 minutos por defecto y puede abandonarse escribiendo `cancelar`. Los números de horario
+se resuelven contra el instante UTC que se mostró y nunca se desplazan silenciosamente si cambia la
+disponibilidad. Una identidad invitada debe vincular primero su cuenta;
 .NET deriva el cliente del JWT, comprueba la propiedad y vuelve a validar disponibilidad,
 solapamientos e idempotencia dentro de la transacción Oracle.
 

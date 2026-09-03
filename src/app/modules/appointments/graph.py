@@ -66,7 +66,10 @@ class AppointmentsModuleExecutor:
         try:
             if is_booking_start(request.intent):
                 message, pending = await start_booking(
-                    self._gateway, context.bearer_token, self._booking_ttl_seconds
+                    self._gateway,
+                    context.bearer_token,
+                    self._booking_ttl_seconds,
+                    context.principal.account_id,
                 )
                 return {"result": self._message(message, pending=pending)}
             if is_booking_continuation(request.intent):
@@ -93,6 +96,12 @@ class AppointmentsModuleExecutor:
             return self._message(
                 "El agendamiento venció. Escribe agendar cita para comenzar de nuevo."
             )
+        draft = AppointmentBookingDraft.from_payload(pending.payload)
+        if draft.account_id != str(context.principal.account_id):
+            return self._message(
+                "El agendamiento pendiente no pertenece a esta cuenta. "
+                "Escribe agendar cita para comenzar de nuevo."
+            )
         if booking_cancelled(request.command.message):
             return self._message("Cancelé el agendamiento; no se creó ninguna cita.")
         if pending.action == COLLECTION_ACTION:
@@ -114,7 +123,7 @@ class AppointmentsModuleExecutor:
             )
         created = await create_booking(
             self._gateway,
-            AppointmentBookingDraft.from_payload(pending.payload),
+            draft,
             request.command.idempotency_key,
             context.bearer_token,
         )
