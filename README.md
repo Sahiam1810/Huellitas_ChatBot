@@ -170,19 +170,32 @@ Para cargar una descripción opcional mediante `POST /api/v1/knowledge/documents
 `HUELLITAS_BACKEND_*` y `HUELLITAS_RAG_*`; no añade credenciales ni direcciones codificadas
 en el módulo.
 
-## Módulo de consulta de citas
+## Módulo de citas
 
-`appointments` consulta exclusivamente las citas pertenecientes al cliente autenticado mediante
-`GET /api/appointments/mine?scope=upcoming|history|all` y
-`GET /api/appointments/mine/{appointmentId}`. Permite listar próximas citas, revisar el historial
-y obtener el detalle por mascota o servicio. Es un módulo privado: una identidad invitada debe
-vincular primero su cuenta y .NET vuelve a comprobar la propiedad usando el JWT.
+`appointments` consulta las citas pertenecientes al cliente autenticado y permite agendar una
+nueva. Para lectura usa `GET /api/appointments/mine?scope=upcoming|history|all` y
+`GET /api/appointments/mine/{appointmentId}`. Para agendar obtiene catálogos propios desde
+`GET /api/appointments/booking/options`, calcula horarios con
+`GET /api/appointments/booking/slots` y confirma mediante `POST /api/appointments/mine`.
 
-Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas` y
-`¿Cuándo es la cita de Luna?`. Las fechas llegan en UTC y se muestran en la zona configurada con
-`HUELLITAS_DISPLAY_TIME_ZONE="America/Bogota"`. La respuesta es determinista, no llama al LLM ni
-al RAG y no expone el teléfono interno del solicitante. Agendar, cancelar y reprogramar quedan
-fuera de este incremento.
+El flujo solicita mascota, servicio, veterinario, fecha y horario; solo pide teléfono cuando el
+perfil no lo tiene. Antes de crear muestra un resumen y exige una respuesta explícita `sí` o `no`.
+El borrador se conserva en el checkpoint del `conversationId`, vence en 10 minutos por defecto y
+puede abandonarse escribiendo `cancelar`. Una identidad invitada debe vincular primero su cuenta;
+.NET deriva el cliente del JWT, comprueba la propiedad y vuelve a validar disponibilidad,
+solapamientos e idempotencia dentro de la transacción Oracle.
+
+Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas`, `¿Cuándo es la cita de Luna?` y
+`Quiero agendar una cita`. Configura:
+
+```dotenv
+HUELLITAS_DISPLAY_TIME_ZONE="America/Bogota"
+HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS="600"
+```
+
+Las fechas cruzan HTTP en UTC y se muestran en la zona configurada. Consultar y agendar son
+flujos deterministas: no llaman al LLM, embeddings ni RAG. Cancelar y reprogramar citas existentes
+continúan fuera de este incremento.
 
 ## Proveedor de embeddings
 

@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y tres módulos veterinarios ejecutables: `pet_profile`, `services_catalog` y `appointments`. Se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional; `appointments` consulta próximas citas, historial y detalle bajo propiedad validada por .NET. .NET sigue siendo la autoridad de identidad, propiedad, reglas y Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, idempotencia durable/distribuida, búsqueda híbrida y los módulos veterinarios restantes todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y tres módulos veterinarios ejecutables: `pet_profile`, `services_catalog` y `appointments`. Se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional; `appointments` consulta citas y agenda nuevas mediante un borrador confirmable por conversación. .NET sigue siendo la autoridad de identidad, propiedad, catálogos, disponibilidad, concurrencia, idempotencia de la reserva y persistencia en Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, búsqueda híbrida, cancelación/reprogramación conversacional y los módulos veterinarios restantes todavía no están implementados.
 
 ---
 
@@ -444,12 +444,21 @@ Las continuaciones pendientes se conservan por `conversationId`: `pets.register.
 
 ## `appointments`
 
-Módulo privado de solo lectura para `appointments.list`, `appointments.history` y
-`appointments.view`. Usa un puerto neutral y un adaptador .NET; nunca consulta Oracle de forma
-directa. El backend deriva el cliente del `sub` del JWT, aplica propiedad y devuelve fechas UTC.
-El agente las convierte con `HUELLITAS_DISPLAY_TIME_ZONE`, genera respuestas deterministas y
-mantiene LLM, embeddings y RAG fuera del flujo. Las operaciones de agenda se implementarán en un
-incremento posterior con confirmación explícita.
+Módulo privado para `appointments.list`, `appointments.history`, `appointments.view`,
+`appointments.book` y la continuación interna `appointments.booking`. Usa un puerto neutral y un
+adaptador .NET; nunca consulta Oracle de forma directa. El backend deriva el cliente del `sub` del
+JWT, aplica propiedad y devuelve fechas UTC.
+
+El agendamiento recopila mascota, servicio, veterinario y fecha; .NET calcula los horarios libres
+con información oficial. El agente solicita teléfono solo cuando el perfil no lo contiene,
+presenta un resumen y exige confirmación explícita antes de crear. El borrador serializable se
+conserva en `PendingConfirmation` dentro del checkpoint de su `conversationId`, vence según
+`HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS` y se elimina al cancelar, expirar o terminar.
+
+`POST /api/appointments/mine` no acepta estado, disponibilidad ni hora final. .NET resuelve esos
+datos, bloquea la disponibilidad en la transacción Oracle, revalida solapamientos y usa
+`Idempotency-Key` para devolver la misma cita ante reintentos equivalentes. Todo el flujo es
+determinista y mantiene LLM, embeddings y RAG fuera de las decisiones de negocio.
 
 ## `veterinary_guidance`
 
@@ -960,17 +969,15 @@ No se agregan condiciones específicas del nuevo módulo en `main_graph.py`, `in
 El incremento actual no implementa:
 
 - Proveedores alternativos de embeddings ni selección dinámica por operación.
-- Esquemas HTTP finales de .NET.
 - Contenido veterinario definitivo.
 - Prompts clínicos o conversacionales.
 - Infraestructura productiva de despliegue, secretos, TLS, backups, monitoreo y alta disponibilidad.
 - Integraciones directas con canales externos.
-- Tablas o migraciones de Oracle Database 26ai.
 - Consulta o persistencia del historial canónico.
 - Bloqueos distribuidos y coordinación segura entre múltiples réplicas.
-- Llamadas al backend .NET.
-- Implementación y registro de los siete módulos veterinarios.
-- Subgrafos veterinarios ejecutables y enrutamiento de intención con un modelo real.
+- Cancelación y reprogramación conversacional de citas existentes.
+- Implementación de los módulos veterinarios todavía pendientes.
+- Enrutamiento de intención con un modelo; los módulos activos usan reglas deterministas.
 - Usos funcionales adicionales de Redis para idempotencia, caché, locks, colas o sesiones.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
@@ -994,7 +1001,7 @@ HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> bloqueo local por co
 - FastAPI construye una sola instancia del grafo durante el ciclo de vida del proceso.
 - `IdempotentMessageProcessor` permanece por fuera del grafo y evita repetir modelos, RAG o módulos.
 - `MessageProcessor` continúa siendo el ejecutor general; LangGraph no duplica su lógica.
-- El registro asocia `ModuleManifest` con `ModuleExecutor`; producción registra `pet_profile` solo cuando su backend está configurado.
+- El registro asocia `ModuleManifest` con `ModuleExecutor`; producción registra `pet_profile`, `services_catalog` y `appointments` solo cuando su backend está configurado.
 - Una conversación marcada como escalada finaliza antes del routing, el modelo, Qdrant o cualquier ejecutor modular.
 - Una intención desconocida o ambigua utiliza el fallback general y nunca inventa un módulo.
 
@@ -1023,7 +1030,7 @@ La implementación selecciona `memory` o `redis` mediante `HUELLITAS_CHECKPOINT_
 
 La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. `pet_profile`, `services_catalog` y `appointments` ocultan sus subgrafos detrás de `ModuleExecutor`, reciben puertos neutrales por composición y declaran sus propias reglas determinísticas. Los módulos futuros deberán conservar este límite y no introducir reglas veterinarias en `main_graph.py`.
 
-El routing modular y las confirmaciones persistibles ya existen para `pet_profile`. No se usa `interrupt`: la operación pendiente es un contrato explícito serializable, adecuado para reanudar el hilo con checkpoints memory o Redis. Persistencia canónica de conversaciones y los demás módulos continúan siendo responsabilidad de incrementos independientes.
+El routing modular y las confirmaciones persistibles ya existen para `pet_profile` y `appointments`. No se usa `interrupt`: la operación pendiente es un contrato explícito serializable, adecuado para reanudar el hilo con checkpoints memory o Redis. Persistencia canónica de conversaciones y los demás módulos continúan siendo responsabilidad de incrementos independientes.
 
 ---
 
