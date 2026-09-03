@@ -109,6 +109,31 @@ class Gateway(AppointmentsGateway):
         self.created.append((booking, idempotency_key))
         return appointment()
 
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        raise NotImplementedError
+
+    async def request_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        availability_id: UUID,
+        scheduled_start_utc: datetime,
+        scheduled_end_utc: datetime,
+        bearer_token: str,
+    ) -> UUID:
+        raise NotImplementedError
+
+    async def confirm_reschedule_code(
+        self,
+        appointment_id: UUID,
+        phone: str,
+        code: str,
+        bearer_token: str,
+    ) -> None:
+        raise NotImplementedError
+
     async def close(self) -> None:
         return None
 
@@ -332,3 +357,83 @@ async def test_booking_request_routes_to_appointments_without_llm() -> None:
 
     assert decision.module_id == "appointments"
     assert decision.intent == "appointments.book"
+
+
+# ---------------------------------------------------------------------------
+# Cancel flow
+# ---------------------------------------------------------------------------
+
+
+class GatewayWithCancel(Gateway):
+    def __init__(self, items: tuple[AppointmentItem, ...] = (appointment(),)) -> None:
+        super().__init__(items)
+        self.cancelled: list[tuple[UUID, str, str | None]] = []
+
+    async def cancel_owned(
+        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None:
+        self.cancelled.append((appointment_id, bearer_token, comment))
+
+
+@pytest.mark.anyio
+async def test_cancel_start_with_one_appointment_shows_summary_and_awaits_confirmation() -> None:
+    gateway = GatewayWithCancel()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    assert "Encontré esta cita" in (result.message or "")
+    assert "¿Confirmas que deseas cancelarla?" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == "appointments.cancel"
+    assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_start_with_no_appointments_returns_no_appointments_message() -> None:
+    gateway = GatewayWithCancel(())
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    assert "No tienes citas agendadas" in (result.message or "")
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() -> None:
+    gateway = GatewayWithCancel()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    result = await executor.execute(
+        request("sí", "appointments.canceling", started.pending_confirmation), context()
+    )
+    assert "cancelada correctamente" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert len(gateway.cancelled) == 1
+    assert gateway.cancelled[0][0] == UUID("11111111-1111-1111-1111-111111111111")
+
+
+@pytest.mark.anyio
+async def test_cancel_confirmation_no_aborts_without_calling_cancel() -> None:
+    gateway = GatewayWithCancel()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    result = await executor.execute(
+        request("no", "appointments.canceling", started.pending_confirmation), context()
+    )
+    assert "no se realizaron cambios" in (result.message or "")
+    assert result.pending_confirmation is None
+    assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_intent_is_routed_by_rule_based_router() -> None:
+    command = request("Cancelar mi cita", "appointments.cancel").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+    assert decision.module_id == "appointments"
+    assert decision.intent == "appointments.cancel"

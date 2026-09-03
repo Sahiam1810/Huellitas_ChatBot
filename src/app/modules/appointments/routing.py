@@ -29,4 +29,21 @@ APPOINTMENTS_ROUTING_RULES = (
         "appointments.list",
         ("mis citas", "que citas tengo", "qué citas tengo", "proximas citas", "próximas citas"),
     ),
+    IntentRule(
+        "appointments",
+        "appointments.cancel",
+        ("cancelar mi cita", "cancelar cita", "quiero cancelar", "anular cita", "anular mi cita"),
+    ),
+    IntentRule(
+        "appointments",
+        "appointments.reschedule",
+        (
+            "reprogramar mi cita",
+            "reprogramar cita",
+            "cambiar mi cita",
+            "cambiar fecha de mi cita",
+            "reagendar mi cita",
+            "mover mi cita",
+        ),
+    ),
 )
