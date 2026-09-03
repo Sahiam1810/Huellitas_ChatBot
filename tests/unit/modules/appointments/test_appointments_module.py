@@ -5,11 +5,13 @@ import pytest
 
 from app.modules.appointments.graph import AppointmentsModuleExecutor
 from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
+from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
 from app.modules.appointments.services.appointment_matcher import select_appointments
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.rag_contracts import RagStatus
+from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.ports.appointments_gateway import (
     AppointmentBookingOptions,
     AppointmentBookingPet,
@@ -247,3 +249,15 @@ async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
     assert "Cancelé" in (result.message or "")
     assert result.pending_confirmation is None
     assert gateway.created == []
+
+
+@pytest.mark.anyio
+async def test_booking_request_routes_to_appointments_without_llm() -> None:
+    command = request("Quiero agendar una cita", "appointments.book").command
+
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+
+    assert decision.module_id == "appointments"
+    assert decision.intent == "appointments.book"
