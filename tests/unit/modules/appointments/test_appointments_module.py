@@ -118,9 +118,11 @@ async def test_history_uses_history_scope() -> None:
 
 @pytest.mark.anyio
 async def test_detail_matches_pet_and_returns_official_detail() -> None:
-    result = await AppointmentsModuleExecutor(Gateway(), "America/Bogota").execute(
+    gateway = Gateway()
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
         request("¿Cuándo es mi cita de Luna?", "appointments.view"), context()
     )
+    assert gateway.scopes == [AppointmentScope.ALL]
     assert "Veterinario: Dra. Ana Pérez" in (result.message or "")
     assert "Notas: Control preventivo" in (result.message or "")
 

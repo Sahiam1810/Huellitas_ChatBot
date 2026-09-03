@@ -1,8 +1,11 @@
+from app.modules.appointments.graph import AppointmentsModuleExecutor
+from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
 from app.modules.pet_profile.graph import PetProfileModuleExecutor
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.services_catalog.graph import ServicesCatalogModuleExecutor
 from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.orchestration.module_registry import ModuleRegistry
+from app.ports.appointments_gateway import AppointmentsGateway
 from app.ports.pet_profile_gateway import PetProfileGateway
 from app.ports.service_knowledge_gateway import ServiceKnowledgeGateway
 from app.ports.services_catalog_gateway import ServicesCatalogGateway
@@ -13,6 +16,8 @@ def build_module_registry(
     *,
     services_catalog_gateway: ServicesCatalogGateway | None = None,
     service_knowledge_gateway: ServiceKnowledgeGateway | None = None,
+    appointments_gateway: AppointmentsGateway | None = None,
+    display_time_zone: str = "America/Bogota",
     confirmation_ttl_seconds: int = 600,
 ) -> ModuleRegistry:
     registry = ModuleRegistry()
@@ -31,5 +36,10 @@ def build_module_registry(
                 services_catalog_gateway,
                 knowledge_gateway=service_knowledge_gateway,
             ),
+        )
+    if appointments_gateway is not None:
+        registry.register(
+            APPOINTMENTS_MANIFEST,
+            AppointmentsModuleExecutor(appointments_gateway, display_time_zone),
         )
     return registry

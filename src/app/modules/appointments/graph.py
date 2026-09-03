@@ -44,11 +44,10 @@ class AppointmentsModuleExecutor:
             return {"result": self._message("No pude verificar tu identidad.")}
         request = state["request"]
         try:
-            scope = (
-                AppointmentScope.HISTORY
-                if request.intent == "appointments.history"
-                else AppointmentScope.UPCOMING
-            )
+            scope = {
+                "appointments.history": AppointmentScope.HISTORY,
+                "appointments.view": AppointmentScope.ALL,
+            }.get(request.intent, AppointmentScope.UPCOMING)
             items = await self._gateway.list_owned(scope, context.bearer_token)
             if request.intent == "appointments.view":
                 selection = select_appointments(request.command.message, items)
