@@ -29,8 +29,11 @@ class ModuleManifest:
     allowed_tools: tuple[str, ...] = ()
     response_types: tuple[str, ...] = ()
     confirmable_actions: tuple[str, ...] = ()
+    guest_accessible: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.guest_accessible, bool):
+            raise InvalidModuleManifestError("guest_accessible must be a boolean")
         for field in ("module_id", "version", "description"):
             object.__setattr__(self, field, normalized_text(field, getattr(self, field)))
         for field in (

@@ -4,6 +4,7 @@ from app.bootstrap.application import create_application
 from app.bootstrap.module_registry import build_module_registry
 from app.bootstrap.settings import Settings
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
+from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.orchestration.module_registry import ModuleRegistry
 
 
@@ -18,6 +19,14 @@ class PetGateway:
         return ()
 
     async def list_races(self, bearer_token: str) -> tuple[object, ...]:
+        return ()
+
+    async def close(self) -> None:
+        return None
+
+
+class ServicesGateway:
+    async def list_available(self, bearer_token: str) -> tuple[object, ...]:
         return ()
 
     async def close(self) -> None:
@@ -43,3 +52,35 @@ def test_backend_gateway_registers_executable_pet_profile_module() -> None:
     registration = registry.get_registration("pet_profile")
     assert registration.manifest == PET_PROFILE_MANIFEST
     assert registration.executor is not None
+
+
+def test_backend_gateway_registers_executable_services_catalog_module() -> None:
+    registry = build_module_registry(
+        services_catalog_gateway=ServicesGateway(),  # type: ignore[arg-type]
+    )
+
+    registration = registry.get_registration("services_catalog")
+
+    assert registration.manifest == SERVICES_CATALOG_MANIFEST
+    assert registration.manifest.guest_accessible is True
+    assert registration.executor is not None
+
+
+def test_lifecycle_registers_both_backend_modules() -> None:
+    app = create_application(
+        Settings(
+            environment="test",
+            chat_enabled=False,
+            backend_enabled=True,
+            backend_base_url="http://backend.test",
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app):
+        module_ids = {
+            manifest.module_id
+            for manifest in app.state.dependencies.module_registry.list_manifests()
+        }
+
+    assert module_ids == {"pet_profile", "services_catalog"}

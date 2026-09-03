@@ -94,6 +94,24 @@ class Router:
         return self.decision
 
 
+class PublicModuleRouter:
+    def __init__(self, selected_manifest: ModuleManifest) -> None:
+        self.selected_manifest = selected_manifest
+        self.calls = 0
+
+    async def route(
+        self,
+        current: MessageCommand,
+        manifests: tuple[ModuleManifest, ...],
+    ) -> RoutingDecision:
+        self.calls += 1
+        assert manifests == (self.selected_manifest,)
+        return RoutingDecision.module(
+            intent=self.selected_manifest.intents[0],
+            module_id=self.selected_manifest.module_id,
+        )
+
+
 class Executor:
     def __init__(self, module_id: str = "appointments") -> None:
         self.module_id = module_id
@@ -278,6 +296,35 @@ async def test_telegram_guest_requesting_private_module_receives_linking_instruc
     assert general.commands == []
     assert router.calls == 1
     assert executor.requests == []
+
+
+@pytest.mark.anyio
+async def test_telegram_guest_can_execute_module_explicitly_marked_as_public() -> None:
+    general = GeneralProcessor()
+    executor = Executor(module_id="services_catalog")
+    selected_manifest = ModuleManifest(
+        module_id="services_catalog",
+        version="1.0.0",
+        description="Public veterinary services",
+        intents=("services.list",),
+        guest_accessible=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(selected_manifest, executor)
+    router = PublicModuleRouter(selected_manifest)
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    current = command(roles=("TelegramGuest",))
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.module == "services_catalog"
+    assert executor.requests[0].intent == "services.list"
+    assert general.commands == []
 
 
 @pytest.mark.anyio

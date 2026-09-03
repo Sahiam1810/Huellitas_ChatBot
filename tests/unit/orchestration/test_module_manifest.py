@@ -48,6 +48,19 @@ def test_manifest_strips_outer_whitespace_from_text() -> None:
     assert manifest.intents == ("services.lookup",)
 
 
+def test_manifest_denies_guest_access_by_default() -> None:
+    assert valid_manifest().guest_accessible is False
+
+
+def test_manifest_can_explicitly_allow_guest_access() -> None:
+    assert valid_manifest(guest_accessible=True).guest_accessible is True
+
+
+def test_manifest_rejects_non_boolean_guest_access() -> None:
+    with pytest.raises(InvalidModuleManifestError, match="guest_accessible"):
+        valid_manifest(guest_accessible="true")
+
+
 @pytest.mark.parametrize("field", ["module_id", "version", "description"])
 def test_manifest_rejects_blank_identity_fields(field: str) -> None:
     with pytest.raises(InvalidModuleManifestError, match=field):

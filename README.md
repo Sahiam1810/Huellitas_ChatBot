@@ -152,6 +152,24 @@ Ejemplos iniciales: `¿Qué mascotas tengo?`, `Muéstrame el perfil de Luna`,
 disponible para una cuenta vinculada con perfil de cliente; .NET deriva el propietario desde el JWT
 y crea la mascota junto con `ClientPet` como propietario principal.
 
+## Módulo de catálogo de servicios
+
+`services_catalog` consulta `GET /api/services/available` en .NET y responde de forma
+determinista con los servicios activos, su categoría, duración y precio oficiales. Está
+disponible tanto para clientes vinculados como para la identidad interna `TelegramGuest`;
+el agente continúa exigiendo un JWT válido emitido por el backend.
+
+Ejemplos: `¿Qué servicios ofrecen?`, `¿Cuánto cuesta la consulta general?` y
+`¿Tienen vacunación?`. Cuando RAG está habilitado, el módulo puede añadir una descripción
+recuperada exclusivamente de documentos activos etiquetados `services_catalog`. Qdrant no
+reemplaza disponibilidad, precio ni duración. Si el conocimiento vectorial falla o no existe,
+la respuesta oficial de .NET se conserva.
+
+Para cargar una descripción opcional mediante `POST /api/v1/knowledge/documents`, incluye
+`"tags": ["services_catalog"]`. La integración reutiliza las variables
+`HUELLITAS_BACKEND_*` y `HUELLITAS_RAG_*`; no añade credenciales ni direcciones codificadas
+en el módulo.
+
 ## Proveedor de embeddings
 
 Embeddings es una capacidad independiente del chat y está deshabilitada por defecto. Para preparar el adaptador de OpenAI directo configura:
