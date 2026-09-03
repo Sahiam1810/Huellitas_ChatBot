@@ -32,6 +32,13 @@ SERVICES_CATALOG_ROUTING_RULES = (
     IntentRule(
         "services_catalog",
         "services.search",
-        ("tienen", "ofrecen", "hay servicio de", "servicio de"),
+        (
+            "tienen servicio",
+            "ofrecen servicio",
+            "tienen consulta",
+            "ofrecen consulta",
+            "hay servicio de",
+            "servicio de",
+        ),
     ),
 )
