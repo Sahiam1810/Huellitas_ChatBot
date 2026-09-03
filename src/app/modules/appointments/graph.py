@@ -21,6 +21,15 @@ from app.modules.appointments.nodes.collect_cancel_data import (
     cancel_expired,
     start_cancel,
 )
+from app.modules.appointments.nodes.collect_reschedule_data import (
+    RESCHEDULE_COLLECTION_ACTION,
+    RESCHEDULE_OTP_SENT_ACTION,
+    advance_reschedule,
+    reschedule_abandoned,
+    reschedule_expired,
+    start_reschedule,
+)
+from app.modules.appointments.nodes.execute_reschedule import execute_reschedule
 from app.modules.appointments.nodes.execute_appointment_action import create_booking
 from app.modules.appointments.nodes.execute_cancel import execute_cancel
 from app.modules.appointments.nodes.handle_backend_result import safe_appointments_error
@@ -95,6 +104,17 @@ class AppointmentsModuleExecutor:
                 return {"result": self._message(message, pending=pending)}
             if request.intent == "appointments.canceling":
                 return {"result": await self._continue_cancel(request, context)}
+            if request.intent == "appointments.reschedule":
+                message, pending = await start_reschedule(
+                    self._gateway,
+                    context.bearer_token,
+                    self._booking_ttl_seconds,
+                    context.principal.account_id,
+                    self._time_zone,
+                )
+                return {"result": self._message(message, pending=pending)}
+            if request.intent == "appointments.rescheduling":
+                return {"result": await self._continue_reschedule(request, context)}
             message = await appointment_query_response(
                 self._gateway, request, context.bearer_token, self._time_zone
             )
@@ -192,6 +212,54 @@ class AppointmentsModuleExecutor:
         result_msg = await execute_cancel(
             self._gateway, appointment_id, context.bearer_token
         )
+        return self._message(result_msg)
+
+    async def _continue_reschedule(
+        self, request: ModuleExecutionRequest, context: ExecutionContext
+    ) -> ModuleResult:
+        pending = request.pending_confirmation
+        if pending is None or pending.action not in {
+            RESCHEDULE_COLLECTION_ACTION,
+            RESCHEDULE_OTP_SENT_ACTION,
+        }:
+            return self._message(
+                "No hay una reprogramación pendiente. Escribe reprogramar mi cita."
+            )
+        if reschedule_expired(pending):
+            return self._message(
+                "La reprogramación venció. Escribe reprogramar mi cita para comenzar de nuevo."
+            )
+        if pending.payload.get("account_id") != str(context.principal.account_id):
+            return self._message(
+                "La reprogramación pendiente no pertenece a esta cuenta. "
+                "Escribe reprogramar mi cita para comenzar de nuevo."
+            )
+        if reschedule_abandoned(request.command.message):
+            return self._message("Cancelé la operación; no se realizaron cambios.")
+        if pending.action == RESCHEDULE_COLLECTION_ACTION:
+            message, next_pending = await advance_reschedule(
+                self._gateway,
+                context.bearer_token,
+                pending,
+                request.command.message,
+                self._time_zone,
+            )
+            return self._message(message, pending=next_pending)
+        # OTP sent — confirm
+        code = request.command.message.strip()
+        from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+
+        draft = AppointmentRescheduleDraft.from_payload(pending.payload)
+        try:
+            result_msg = await execute_reschedule(
+                self._gateway,
+                UUID(draft.appointment_id),
+                draft.requester_phone or "",
+                code,
+                context.bearer_token,
+            )
+        except Exception:
+            result_msg = "El código no es válido o venció."
         return self._message(result_msg)
 
     @staticmethod
