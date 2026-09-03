@@ -14,6 +14,7 @@ from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.adapters.dotnet.services_catalog import DotNetServicesCatalogGateway
 from app.adapters.embeddings.embedding_factory import create_embedding_model
 from app.adapters.idempotency.in_memory import InMemoryIdempotencyStore
+from app.adapters.knowledge.guidance_knowledge import GuidanceKnowledgeRetriever
 from app.adapters.knowledge.service_knowledge import ServiceKnowledgeRetriever
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
@@ -32,6 +33,7 @@ from app.knowledge.management_service import KnowledgeManagementService
 from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
 from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
 from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
+from app.modules.veterinary_guidance.routing import VETERINARY_GUIDANCE_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
@@ -251,6 +253,7 @@ def build_lifespan(
                     DocumentWriteLock(),
                 )
             service_knowledge_gateway = None
+            guidance_knowledge_gateway = None
             if (
                 rag_configuration is not None
                 and embedding_model is not None
@@ -261,12 +264,18 @@ def build_lifespan(
                     app.state.dependencies.global_knowledge_store,
                     score_threshold=rag_configuration.score_threshold,
                 )
+                guidance_knowledge_gateway = GuidanceKnowledgeRetriever(
+                    embedding_model,
+                    app.state.dependencies.global_knowledge_store,
+                    score_threshold=rag_configuration.score_threshold,
+                )
             module_registry = app.state.dependencies.module_registry
             if backend_configuration is not None:
                 module_registry = build_module_registry(
                     pet_profile_gateway,
                     services_catalog_gateway=services_catalog_gateway,
                     service_knowledge_gateway=service_knowledge_gateway,
+                    guidance_knowledge_gateway=guidance_knowledge_gateway,
                     appointments_gateway=appointments_gateway,
                     display_time_zone=settings.display_time_zone,
                     confirmation_ttl_seconds=settings.pet_profile_confirmation_ttl_seconds,
@@ -287,6 +296,7 @@ def build_lifespan(
                     PET_PROFILE_ROUTING_RULES
                     + SERVICES_CATALOG_ROUTING_RULES
                     + APPOINTMENTS_ROUTING_RULES
+                    + VETERINARY_GUIDANCE_ROUTING_RULES
                 )
             main_graph = build_main_graph(
                 general_processor=general_processor,
