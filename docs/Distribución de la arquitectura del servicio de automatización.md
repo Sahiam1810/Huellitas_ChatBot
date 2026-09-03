@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y dos módulos veterinarios ejecutables: `pet_profile` y `services_catalog`. Ambos se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional. .NET sigue siendo la autoridad de identidad, propiedad, reglas y Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, idempotencia durable/distribuida, búsqueda híbrida y los módulos veterinarios restantes todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y tres módulos veterinarios ejecutables: `pet_profile`, `services_catalog` y `appointments`. Se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional; `appointments` consulta próximas citas, historial y detalle bajo propiedad validada por .NET. .NET sigue siendo la autoridad de identidad, propiedad, reglas y Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, idempotencia durable/distribuida, búsqueda híbrida y los módulos veterinarios restantes todavía no están implementados.
 
 ---
 
@@ -249,7 +249,7 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Conserva el modelo conversacional opcional, embeddings, almacenamiento técnico y el procesador de mensajes. Cuando la integración con .NET está habilitada también construye `DotNetPetProfileGateway`, registra `pet_profile` y compone su router determinístico; cuando está deshabilitada mantiene el registro vacío y la ruta general previa.
+Es la raíz de composición. Conserva el modelo conversacional opcional, embeddings, almacenamiento técnico y el procesador de mensajes. Cuando la integración con .NET está habilitada construye los gateways de perfil, catálogo y citas, registra sus módulos y compone sus reglas determinísticas; cuando está deshabilitada mantiene el registro vacío y la ruta general previa.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
@@ -394,7 +394,7 @@ No incorpora campos privados de citas, orientación, perfiles o recordatorios.
 
 ## Registro de módulos
 
-Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile` y `services_catalog` únicamente cuando `HUELLITAS_BACKEND_ENABLED=true`; con la integración deshabilitada conserva un registro vacío. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas o servicios.
+Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile`, `services_catalog` y `appointments` únicamente cuando `HUELLITAS_BACKEND_ENABLED=true`; con la integración deshabilitada conserva un registro vacío. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas, servicios o citas.
 
 Cada manifiesto declara:
 
@@ -441,6 +441,15 @@ El manifiesto permite su ejecución para `TelegramGuest`, aunque toda solicitud 
 Consulta las mascotas del cliente autenticado mediante `GET /api/pets/mine`, lista o presenta su perfil, registra mascotas y prepara cambios parciales de nombre, edad, género, peso, observaciones, especie o raza. El alta recopila un borrador primitivo por pasos, resuelve especie y raza contra los catálogos de .NET y exige confirmación antes de ejecutar `POST /api/pets/mine`. .NET deriva el cliente desde el JWT y crea `Pet` junto con `ClientPet` como propietario principal en un único guardado; el agente nunca recibe un `clientId`.
 
 Las continuaciones pendientes se conservan por `conversationId`: `pets.register.collect` identifica la captura, `pets.register` la confirmación final y `pets.update` una modificación existente. Solo una aceptación explícita ejecuta `POST /api/pets/mine` o `PATCH /api/pets/mine/{petId}`. El agente no guarda perfiles directamente: .NET comprueba propiedad, valida catálogos y aplica control optimista con `expectedUpdatedAt` en las actualizaciones.
+
+## `appointments`
+
+Módulo privado de solo lectura para `appointments.list`, `appointments.history` y
+`appointments.view`. Usa un puerto neutral y un adaptador .NET; nunca consulta Oracle de forma
+directa. El backend deriva el cliente del `sub` del JWT, aplica propiedad y devuelve fechas UTC.
+El agente las convierte con `HUELLITAS_DISPLAY_TIME_ZONE`, genera respuestas deterministas y
+mantiene LLM, embeddings y RAG fuera del flujo. Las operaciones de agenda se implementarán en un
+incremento posterior con confirmación explícita.
 
 ## `veterinary_guidance`
 
@@ -1012,7 +1021,7 @@ La implementación selecciona `memory` o `redis` mediante `HUELLITAS_CHECKPOINT_
 
 ## Alcance modular disponible
 
-La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. `pet_profile` oculta su subgrafo detrás de `ModuleExecutor`, recibe `PetProfileGateway` por composición y declara sus propias reglas determinísticas. Los módulos futuros deberán conservar este límite y no introducir reglas veterinarias en `main_graph.py`.
+La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. `pet_profile`, `services_catalog` y `appointments` ocultan sus subgrafos detrás de `ModuleExecutor`, reciben puertos neutrales por composición y declaran sus propias reglas determinísticas. Los módulos futuros deberán conservar este límite y no introducir reglas veterinarias en `main_graph.py`.
 
 El routing modular y las confirmaciones persistibles ya existen para `pet_profile`. No se usa `interrupt`: la operación pendiente es un contrato explícito serializable, adecuado para reanudar el hilo con checkpoints memory o Redis. Persistencia canónica de conversaciones y los demás módulos continúan siendo responsabilidad de incrementos independientes.
 

@@ -4,6 +4,7 @@ from app.knowledge.management_service import KnowledgeManagementService
 from app.observability.metrics import InMemoryGraphMetrics
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.module_registry import ModuleRegistry
+from app.ports.appointments_gateway import AppointmentsGateway
 from app.ports.chat_model import ChatModel
 from app.ports.checkpoint_store import CheckpointStore
 from app.ports.conversation_lock import ConversationLock
@@ -38,3 +39,4 @@ class ApplicationDependencies:
     conversation_lock: ConversationLock | None = None
     pet_profile_gateway: PetProfileGateway | None = None
     services_catalog_gateway: ServicesCatalogGateway | None = None
+    appointments_gateway: AppointmentsGateway | None = None

@@ -170,6 +170,20 @@ Para cargar una descripción opcional mediante `POST /api/v1/knowledge/documents
 `HUELLITAS_BACKEND_*` y `HUELLITAS_RAG_*`; no añade credenciales ni direcciones codificadas
 en el módulo.
 
+## Módulo de consulta de citas
+
+`appointments` consulta exclusivamente las citas pertenecientes al cliente autenticado mediante
+`GET /api/appointments/mine?scope=upcoming|history|all` y
+`GET /api/appointments/mine/{appointmentId}`. Permite listar próximas citas, revisar el historial
+y obtener el detalle por mascota o servicio. Es un módulo privado: una identidad invitada debe
+vincular primero su cuenta y .NET vuelve a comprobar la propiedad usando el JWT.
+
+Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas` y
+`¿Cuándo es la cita de Luna?`. Las fechas llegan en UTC y se muestran en la zona configurada con
+`HUELLITAS_DISPLAY_TIME_ZONE="America/Bogota"`. La respuesta es determinista, no llama al LLM ni
+al RAG y no expone el teléfono interno del solicitante. Agendar, cancelar y reprogramar quedan
+fuera de este incremento.
+
 ## Proveedor de embeddings
 
 Embeddings es una capacidad independiente del chat y está deshabilitada por defecto. Para preparar el adaptador de OpenAI directo configura:

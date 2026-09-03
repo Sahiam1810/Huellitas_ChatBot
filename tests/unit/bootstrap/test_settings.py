@@ -919,3 +919,12 @@ def test_rag_rejects_equal_collection_names() -> None:
             qdrant_conversation_memory_collection="same",
             _env_file=None,
         )
+
+
+def test_display_time_zone_defaults_to_bogota() -> None:
+    assert Settings(_env_file=None).display_time_zone == "America/Bogota"
+
+
+def test_display_time_zone_rejects_unknown_iana_zone() -> None:
+    with pytest.raises(ValidationError, match="IANA"):
+        Settings(display_time_zone="Mars/Olympus", _env_file=None)

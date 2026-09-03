@@ -9,6 +9,7 @@ from app.adapters.checkpoints.checkpoint_store_factory import create_checkpoint_
 from app.adapters.conversation_locks.conversation_lock_factory import (
     create_conversation_lock,
 )
+from app.adapters.dotnet.appointments import DotNetAppointmentsGateway
 from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.adapters.dotnet.services_catalog import DotNetServicesCatalogGateway
 from app.adapters.embeddings.embedding_factory import create_embedding_model
@@ -28,6 +29,7 @@ from app.bootstrap.settings import (
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.document_lock import DocumentWriteLock
 from app.knowledge.management_service import KnowledgeManagementService
+from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
 from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
 from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
@@ -139,6 +141,7 @@ def build_lifespan(
         backend_configuration = settings.active_backend_configuration()
         pet_profile_gateway = None
         services_catalog_gateway = None
+        appointments_gateway = None
         if backend_configuration is not None:
             pet_profile_gateway = DotNetPetProfileGateway(
                 str(backend_configuration.base_url),
@@ -148,8 +151,13 @@ def build_lifespan(
                 str(backend_configuration.base_url),
                 backend_configuration.timeout_seconds,
             )
+            appointments_gateway = DotNetAppointmentsGateway(
+                str(backend_configuration.base_url),
+                backend_configuration.timeout_seconds,
+            )
             app.state.dependencies.pet_profile_gateway = pet_profile_gateway
             app.state.dependencies.services_catalog_gateway = services_catalog_gateway
+            app.state.dependencies.appointments_gateway = appointments_gateway
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -259,6 +267,8 @@ def build_lifespan(
                     pet_profile_gateway,
                     services_catalog_gateway=services_catalog_gateway,
                     service_knowledge_gateway=service_knowledge_gateway,
+                    appointments_gateway=appointments_gateway,
+                    display_time_zone=settings.display_time_zone,
                     confirmation_ttl_seconds=settings.pet_profile_confirmation_ttl_seconds,
                 )
                 app.state.dependencies.module_registry = module_registry
@@ -273,7 +283,9 @@ def build_lifespan(
             intent_router = None
             if module_registry.list_registrations():
                 intent_router = RuleBasedIntentRouter(
-                    PET_PROFILE_ROUTING_RULES + SERVICES_CATALOG_ROUTING_RULES
+                    PET_PROFILE_ROUTING_RULES
+                    + SERVICES_CATALOG_ROUTING_RULES
+                    + APPOINTMENTS_ROUTING_RULES
                 )
             main_graph = build_main_graph(
                 general_processor=general_processor,
@@ -343,6 +355,8 @@ def build_lifespan(
             app.state.dependencies.pet_profile_gateway = None
             services_catalog_gateway = app.state.dependencies.services_catalog_gateway
             app.state.dependencies.services_catalog_gateway = None
+            appointments_gateway = app.state.dependencies.appointments_gateway
+            app.state.dependencies.appointments_gateway = None
             try:
                 if pet_profile_gateway is not None:
                     await pet_profile_gateway.close()
@@ -352,36 +366,40 @@ def build_lifespan(
                         await services_catalog_gateway.close()
                 finally:
                     try:
-                        if idempotency_store is not None:
-                            await idempotency_store.close()
+                        if appointments_gateway is not None:
+                            await appointments_gateway.close()
                     finally:
                         try:
-                            if conversation_lock is not None:
-                                await conversation_lock.close()
+                            if idempotency_store is not None:
+                                await idempotency_store.close()
                         finally:
                             try:
-                                if chat_model is not None:
-                                    await chat_model.close()
+                                if conversation_lock is not None:
+                                    await conversation_lock.close()
                             finally:
                                 try:
-                                    if embedding_model is not None:
-                                        await embedding_model.close()
+                                    if chat_model is not None:
+                                        await chat_model.close()
                                 finally:
                                     try:
-                                        if vector_store is not None:
-                                            await vector_store.close()
+                                        if embedding_model is not None:
+                                            await embedding_model.close()
                                     finally:
                                         try:
-                                            if runtime_store is not None:
-                                                await runtime_store.close()
+                                            if vector_store is not None:
+                                                await vector_store.close()
                                         finally:
                                             try:
-                                                if checkpoint_store is not None:
-                                                    await checkpoint_store.close()
+                                                if runtime_store is not None:
+                                                    await runtime_store.close()
                                             finally:
-                                                logger.info(
-                                                    "application_stopped name=%s",
-                                                    settings.app_name,
-                                                )
+                                                try:
+                                                    if checkpoint_store is not None:
+                                                        await checkpoint_store.close()
+                                                finally:
+                                                    logger.info(
+                                                        "application_stopped name=%s",
+                                                        settings.app_name,
+                                                    )
 
     return lifespan

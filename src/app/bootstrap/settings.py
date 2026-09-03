@@ -1,6 +1,7 @@
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     AnyHttpUrl,
@@ -164,6 +165,7 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65535)
+    display_time_zone: str = "America/Bogota"
 
     jwt_public_key_pem_base64: SecretStr | None = None
     jwt_issuer: str = "Veterinaria.Api"
@@ -260,6 +262,16 @@ class Settings(BaseSettings):
         ):
             raise ValueError("Redis URL must contain only scheme, host, and port")
         return value
+
+    @field_validator("display_time_zone")
+    @classmethod
+    def validate_display_time_zone(cls, value: str) -> str:
+        normalized = value.strip()
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Display time zone must be a valid IANA time zone") from exc
+        return normalized
 
     @model_validator(mode="after")
     def validate_active_provider(self) -> "Settings":
