@@ -82,6 +82,7 @@ class PreventiveCareModuleExecutor:
                     message=request.command.message,
                     vaccinations_gateway=self._vaccinations_gateway,
                     bearer_token=runtime.context.bearer_token,
+                    account_id=runtime.context.principal.account_id,
                     time_zone=self._time_zone,
                 )
                 return {
@@ -92,6 +93,7 @@ class PreventiveCareModuleExecutor:
                     pet_gateway=self._pet_gateway,
                     vaccinations_gateway=self._vaccinations_gateway,
                     bearer_token=runtime.context.bearer_token,
+                    account_id=runtime.context.principal.account_id,
                     message=request.command.message,
                     requested_pet_id=request.command.pet_id,
                     time_zone=self._time_zone,

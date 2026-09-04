@@ -19,6 +19,7 @@ async def fetch_vaccination_view(
     pet_gateway: PetProfileGateway,
     vaccinations_gateway: VaccinationsGateway,
     bearer_token: str,
+    account_id: UUID,
     message: str,
     requested_pet_id: UUID | None,
     time_zone,
@@ -31,7 +32,12 @@ async def fetch_vaccination_view(
     vaccinations = await vaccinations_gateway.list_owned(bearer_token)
     pet = identify_pet(profiles, message, requested_pet_id)
     if pet is None and len(profiles) > 1:
-        return _ask_pet_selection(profiles, upcoming_only=upcoming_only, ttl_seconds=ttl_seconds)
+        return _ask_pet_selection(
+            profiles,
+            account_id=account_id,
+            upcoming_only=upcoming_only,
+            ttl_seconds=ttl_seconds,
+        )
     selected_pet = pet or profiles[0]
     return _render_for_pet(selected_pet, vaccinations, profiles, time_zone, upcoming_only), None
 
@@ -42,8 +48,12 @@ async def advance_pet_selection(
     message: str,
     vaccinations_gateway: VaccinationsGateway,
     bearer_token: str,
+    account_id: UUID,
     time_zone,
 ) -> tuple[str, PendingConfirmation | None]:
+    if pending.payload.get("account_id") != str(account_id):
+        return "La selección de mascota venció. Pregunta de nuevo por las vacunas.", None
+
     options_raw = pending.payload.get("options", [])
     if not isinstance(options_raw, list) or not options_raw:
         return "La selección de mascota venció. Pregunta de nuevo por las vacunas.", None
@@ -83,6 +93,7 @@ async def advance_pet_selection(
 def _ask_pet_selection(
     profiles: tuple[PetProfile, ...],
     *,
+    account_id: UUID,
     upcoming_only: bool,
     ttl_seconds: int,
 ) -> tuple[str, PendingConfirmation]:
@@ -97,6 +108,7 @@ def _ask_pet_selection(
         intent=PET_SELECT_INTENT,
         ttl_seconds=ttl_seconds,
         payload={
+            "account_id": str(account_id),
             "upcoming_only": upcoming_only,
             "options": [{"id": str(profile.id), "name": profile.name} for profile in profiles],
         },

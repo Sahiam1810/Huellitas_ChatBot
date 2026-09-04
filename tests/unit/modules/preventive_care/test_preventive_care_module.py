@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -68,8 +69,10 @@ class PetGateway:
 class VaccinationsGatewayMock:
     def __init__(self, records: tuple[VaccinationRecord, ...] | None = None) -> None:
         self._records = records if records is not None else (vaccination(),)
+        self.list_owned_calls = 0
 
     async def list_owned(self, bearer_token: str) -> tuple[VaccinationRecord, ...]:
+        self.list_owned_calls += 1
         return self._records
 
     async def close(self) -> None:
@@ -86,11 +89,13 @@ class KnowledgeGateway:
         return self.result
 
 
-def context() -> ExecutionContext:
+def context(
+    account_id: str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+) -> ExecutionContext:
     return ExecutionContext(
         bearer_token="token",
         principal=AuthenticatedPrincipal(
-            account_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            account_id=UUID(account_id),
             person_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             role_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             role="Cliente",
@@ -222,6 +227,9 @@ async def test_vaccines_with_multiple_pets_asks_selection_with_pending() -> None
     assert result.pending_confirmation.action == "preventive.vaccines.select_pet"
     assert result.pending_confirmation.intent == "preventive.vaccines.selecting"
     assert result.pending_confirmation.payload.get("upcoming_only") is False
+    assert result.pending_confirmation.payload.get("account_id") == str(
+        context().principal.account_id
+    )
 
 
 @pytest.mark.anyio
@@ -272,3 +280,67 @@ async def test_upcoming_with_multiple_pets_preserves_upcoming_flag() -> None:
     assert "Próximas dosis" in (result.message or "")
     assert "Luna" in (result.message or "")
     assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_pet_selection_cannot_continue_with_a_different_account() -> None:
+    luna = pet()
+    maxi = pet(pet_id="99999999-9999-9999-9999-999999999999", name="Maxi")
+    vaccinations_gateway = VaccinationsGatewayMock()
+    executor = PreventiveCareModuleExecutor(
+        PetGateway((luna, maxi)),  # type: ignore[arg-type]
+        vaccinations_gateway,  # type: ignore[arg-type]
+        "America/Bogota",
+    )
+    first = await executor.execute(
+        request("historial de vacunas", "preventive.vaccines"),
+        context(),
+    )
+    assert first.pending_confirmation is not None
+
+    result = await executor.execute(
+        request("1", "preventive.vaccines.selecting", first.pending_confirmation),
+        context("99999999-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    )
+
+    assert "pregunta de nuevo" in (result.message or "").lower()
+    assert "Luna" not in (result.message or "")
+    assert "Maxi" not in (result.message or "")
+    assert result.pending_confirmation is None
+    assert vaccinations_gateway.list_owned_calls == 1
+
+
+@pytest.mark.anyio
+async def test_legacy_pet_selection_without_account_fails_closed() -> None:
+    luna = pet()
+    maxi = pet(pet_id="99999999-9999-9999-9999-999999999999", name="Maxi")
+    vaccinations_gateway = VaccinationsGatewayMock()
+    executor = PreventiveCareModuleExecutor(
+        PetGateway((luna, maxi)),  # type: ignore[arg-type]
+        vaccinations_gateway,  # type: ignore[arg-type]
+        "America/Bogota",
+    )
+    first = await executor.execute(
+        request("historial de vacunas", "preventive.vaccines"),
+        context(),
+    )
+    assert first.pending_confirmation is not None
+    legacy_pending = replace(
+        first.pending_confirmation,
+        payload={
+            key: value
+            for key, value in first.pending_confirmation.payload.items()
+            if key != "account_id"
+        },
+    )
+
+    result = await executor.execute(
+        request("1", "preventive.vaccines.selecting", legacy_pending),
+        context(),
+    )
+
+    assert "pregunta de nuevo" in (result.message or "").lower()
+    assert "Luna" not in (result.message or "")
+    assert "Maxi" not in (result.message or "")
+    assert result.pending_confirmation is None
+    assert vaccinations_gateway.list_owned_calls == 1
