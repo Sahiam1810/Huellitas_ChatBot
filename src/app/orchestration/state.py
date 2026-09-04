@@ -7,7 +7,7 @@ from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleResult, PendingConfirmation
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 
 
 class MessageCommandState(TypedDict):
@@ -39,6 +39,7 @@ class MessageResultState(TypedDict):
     conversation_id: str
     correlation_id: str
     response_type: str
+    access_requirement: str
     provider: str | None
     model: str | None
     input_tokens: int | None
@@ -142,6 +143,7 @@ def message_result_to_state(result: MessageResult) -> MessageResultState:
         "conversation_id": str(result.conversation_id),
         "correlation_id": str(result.correlation_id),
         "response_type": result.response_type.value,
+        "access_requirement": result.access_requirement.value,
         "provider": result.provider.value if result.provider is not None else None,
         "model": result.model,
         "input_tokens": result.input_tokens,
@@ -159,6 +161,7 @@ def message_result_from_state(state: MessageResultState) -> MessageResult:
         conversation_id=UUID(state["conversation_id"]),
         correlation_id=UUID(state["correlation_id"]),
         response_type=MessageResponseType(state["response_type"]),
+        access_requirement=AccessRequirement(state["access_requirement"]),
         provider=ModelProvider(provider) if provider is not None else None,
         model=state["model"],
         input_tokens=state["input_tokens"],

@@ -105,6 +105,7 @@ def test_message_response_serializes_safe_camel_case_metadata() -> None:
         "conversationId": CONVERSATION_ID,
         "correlationId": CORRELATION_ID,
         "responseType": "ai_generated",
+        "accessRequirement": "none",
         "provider": "openrouter",
         "model": "router-model",
         "usage": {"inputTokens": 8, "outputTokens": 3},

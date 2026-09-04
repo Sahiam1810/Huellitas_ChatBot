@@ -109,6 +109,7 @@ async def create_message(
         conversation_id=result.conversation_id,
         correlation_id=result.correlation_id,
         response_type=result.response_type,
+        access_requirement=result.access_requirement,
         provider=result.provider,
         model=result.model,
         usage=usage,
