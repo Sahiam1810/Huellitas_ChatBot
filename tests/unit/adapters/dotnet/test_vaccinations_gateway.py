@@ -29,7 +29,7 @@ def payload() -> dict[str, object]:
 @pytest.mark.anyio
 async def test_list_owned_calls_vaccinations_route_with_jwt() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/vaccinations"
+        assert request.url.path == "/api/vaccinations/mine"
         assert request.headers["Authorization"] == "Bearer token"
         return httpx.Response(200, json=[payload()])
 
