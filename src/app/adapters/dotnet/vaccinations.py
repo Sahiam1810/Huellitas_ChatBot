@@ -9,7 +9,6 @@ from app.ports.vaccinations_gateway import (
     VaccinationRecord,
     VaccinationsAuthenticationError,
     VaccinationsForbiddenError,
-    VaccinationsGatewayError,
     VaccinationsInvalidResponseError,
     VaccinationsNotFoundError,
     VaccinationsUnavailableError,
