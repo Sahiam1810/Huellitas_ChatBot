@@ -20,7 +20,11 @@ from app.modules.preventive_care.nodes.retrieve_preventive_knowledge import (
 from app.modules.preventive_care.services.response_formatter import format_pet_context
 from app.modules.preventive_care.state import PreventiveCareGraphState
 from app.orchestration.execution_context import ExecutionContext
-from app.orchestration.module_executor import ModuleExecutionRequest, ModuleResult, PendingConfirmation
+from app.orchestration.module_executor import (
+    ModuleExecutionRequest,
+    ModuleResult,
+    PendingConfirmation,
+)
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.pet_profile_gateway import PetProfileGateway, PetProfileGatewayError
 from app.ports.preventive_knowledge_gateway import (
@@ -86,7 +90,9 @@ class PreventiveCareModuleExecutor:
                     time_zone=self._time_zone,
                 )
                 return {
-                    "result": self._message(message, knowledge=None, used_backend=True, pending=pending)
+                    "result": self._message(
+                        message, knowledge=None, used_backend=True, pending=pending
+                    )
                 }
             if request.intent in {"preventive.vaccines", "preventive.vaccines.upcoming"}:
                 message, pending = await fetch_vaccination_view(
@@ -101,7 +107,9 @@ class PreventiveCareModuleExecutor:
                     upcoming_only=request.intent == "preventive.vaccines.upcoming",
                 )
                 return {
-                    "result": self._message(message, knowledge=None, used_backend=True, pending=pending)
+                    "result": self._message(
+                        message, knowledge=None, used_backend=True, pending=pending
+                    )
                 }
             knowledge = await retrieve_preventive_knowledge(
                 self._knowledge_gateway,

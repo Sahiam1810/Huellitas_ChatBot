@@ -1,15 +1,11 @@
-import json
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC
 
 import httpx
 import pytest
 
 from app.adapters.dotnet.vaccinations import DotNetVaccinationsGateway
 from app.ports.vaccinations_gateway import (
-    VaccinationsAuthenticationError,
     VaccinationsForbiddenError,
-    VaccinationsInvalidResponseError,
 )
 
 

@@ -69,14 +69,12 @@ def format_upcoming_vaccinations(
     pet_names: dict,
     time_zone: ZoneInfo,
 ) -> str:
-    upcoming = tuple(
-        record
-        for record in records
-        if record.next_dose_date is not None
-    )
+    upcoming = tuple(record for record in records if record.next_dose_date is not None)
     if not upcoming:
         return "No hay próximas dosis de vacuna registradas en el sistema."
-    sorted_upcoming = sorted(upcoming, key=lambda item: item.next_dose_date or item.application_date)
+    sorted_upcoming = sorted(
+        upcoming, key=lambda item: item.next_dose_date or item.application_date
+    )
     lines = tuple(
         format_vaccination_line(record, pet_names.get(record.client_pet_id, "Mascota"), time_zone)
         for record in sorted_upcoming

@@ -1,4 +1,6 @@
-from app.modules.preventive_care.nodes.prepare_preventive_response import prepare_preventive_ask_response
+from app.modules.preventive_care.nodes.prepare_preventive_response import (
+    prepare_preventive_ask_response,
+)
 from app.orchestration.rag_contracts import RagStatus
 from app.ports.preventive_knowledge_gateway import PreventiveKnowledgeResult
 

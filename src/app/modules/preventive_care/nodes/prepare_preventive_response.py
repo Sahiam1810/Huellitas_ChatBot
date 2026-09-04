@@ -14,9 +14,7 @@ DISABLED_MESSAGE = (
     "Por ahora no puedo consultar la guía preventiva autorizada. "
     "Consulta a un veterinario para orientación personalizada."
 )
-CLOSING = (
-    "Para un calendario exacto según el historial clínico, agenda una cita de control."
-)
+CLOSING = "Para un calendario exacto según el historial clínico, agenda una cita de control."
 
 
 def prepare_preventive_ask_response(
