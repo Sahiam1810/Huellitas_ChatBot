@@ -18,7 +18,7 @@ from app.ports.chat_model import (
     ChatRole,
     ModelProvider,
 )
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import ModelConfigurationError
 
 
@@ -43,6 +43,7 @@ class MessageResult:
     conversation_id: UUID
     correlation_id: UUID
     response_type: MessageResponseType
+    access_requirement: AccessRequirement = AccessRequirement.NONE
     provider: ModelProvider | None = None
     model: str | None = None
     input_tokens: int | None = None

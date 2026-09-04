@@ -1014,13 +1014,13 @@ la ejecución utiliza el fallback cerrado `guest_general_only` y solo llega al
 procesador general. Aunque el request solicite publicación global o exista una
 coincidencia directa en memoria, el agente deshabilita ambas posibilidades.
 El prompt permite responder orientación veterinaria general e información
-pública sin agregar un recordatorio repetitivo. Deriva a `/vincular` solamente
-cuando la solicitud actual requiere datos u operaciones personales; si la
-persona no tiene cuenta, la remite al registro seguro en la aplicación y nunca
-solicita contraseña, identificación o datos de registro mediante Telegram. La
-compuerta continúa impidiendo router, módulos, respuesta RAG directa y
-publicación global. Un principal vinculado conserva sin cambios el routing
-normal.
+pública sin agregar recordatorios repetitivos. Cuando la solicitud requiere
+datos u operaciones personales, devuelve la señal estructurada
+`accessRequirement=identity_verification` sin ejecutar el módulo. El backend
+.NET inicia entonces la verificación mediante cédula y OTP, conserva cifrada la
+consulta pendiente y la reanuda con identidad autorizada. El agente nunca
+recibe cédula, correo ni OTP. La compuerta continúa impidiendo router privado,
+respuesta RAG directa y publicación global para invitados.
 
 ## Estado, seguridad y checkpoints
 

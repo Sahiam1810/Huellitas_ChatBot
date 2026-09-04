@@ -274,7 +274,7 @@ async def test_pending_confirmation_survives_and_returns_to_the_same_module() ->
 
 
 @pytest.mark.anyio
-async def test_telegram_guest_requesting_private_module_receives_linking_instructions() -> None:
+async def test_telegram_guest_requesting_private_module_requires_identity_verification() -> None:
     general = GeneralProcessor()
     executor = Executor()
     registry = ModuleRegistry()
@@ -290,8 +290,8 @@ async def test_telegram_guest_requesting_private_module_receives_linking_instruc
     )
 
     result = message_result_from_state(state["result"])
-    assert "no está vinculado" in (result.message or "").casefold()
-    assert "/vincular" in (result.message or "")
+    assert result.access_requirement.value == "identity_verification"
+    assert "verificar tu identidad" in (result.message or "").casefold()
     assert state["fallback_reason"] == "guest_link_required"
     assert general.commands == []
     assert router.calls == 1

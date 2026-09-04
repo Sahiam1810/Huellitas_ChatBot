@@ -2,7 +2,7 @@ from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleResult
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.rag_contracts import RagMessageResult
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import InvalidModuleResultError
 
 
@@ -18,14 +18,11 @@ def build_human_controlled_result(command: MessageCommand) -> MessageResult:
 
 def build_guest_link_required_result(command: MessageCommand) -> MessageResult:
     return MessageResult(
-        message=(
-            "Este chat de Telegram no está vinculado a una cuenta de Huellitas, "
-            "por eso no puedo consultar información privada. Envía /vincular y completa "
-            "la vinculación una sola vez; después podré consultar tus mascotas."
-        ),
+        message="Necesito verificar tu identidad para continuar con esta solicitud privada.",
         conversation_id=command.conversation_id,
         correlation_id=command.correlation_id,
         response_type=MessageResponseType.RETRIEVED,
+        access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
         rag=RagMessageResult.skipped(),
     )
 

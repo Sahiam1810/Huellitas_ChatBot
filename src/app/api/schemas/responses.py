@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 
 
 class TokenUsageResponse(BaseModel):
@@ -33,6 +33,10 @@ class MessageResponse(BaseModel):
     conversation_id: UUID = Field(alias="conversationId")
     correlation_id: UUID = Field(alias="correlationId")
     response_type: MessageResponseType = Field(alias="responseType")
+    access_requirement: AccessRequirement = Field(
+        default=AccessRequirement.NONE,
+        alias="accessRequirement",
+    )
     provider: ModelProvider | None
     model: str | None
     usage: TokenUsageResponse | None

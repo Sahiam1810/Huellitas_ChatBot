@@ -93,11 +93,12 @@ incluye los mismos claims obligatorios y conserva `userId == person_id`; el
 agente no relaja `identity_mismatch` ni acepta una identidad fabricada por el
 cliente.
 
-Esta identidad permite exclusivamente preguntas generales. El grafo no
-consulta ni ejecuta módulos veterinarios, no reutiliza respuestas RAG directas
-y no publica conocimiento global. Para datos de mascotas, citas, vacunas,
-historias clínicas u operaciones, el usuario debe completar `/vincular` en
-Telegram. Los identificadores invitados no se registran en logs ni se
+Esta identidad permite exclusivamente preguntas generales y módulos marcados
+como públicos. El grafo no ejecuta módulos privados, no reutiliza respuestas
+RAG directas y no publica conocimiento global. Para datos de mascotas, citas,
+vacunas, historias clínicas u operaciones devuelve
+`accessRequirement=identity_verification`; .NET solicita cédula y OTP de forma
+automática. Los identificadores invitados no se registran en logs ni se
 persisten como usuarios o conversaciones canónicas.
 
 ## Probar desde Swagger
