@@ -172,8 +172,8 @@ en el módulo.
 
 ## Módulo de citas
 
-`appointments` consulta las citas pertenecientes al cliente autenticado y permite agendar una
-nueva. Para lectura usa `GET /api/appointments/mine?scope=upcoming|history|all` y
+`appointments` consulta las citas pertenecientes al cliente autenticado y permite agendar,
+cancelar y reprogramar. Para lectura usa `GET /api/appointments/mine?scope=upcoming|history|all` y
 `GET /api/appointments/mine/{appointmentId}`. Para agendar obtiene catálogos propios desde
 `GET /api/appointments/booking/options`, calcula horarios con
 `GET /api/appointments/booking/slots` y confirma mediante `POST /api/appointments/mine`.
@@ -195,9 +195,28 @@ HUELLITAS_DISPLAY_TIME_ZONE="America/Bogota"
 HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS="600"
 ```
 
-Las fechas cruzan HTTP en UTC y se muestran en la zona configurada. Consultar y agendar son
-flujos deterministas: no llaman al LLM, embeddings ni RAG. Cancelar y reprogramar citas existentes
-continúan fuera de este incremento.
+Las fechas cruzan HTTP en UTC y se muestran en la zona configurada. Consultar, agendar, cancelar y
+reprogramar son flujos deterministas: no llaman al LLM, embeddings ni RAG. Las operaciones
+destructivas solicitan confirmación explícita y los estados pendientes quedan ligados a la cuenta.
+
+## Módulo de orientación veterinaria
+
+`veterinary_guidance` responde orientación general mediante conocimiento global activo etiquetado
+para el módulo. También detecta señales de urgencia con reglas deterministas y recomienda atención
+profesional; no diagnostica, prescribe ni consulta datos privados. Puede atender a
+`TelegramGuest` porque no ejecuta operaciones sobre cuentas o mascotas.
+
+## Módulo de cuidado preventivo
+
+`preventive_care` responde orientación preventiva autorizada y consulta el historial oficial de
+vacunación de las mascotas del cliente. El adaptador usa `GET /api/vaccinations/mine`; .NET deriva
+la cuenta exclusivamente del `sub` del JWT y nunca acepta un propietario indicado por el agente.
+Si hay varias mascotas, la selección pendiente guarda el `accountId` autenticado y no puede
+continuarse desde otra cuenta ni desde checkpoints antiguos sin identidad.
+
+Ejemplos: `¿Qué vacunas tiene Luna?`, `¿Cuándo le toca la próxima vacuna?` y
+`¿Cada cuánto debo desparasitar a mi mascota?`. Los registros y fechas proceden de .NET; RAG solo
+complementa orientación general y no reemplaza el historial clínico.
 
 ## Proveedor de embeddings
 

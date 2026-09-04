@@ -2,7 +2,7 @@
 
 Este documento es la referencia maestra de la arquitectura de **Huellitas ChatBot**. Define los límites, responsabilidades, dependencias y estructura física que deberá respetar la implementación posterior.
 
-La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y tres módulos veterinarios ejecutables: `pet_profile`, `services_catalog` y `appointments`. Se registran solo cuando la comunicación con .NET está habilitada y usan routing determinístico. `pet_profile` conserva confirmaciones serializables antes de una modificación; `services_catalog` permite consultas públicas autenticadas sobre datos oficiales activos y enriquecimiento RAG opcional; `appointments` consulta citas y agenda nuevas mediante un borrador confirmable por conversación. .NET sigue siendo la autoridad de identidad, propiedad, catálogos, disponibilidad, concurrencia, idempotencia de la reserva y persistencia en Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. Historial canónico, búsqueda híbrida, cancelación/reprogramación conversacional y los módulos veterinarios restantes todavía no están implementados.
+La implementación avanza mediante incrementos pequeños aprobados. Están implementadas la base operativa de FastAPI, las fronteras neutrales de modelos, embeddings y almacenamiento, `POST /api/v1/messages`, RAG adaptativo, JWT `RS256`, Redis para runtime/checkpoints y cinco módulos veterinarios ejecutables: `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care`. Se registran solo cuando sus dependencias están disponibles y usan routing determinístico. `pet_profile` consulta, registra y prepara cambios confirmables; `services_catalog` expone datos oficiales activos con enriquecimiento RAG opcional; `appointments` consulta, agenda, cancela y reprograma; `veterinary_guidance` entrega orientación general sin diagnosticar; y `preventive_care` combina conocimiento autorizado con historiales de vacunación propios. .NET sigue siendo la autoridad de identidad, propiedad, catálogos, disponibilidad, reglas clínicas, concurrencia, idempotencia y persistencia en Oracle. Cuando `isEscalated` indica control humano no se invocan módulos, modelos, embeddings ni Qdrant. El historial canónico, la búsqueda híbrida y los módulos `reminders` y `human_handoff` continúan pendientes.
 
 ---
 
@@ -249,13 +249,13 @@ Construirá FastAPI, registrará routers, middlewares y manejadores de errores.
 
 ## `bootstrap/dependencies.py`
 
-Es la raíz de composición. Conserva el modelo conversacional opcional, embeddings, almacenamiento técnico y el procesador de mensajes. Cuando la integración con .NET está habilitada construye los gateways de perfil, catálogo y citas, registra sus módulos y compone sus reglas determinísticas; cuando está deshabilitada mantiene el registro vacío y la ruta general previa.
+Es la raíz de composición. Conserva el modelo conversacional opcional, embeddings, almacenamiento técnico y el procesador de mensajes. Construye los gateways habilitados para perfil, catálogo, citas, orientación y prevención; registra cada ejecutor cuyas dependencias estén disponibles y compone sus reglas determinísticas. Si una dependencia está deshabilitada, omite únicamente los módulos que la requieren y conserva el fallback general.
 
 Los módulos no crearán clientes HTTP, conexiones a Qdrant, clientes Redis ni modelos concretos.
 
 ## `bootstrap/module_registry.py`
 
-Actualmente construye una única instancia vacía de `ModuleRegistry`. Registrará módulos reales solamente cuando cada corte vertical haya definido y aprobado su contrato de ejecución; no crea manifiestos ficticios para los siete módulos planeados.
+Construye una única instancia de `ModuleRegistry` y registra los cinco módulos ejecutables mediante sus manifiestos y ejecutores neutrales. No crea manifiestos ficticios para `reminders` ni `human_handoff` mientras esos cortes verticales no estén implementados.
 
 ## `bootstrap/lifecycle.py`
 
@@ -283,7 +283,7 @@ api/routers/
 `-- info.py
 ```
 
-- `chat.py`: actualmente expone `POST /api/v1/messages`, exige Bearer, vincula `userId` con `person_id` y `roles` con el rol autenticado, y delega al contrato `MessageHandler`; la composición aplica idempotencia antes del `MessageProcessor`. Continuación, confirmación y cancelación permanecen para incrementos posteriores.
+- `chat.py`: expone `POST /api/v1/messages`, exige Bearer, vincula `userId` con `person_id` y `roles` con el rol autenticado, y delega al contrato `MessageHandler`; la composición aplica idempotencia y bloqueo por conversación antes del grafo. Las continuaciones y confirmaciones se expresan mediante estado serializable del módulo, sin reglas veterinarias en el router.
 - `knowledge.py`: administra documentos globales y aplica una dependencia de autorización administrativa a todo el router.
 - `conversations.py`: contexto permitido y estado técnico requerido para coordinar una conversación.
 - `internal.py`: indexación, sincronización y preparación opcional de contenido interno.
@@ -370,7 +370,7 @@ orchestration/
 
 `message_handler.py` define la frontera neutral consumida por HTTP. `idempotent_message_processor.py` la decora y coordina reintentos mediante el puerto `IdempotencyStore`; `message_processor.py` conserva el corte vertical previo a los módulos. Este último interrumpe la generación si la conversación está escalada y, en caso contrario, coordina RAG y solicita una respuesta al puerto `ChatModel`. Ninguno conoce FastAPI, SDKs ni nombres físicos de almacenamiento.
 
-`module_manifest.py` y `module_registry.py` forman el plano de descubrimiento implementado. El manifiesto declara identidad y capacidades inmutables; el registro permite consultar por identificador o intención y rechaza conflictos antes de modificar sus índices. Todavía no conserva ejecutores ni participa en el flujo HTTP.
+`module_manifest.py` y `module_registry.py` forman el plano de descubrimiento implementado. El manifiesto declara identidad y capacidades inmutables; el registro asocia manifiestos con ejecutores, permite consultar por identificador o intención y rechaza conflictos antes de modificar sus índices. El grafo principal usa ese registro durante el flujo HTTP sin conocer módulos concretos.
 
 ## Grafo principal
 
@@ -394,7 +394,7 @@ No incorpora campos privados de citas, orientación, perfiles o recordatorios.
 
 ## Registro de módulos
 
-Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile`, `services_catalog` y `appointments` únicamente cuando `HUELLITAS_BACKEND_ENABLED=true`; con la integración deshabilitada conserva un registro vacío. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas, servicios o citas.
+Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` cuando sus dependencias están disponibles. Los módulos que requieren datos privados solo se registran con la integración .NET habilitada; los módulos de conocimiento requieren sus puertos correspondientes. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas, servicios, citas u orientación veterinaria.
 
 Cada manifiesto declara:
 
@@ -469,7 +469,9 @@ Recopila contexto, entrega orientación general basada en contenido autorizado y
 
 ## `preventive_care`
 
-Orienta sobre vacunas, desparasitación, nutrición y cuidados preventivos. Consulta antecedentes vigentes mediante .NET cuando tenga autorización.
+Orienta sobre vacunas, desparasitación, nutrición y cuidados preventivos. Para historial y próximas dosis consume el puerto neutral de vacunaciones, cuyo adaptador llama `GET /api/vaccinations/mine`. .NET deriva el cliente desde el `sub` del JWT y retorna únicamente registros de sus mascotas; las rutas generales de vacunación permanecen reservadas al personal clínico.
+
+Cuando debe elegir entre varias mascotas, `PendingConfirmation` conserva opciones primitivas y el `accountId` autenticado. La continuación valida esa identidad antes de leer o mostrar las opciones y falla cerrada para otra cuenta o para checkpoints antiguos sin identidad. El agente nunca consulta Oracle directamente ni permite que RAG sustituya fechas o registros clínicos oficiales.
 
 ## `reminders`
 
@@ -978,7 +980,6 @@ El incremento actual no implementa:
 - Integraciones directas con canales externos.
 - Consulta o persistencia del historial canónico.
 - Bloqueos distribuidos y coordinación segura entre múltiples réplicas.
-- Cancelación y reprogramación conversacional de citas existentes.
 - Implementación de los módulos veterinarios todavía pendientes.
 - Enrutamiento de intención con un modelo; los módulos activos usan reglas deterministas.
 - Usos funcionales adicionales de Redis para idempotencia, caché, locks, colas o sesiones.
@@ -1004,7 +1005,7 @@ HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> bloqueo local por co
 - FastAPI construye una sola instancia del grafo durante el ciclo de vida del proceso.
 - `IdempotentMessageProcessor` permanece por fuera del grafo y evita repetir modelos, RAG o módulos.
 - `MessageProcessor` continúa siendo el ejecutor general; LangGraph no duplica su lógica.
-- El registro asocia `ModuleManifest` con `ModuleExecutor`; producción registra `pet_profile`, `services_catalog` y `appointments` solo cuando su backend está configurado.
+- El registro asocia `ModuleManifest` con `ModuleExecutor`; producción registra `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` cuando están configuradas sus dependencias.
 - Una conversación marcada como escalada finaliza antes del routing, el modelo, Qdrant o cualquier ejecutor modular.
 - Una intención desconocida o ambigua utiliza el fallback general y nunca inventa un módulo.
 
@@ -1031,9 +1032,9 @@ La implementación selecciona `memory` o `redis` mediante `HUELLITAS_CHECKPOINT_
 
 ## Alcance modular disponible
 
-La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. `pet_profile`, `services_catalog` y `appointments` ocultan sus subgrafos detrás de `ModuleExecutor`, reciben puertos neutrales por composición y declaran sus propias reglas determinísticas. Los módulos futuros deberán conservar este límite y no introducir reglas veterinarias en `main_graph.py`.
+La fundación define `RoutingDecision`, `ModuleExecutionRequest`, `ModuleResult`, `ModuleExecutor` y registros ejecutables. `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` ocultan sus subgrafos detrás de `ModuleExecutor`, reciben puertos neutrales por composición y declaran sus propias reglas determinísticas. Los módulos futuros deberán conservar este límite y no introducir reglas veterinarias en `main_graph.py`.
 
-El routing modular y las confirmaciones persistibles ya existen para `pet_profile` y `appointments`. No se usa `interrupt`: la operación pendiente es un contrato explícito serializable, adecuado para reanudar el hilo con checkpoints memory o Redis. Persistencia canónica de conversaciones y los demás módulos continúan siendo responsabilidad de incrementos independientes.
+El routing modular y las confirmaciones persistibles ya existen para `pet_profile`, `appointments` y la selección de mascota de `preventive_care`. No se usa `interrupt`: la operación pendiente es un contrato explícito serializable, adecuado para reanudar el hilo con checkpoints memory o Redis. Persistencia canónica de conversaciones y los módulos restantes continúan siendo responsabilidad de incrementos independientes.
 
 ---
 
