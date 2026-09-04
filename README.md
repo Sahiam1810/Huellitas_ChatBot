@@ -408,6 +408,7 @@ La respuesta incluye el resultado operativo sin exponer vectores ni detalles de 
 
 ```json
 {
+  "accessRequirement": "none",
   "rag": {
     "status": "used",
     "route": "contextual",
@@ -419,6 +420,10 @@ La respuesta incluye el resultado operativo sin exponer vectores ni detalles de 
   }
 }
 ```
+
+`accessRequirement` vale `none` normalmente. Para una identidad interna
+`TelegramGuest`, una intención privada devuelve `identity_verification` sin
+ejecutar el módulo; el backend .NET administra cédula, OTP y reanudación.
 
 Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`. Las rutas observables son `direct`, `contextual`, `general`, `disabled`, `skipped` y `degraded`; `topScore` es `null` cuando no existe un puntaje seguro.
 

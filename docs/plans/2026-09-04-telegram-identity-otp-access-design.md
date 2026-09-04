@@ -107,9 +107,9 @@ Se introduce una sesión unificada `TelegramIdentitySession` con una máquina de
 - `Blocked`.
 
 La sesión almacena identificadores de Telegram, `PersonId` opcional, valores personales protegidos,
-hash del OTP, intentos, vencimientos y la referencia a la actualización privada pendiente. No
-duplica el texto original: conserva el ID de `TelegramInboundUpdate`, cuyo procesamiento ya es
-idempotente.
+hash del OTP, intentos, vencimientos, la referencia a la actualización privada pendiente y una copia
+cifrada temporal de su texto. Esta copia es necesaria porque el inbox redacta el mensaje al
+completar su primera entrega; se elimina al reclamar la reanudación.
 
 `TelegramUserLink` se conserva como asociación permanente interna. Los modelos antiguos de
 `TelegramLinkingSession` y `TelegramRegistrationSession` dejan de participar en el flujo normal,
@@ -135,10 +135,10 @@ cualquier sesión privada; `/cancelar` cancela únicamente el desafío o registr
 
 ## Reanudación e idempotencia
 
-La sesión guarda `PendingInboundUpdateId`. Tras validar el OTP, el backend marca como consumido el
-mensaje que contenía el código y vuelve a despachar la actualización privada pendiente con la misma
-clave `telegram-update-{id}`. Solo una sesión puede reclamar esa referencia y la actualización
-mantiene sus controles de estado, reintentos y fragmentos ya enviados.
+La sesión guarda `PendingInboundUpdateId` y el texto cifrado. Tras validar el OTP, el backend marca
+como consumido el mensaje que contenía el código y vuelve a despachar la solicitud privada con la
+clave diferenciada `telegram-update-{id}-verified`. Solo una sesión puede reclamar y borrar esa
+referencia, mientras la idempotencia del agente evita una segunda ejecución.
 
 Si la solicitud pendiente ya finalizó, fue cancelada o no existe, la identidad queda verificada y
 el bot informa que puede continuar, sin ejecutar una operación duplicada.
