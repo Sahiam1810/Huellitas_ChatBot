@@ -9,7 +9,6 @@ from app.ports.vaccinations_gateway import (
     VaccinationRecord,
     VaccinationsAuthenticationError,
     VaccinationsForbiddenError,
-    VaccinationsGatewayError,
     VaccinationsInvalidResponseError,
     VaccinationsNotFoundError,
     VaccinationsUnavailableError,
@@ -34,7 +33,7 @@ class DotNetVaccinationsGateway:
         self._max_response_bytes = max_response_bytes
 
     async def list_owned(self, bearer_token: str) -> tuple[VaccinationRecord, ...]:
-        response = await self._request("/api/vaccinations", bearer_token)
+        response = await self._request("/api/vaccinations/mine", bearer_token)
         payload = self._json(response)
         if not isinstance(payload, list):
             raise VaccinationsInvalidResponseError("Backend returned an invalid vaccinations list")
