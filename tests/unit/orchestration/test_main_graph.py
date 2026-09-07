@@ -8,7 +8,9 @@ from app.orchestration.intent_router import RoutingDecision
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import (
+    ModuleContinuation,
     ModuleExecutionRequest,
+    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -112,6 +114,18 @@ class PublicModuleRouter:
         )
 
 
+class FixedRouter:
+    def __init__(self, decision: RoutingDecision) -> None:
+        self.decision = decision
+
+    async def route(
+        self,
+        current: MessageCommand,
+        manifests: tuple[ModuleManifest, ...],
+    ) -> RoutingDecision:
+        return self.decision
+
+
 class Executor:
     def __init__(self, module_id: str = "appointments") -> None:
         self.module_id = module_id
@@ -157,6 +171,35 @@ class ConfirmingExecutor(Executor):
             message="Confirmado",
             response_type=MessageResponseType.RETRIEVED,
         )
+
+
+class HandoffExecutor(Executor):
+    def __init__(self, handoff: ModuleHandoff) -> None:
+        super().__init__()
+        self.handoff = handoff
+
+    async def execute(
+        self,
+        request: ModuleExecutionRequest,
+        execution_context: ExecutionContext,
+    ) -> ModuleResult:
+        self.requests.append(request)
+        self.contexts.append(execution_context)
+        return ModuleResult(
+            module_id=self.module_id,
+            message="Primero registraré tu mascota.",
+            response_type=MessageResponseType.RETRIEVED,
+            handoff=self.handoff,
+        )
+
+
+def pet_manifest() -> ModuleManifest:
+    return ModuleManifest(
+        module_id="pet_profile",
+        version="1.0.0",
+        description="Pet operations",
+        intents=("pets.register",),
+    )
 
 
 def config(current: MessageCommand) -> dict[str, dict[str, str]]:
@@ -412,6 +455,105 @@ async def test_module_cannot_return_a_result_for_another_module() -> None:
         )
 
     assert "secret-token" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_module_handoff_executes_target_and_propagates_continuation() -> None:
+    continuation = ModuleContinuation("appointments", "appointments.list")
+    source = HandoffExecutor(
+        ModuleHandoff(
+            target=ModuleContinuation("pet_profile", "pets.register"),
+            continuation=continuation,
+        )
+    )
+    target = Executor(module_id="pet_profile")
+    registry = ModuleRegistry()
+    registry.register(manifest(), source)
+    registry.register(pet_manifest(), target)
+    graph = build_main_graph(
+        GeneralProcessor(),
+        registry,
+        FixedRouter(
+            RoutingDecision.module(
+                intent="appointments.list", module_id="appointments"
+            )
+        ),
+        InMemorySaver(),
+    )
+    current = command()
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.module == "pet_profile"
+    assert result.message == "Primero registraré tu mascota.\n\nTienes una cita mañana"
+    assert state["selected_module_id"] == "pet_profile"
+    assert target.requests == [
+        ModuleExecutionRequest(
+            command=current,
+            intent="pets.register",
+            manifest=pet_manifest(),
+            continuation=continuation,
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_module_handoff_rejects_an_unregistered_target() -> None:
+    source = HandoffExecutor(
+        ModuleHandoff(target=ModuleContinuation("missing", "missing.start"))
+    )
+    registry = ModuleRegistry()
+    registry.register(manifest(), source)
+    graph = build_main_graph(
+        GeneralProcessor(),
+        registry,
+        FixedRouter(
+            RoutingDecision.module(
+                intent="appointments.list", module_id="appointments"
+            )
+        ),
+        InMemorySaver(),
+    )
+    current = command()
+
+    with pytest.raises(GraphCompositionError, match="handoff target"):
+        await graph.ainvoke(
+            {"command": message_command_to_state(current)},
+            config=config(current),
+            context=context(),
+        )
+
+
+@pytest.mark.anyio
+async def test_module_handoff_rejects_a_cycle() -> None:
+    source = HandoffExecutor(
+        ModuleHandoff(target=ModuleContinuation("appointments", "appointments.list"))
+    )
+    registry = ModuleRegistry()
+    registry.register(manifest(), source)
+    graph = build_main_graph(
+        GeneralProcessor(),
+        registry,
+        FixedRouter(
+            RoutingDecision.module(
+                intent="appointments.list", module_id="appointments"
+            )
+        ),
+        InMemorySaver(),
+    )
+    current = command()
+
+    with pytest.raises(GraphCompositionError, match="cycle"):
+        await graph.ainvoke(
+            {"command": message_command_to_state(current)},
+            config=config(current),
+            context=context(),
+        )
 
 
 def test_graph_exposes_the_approved_explicit_node_names() -> None:
