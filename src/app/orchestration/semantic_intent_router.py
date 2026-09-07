@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import math
 from dataclasses import dataclass
 
@@ -7,6 +8,8 @@ from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
 from app.ports.embedding_model import EmbeddingModel
 from app.shared.exceptions import EmbeddingInvalidResponseError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,11 +85,34 @@ class SemanticIntentRouter:
         )
         best_score, best = scores[-1]
         if best_score < self._minimum_score:
+            logger.info(
+                "semantic_intent_unknown module=%s intent=%s top_score=%.6f",
+                best.module_id,
+                best.intent,
+                best_score,
+            )
             return RoutingDecision.unknown("semantic intent score is below threshold")
         if len(scores) > 1:
             second_score = scores[-2][0]
-            if best_score - second_score < self._minimum_margin:
+            margin = best_score - second_score
+            if margin < self._minimum_margin:
+                logger.info(
+                    "semantic_intent_ambiguous module=%s intent=%s top_score=%.6f margin=%.6f",
+                    best.module_id,
+                    best.intent,
+                    best_score,
+                    margin,
+                )
                 return RoutingDecision.ambiguous("semantic intent margin is insufficient")
+        else:
+            margin = 1.0
+        logger.info(
+            "semantic_intent_selected module=%s intent=%s top_score=%.6f margin=%.6f",
+            best.module_id,
+            best.intent,
+            best_score,
+            margin,
+        )
         return RoutingDecision.module(intent=best.intent, module_id=best.module_id)
 
     async def _prepared_example_vectors(self) -> tuple[tuple[tuple[float, ...], ...], ...]:

@@ -53,7 +53,7 @@ class IntentEmbeddings:
     async def embed_documents(self, texts: tuple[str, ...]) -> EmbeddingResponse:
         vectors = tuple(
             (1.0, 0.0)
-            if "catálogo completo" in text
+            if "listado completo de servicios ofrecidos por Huellitas" in text
             else ((0.0, 1.0) if "atención específica" in text else (-1.0, 0.0))
             for text in texts
         )
