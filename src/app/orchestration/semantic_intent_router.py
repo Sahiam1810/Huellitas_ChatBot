@@ -3,6 +3,7 @@ import logging
 import math
 from dataclasses import dataclass
 
+from app.orchestration.intent_adjudicator import IntentAdjudicator, IntentCandidate
 from app.orchestration.intent_router import RoutingDecision
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
@@ -37,15 +38,26 @@ class SemanticIntentRouter:
         *,
         minimum_score: float,
         minimum_margin: float,
+        adjudicator: IntentAdjudicator | None = None,
+        adjudication_margin: float | None = None,
     ) -> None:
         if not 0 <= minimum_score <= 1:
             raise ValueError("Semantic intent minimum score must be between zero and one")
         if not 0 <= minimum_margin <= 1:
             raise ValueError("Semantic intent minimum margin must be between zero and one")
+        resolved_adjudication_margin = (
+            minimum_margin if adjudication_margin is None else adjudication_margin
+        )
+        if not minimum_margin <= resolved_adjudication_margin <= 1:
+            raise ValueError(
+                "Semantic intent adjudication margin must be between minimum margin and one"
+            )
         self._embedding_model = embedding_model
         self._definitions = definitions
         self._minimum_score = minimum_score
         self._minimum_margin = minimum_margin
+        self._adjudicator = adjudicator
+        self._adjudication_margin = resolved_adjudication_margin
         self._example_vectors: tuple[tuple[tuple[float, ...], ...], ...] | None = None
         self._prepare_lock = asyncio.Lock()
 
@@ -102,6 +114,27 @@ class SemanticIntentRouter:
         )
         if competing_score is not None:
             margin = best_score - competing_score
+            if self._adjudicator is not None and margin < self._adjudication_margin:
+                candidates = tuple(
+                    IntentCandidate(
+                        module_id=definition.module_id,
+                        intent=definition.intent,
+                        score=score,
+                        examples=definition.examples,
+                    )
+                    for score, definition in reversed(scores[-3:])
+                )
+                decision = await self._adjudicator.adjudicate(command, candidates)
+                if decision.module_id is not None and decision.intent is not None:
+                    allowed = {
+                        (candidate.module_id, candidate.intent) for candidate in candidates
+                    }
+                    if (decision.module_id, decision.intent) not in allowed:
+                        logger.warning("semantic_intent_adjudication_rejected")
+                        return RoutingDecision.ambiguous(
+                            "intent adjudicator selected an unavailable candidate"
+                        )
+                return decision
             if margin < self._minimum_margin:
                 logger.info(
                     "semantic_intent_ambiguous module=%s intent=%s top_score=%.6f margin=%.6f",
