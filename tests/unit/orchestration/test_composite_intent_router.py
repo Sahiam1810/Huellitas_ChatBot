@@ -43,9 +43,7 @@ def command() -> MessageCommand:
 
 @pytest.mark.anyio
 async def test_keeps_deterministic_module_decision_without_semantic_call() -> None:
-    primary = Router(
-        RoutingDecision.module(intent="services.list", module_id="services_catalog")
-    )
+    primary = Router(RoutingDecision.module(intent="services.list", module_id="services_catalog"))
     fallback = Router(RoutingDecision.module(intent="pets.list", module_id="pet_profile"))
 
     decision = await CompositeIntentRouter(primary, fallback).route(command(), ())
@@ -57,9 +55,7 @@ async def test_keeps_deterministic_module_decision_without_semantic_call() -> No
 @pytest.mark.anyio
 async def test_unknown_deterministic_decision_uses_semantic_router() -> None:
     primary = Router(RoutingDecision.unknown("literal miss"))
-    fallback = Router(
-        RoutingDecision.module(intent="services.list", module_id="services_catalog")
-    )
+    fallback = Router(RoutingDecision.module(intent="services.list", module_id="services_catalog"))
 
     decision = await CompositeIntentRouter(primary, fallback).route(command(), ())
 
@@ -71,9 +67,7 @@ async def test_unknown_deterministic_decision_uses_semantic_router() -> None:
 @pytest.mark.anyio
 async def test_keeps_deterministic_ambiguity_without_semantic_override() -> None:
     primary = Router(RoutingDecision.ambiguous("literal collision"))
-    fallback = Router(
-        RoutingDecision.module(intent="services.list", module_id="services_catalog")
-    )
+    fallback = Router(RoutingDecision.module(intent="services.list", module_id="services_catalog"))
 
     decision = await CompositeIntentRouter(primary, fallback).route(command(), ())
 

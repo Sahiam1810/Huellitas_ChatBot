@@ -15,7 +15,6 @@ from app.modules.veterinary_guidance.semantic_routing import (
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.semantic_intent_router import SemanticIntentDefinition
 
-
 MODULE_DEFINITIONS = (
     (PET_PROFILE_MANIFEST, PET_PROFILE_SEMANTIC_INTENTS),
     (SERVICES_CATALOG_MANIFEST, SERVICES_CATALOG_SEMANTIC_INTENTS),

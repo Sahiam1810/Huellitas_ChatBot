@@ -52,9 +52,7 @@ class SemanticIntentRouter:
         manifests: tuple[ModuleManifest, ...],
     ) -> RoutingDecision:
         available = {
-            (manifest.module_id, intent)
-            for manifest in manifests
-            for intent in manifest.intents
+            (manifest.module_id, intent) for manifest in manifests for intent in manifest.intents
         }
         eligible = tuple(
             index
@@ -70,14 +68,17 @@ class SemanticIntentRouter:
             raise EmbeddingInvalidResponseError("Semantic query returned an invalid vector count")
         query_vector = response.vectors[0].values
         scores = sorted(
-            (
-                max(
-                    self._cosine_similarity(query_vector, example_vector)
-                    for example_vector in example_vectors[index]
-                ),
-                self._definitions[index],
-            )
-            for index in eligible
+            [
+                (
+                    max(
+                        self._cosine_similarity(query_vector, example_vector)
+                        for example_vector in example_vectors[index]
+                    ),
+                    self._definitions[index],
+                )
+                for index in eligible
+            ],
+            key=lambda item: item[0],
         )
         best_score, best = scores[-1]
         if best_score < self._minimum_score:
@@ -121,7 +122,5 @@ class SemanticIntentRouter:
         right_norm = math.sqrt(sum(value * value for value in right))
         if left_norm == 0 or right_norm == 0:
             raise EmbeddingInvalidResponseError("Semantic vectors cannot be empty")
-        similarity = sum(a * b for a, b in zip(left, right, strict=True)) / (
-            left_norm * right_norm
-        )
+        similarity = sum(a * b for a, b in zip(left, right, strict=True)) / (left_norm * right_norm)
         return max(-1.0, min(1.0, similarity))

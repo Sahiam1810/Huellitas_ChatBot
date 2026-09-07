@@ -80,9 +80,7 @@ async def test_routes_paraphrase_to_registered_semantic_intent() -> None:
                 "services.list",
                 ("listar prestaciones de la clinica",),
             ),
-            SemanticIntentDefinition(
-                "pet_profile", "pets.list", ("consultar animales propios",)
-            ),
+            SemanticIntentDefinition("pet_profile", "pets.list", ("consultar animales propios",)),
         ),
         minimum_score=0.75,
         minimum_margin=0.10,
@@ -110,11 +108,7 @@ async def test_returns_unknown_when_best_similarity_is_below_threshold() -> None
                 "saludo casual": (0.4, 0.9165),
             }
         ),
-        (
-            SemanticIntentDefinition(
-                "services_catalog", "services.list", ("listar prestaciones",)
-            ),
-        ),
+        (SemanticIntentDefinition("services_catalog", "services.list", ("listar prestaciones",)),),
         minimum_score=0.75,
         minimum_margin=0.10,
     )
@@ -138,9 +132,7 @@ async def test_returns_ambiguous_when_two_intents_have_insufficient_margin() -> 
             }
         ),
         (
-            SemanticIntentDefinition(
-                "services_catalog", "services.list", ("listar servicios",)
-            ),
+            SemanticIntentDefinition("services_catalog", "services.list", ("listar servicios",)),
             SemanticIntentDefinition(
                 "services_catalog", "services.search", ("buscar un servicio",)
             ),
@@ -168,9 +160,7 @@ async def test_ignores_semantic_definition_that_is_not_registered() -> None:
             }
         ),
         (
-            SemanticIntentDefinition(
-                "services_catalog", "services.list", ("listar servicios",)
-            ),
+            SemanticIntentDefinition("services_catalog", "services.list", ("listar servicios",)),
             SemanticIntentDefinition("pet_profile", "pets.list", ("consultar mascotas",)),
         ),
         minimum_score=0.75,
@@ -196,11 +186,7 @@ async def test_reuses_prepared_intent_embeddings_between_messages() -> None:
     )
     router = SemanticIntentRouter(
         embeddings,
-        (
-            SemanticIntentDefinition(
-                "services_catalog", "services.list", ("listar servicios",)
-            ),
-        ),
+        (SemanticIntentDefinition("services_catalog", "services.list", ("listar servicios",)),),
         minimum_score=0.75,
         minimum_margin=0.05,
     )
