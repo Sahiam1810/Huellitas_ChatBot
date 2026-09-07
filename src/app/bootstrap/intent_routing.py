@@ -11,6 +11,7 @@ from app.modules.veterinary_guidance.semantic_routing import (
     VETERINARY_GUIDANCE_SEMANTIC_INTENTS,
 )
 from app.orchestration.composite_intent_router import CompositeIntentRouter
+from app.orchestration.intent_adjudicator import IntentAdjudicator
 from app.orchestration.intent_router import IntentRouter
 from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.orchestration.semantic_intent_router import SemanticIntentRouter
@@ -39,6 +40,8 @@ def build_intent_router(
     semantic_enabled: bool,
     minimum_score: float,
     minimum_margin: float,
+    adjudicator: IntentAdjudicator | None = None,
+    adjudication_margin: float | None = None,
 ) -> IntentRouter:
     deterministic = RuleBasedIntentRouter(DETERMINISTIC_RULES)
     if not semantic_enabled or embedding_model is None:
@@ -48,5 +51,7 @@ def build_intent_router(
         SEMANTIC_INTENTS,
         minimum_score=minimum_score,
         minimum_margin=minimum_margin,
+        adjudicator=adjudicator,
+        adjudication_margin=adjudication_margin,
     )
     return CompositeIntentRouter(deterministic, semantic)
