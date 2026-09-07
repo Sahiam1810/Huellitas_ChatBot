@@ -36,9 +36,7 @@ def test_registration_advances_only_with_valid_step_input(
 
 
 def test_catalog_steps_require_exact_normalized_matches() -> None:
-    species = advance_registration(
-        PetRegistrationDraft(step="species"), "caníno", SPECIES, RACES
-    )
+    species = advance_registration(PetRegistrationDraft(step="species"), "caníno", SPECIES, RACES)
     race = advance_registration(species.draft, "mestizo", SPECIES, RACES)
 
     assert species.accepted

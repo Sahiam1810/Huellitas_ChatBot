@@ -277,16 +277,14 @@ async def test_booking_without_pets_hands_off_to_registration_and_preserves_book
                 requires_requester_phone_number=options.requires_requester_phone_number,
             )
 
-    result = await AppointmentsModuleExecutor(
-        GatewayWithoutPets(), "America/Bogota"
-    ).execute(request("Quiero agendar una cita", "appointments.book"), context())
+    result = await AppointmentsModuleExecutor(GatewayWithoutPets(), "America/Bogota").execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
 
     assert result.pending_confirmation is None
     assert result.handoff is not None
     assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
-    assert result.handoff.continuation == ModuleContinuation(
-        "appointments", "appointments.book"
-    )
+    assert result.handoff.continuation == ModuleContinuation("appointments", "appointments.book")
     assert "registrar" in (result.message or "").casefold()
 
 
@@ -431,9 +429,7 @@ async def test_cancel_start_with_no_appointments_returns_no_appointments_message
 async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() -> None:
     gateway = GatewayWithCancel()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(
-        request("Cancelar mi cita", "appointments.cancel"), context()
-    )
+    started = await executor.execute(request("Cancelar mi cita", "appointments.cancel"), context())
     result = await executor.execute(
         request("sí", "appointments.canceling", started.pending_confirmation), context()
     )
@@ -447,9 +443,7 @@ async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() 
 async def test_cancel_confirmation_no_aborts_without_calling_cancel() -> None:
     gateway = GatewayWithCancel()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(
-        request("Cancelar mi cita", "appointments.cancel"), context()
-    )
+    started = await executor.execute(request("Cancelar mi cita", "appointments.cancel"), context())
     result = await executor.execute(
         request("no", "appointments.canceling", started.pending_confirmation), context()
     )
@@ -495,7 +489,14 @@ class GatewayWithReschedule(Gateway):
         bearer_token: str,
     ) -> UUID:
         self.reschedule_code_calls.append(
-            (appointment_id, phone, availability_id, scheduled_start_utc, scheduled_end_utc, bearer_token)
+            (
+                appointment_id,
+                phone,
+                availability_id,
+                scheduled_start_utc,
+                scheduled_end_utc,
+                bearer_token,
+            )
         )
         return self._fixed_otp_id
 

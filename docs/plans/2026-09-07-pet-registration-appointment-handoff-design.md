@@ -49,3 +49,17 @@ Se usarán pruebas enfocadas, no la suite completa:
 - extracción de `Milou` dentro del paso de nombre;
 - integración completa: cita → registro → creación → reanudación de cita;
 - regresiones del registro independiente y del agendamiento con mascotas existentes.
+
+## Prueba manual en Telegram
+
+Con una cuenta verificada que todavía no tenga mascotas:
+
+1. Enviar `Quiero agendar una consulta para mi cachorro`.
+2. El bot debe explicar que primero registrará una mascota y preguntar su nombre.
+3. Enviar `Okey, mi mascota se llama Milou`.
+4. El bot debe solicitar la especie, no volver a solicitar el nombre.
+5. Completar especie, raza, edad, género, peso y observaciones.
+6. Confirmar el resumen con `sí`.
+7. El bot debe confirmar que Milou fue registrada y continuar inmediatamente con las opciones reales para agendar la cita.
+
+Si se envía `/cancelar` antes de confirmar, no debe crearse la mascota ni reanudarse la cita.

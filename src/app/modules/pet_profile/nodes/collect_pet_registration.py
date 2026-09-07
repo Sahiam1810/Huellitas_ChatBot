@@ -41,14 +41,8 @@ async def collect_pet_registration(
         prompt = registration_prompt(draft, species or races)
         return f"{advanced.error} {prompt}", pending
 
-    next_species, next_races = await _catalogs_for_step(
-        gateway, bearer_token, advanced.draft.step
-    )
-    action = (
-        CONFIRMATION_ACTION
-        if advanced.draft.step == "confirmation"
-        else COLLECTION_ACTION
-    )
+    next_species, next_races = await _catalogs_for_step(gateway, bearer_token, advanced.draft.step)
+    action = CONFIRMATION_ACTION if advanced.draft.step == "confirmation" else COLLECTION_ACTION
     next_pending = replace(
         pending,
         action=action,

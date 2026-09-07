@@ -31,7 +31,6 @@ from app.orchestration.state import (
 )
 from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
 
-
 MAX_MODULE_HANDOFFS = 2
 
 
@@ -151,9 +150,7 @@ def build_main_graph(
         while True:
             result = await registration.executor.execute(request, runtime.context)
             if result.module_id.strip() != registration.manifest.module_id:
-                raise InvalidModuleResultError(
-                    "module result does not match the selected module"
-                )
+                raise InvalidModuleResultError("module result does not match the selected module")
             if result.message:
                 messages.append(result.message)
             handoff = result.handoff
@@ -167,17 +164,11 @@ def build_main_graph(
             try:
                 next_registration = registry.get_registration(target.module_id)
             except ModuleNotFoundError:
-                raise GraphCompositionError(
-                    "Module handoff target is not registered"
-                ) from None
+                raise GraphCompositionError("Module handoff target is not registered") from None
             if target.intent not in next_registration.manifest.intents:
-                raise GraphCompositionError(
-                    "Module handoff intent is outside the target manifest"
-                )
+                raise GraphCompositionError("Module handoff intent is outside the target manifest")
             if next_registration.executor is None:
-                raise GraphCompositionError(
-                    "Module handoff target executor is not configured"
-                )
+                raise GraphCompositionError("Module handoff target executor is not configured")
             registration = next_registration
             selected_module_id = registration.manifest.module_id
             request = ModuleExecutionRequest(

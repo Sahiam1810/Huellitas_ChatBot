@@ -171,8 +171,7 @@ git commit -m "feat(pet-profile): ✨ resume originating flow after registration
 
 **Files:**
 - Create: `tests/integration/modules/test_appointment_pet_registration_handoff.py`
-- Modify: `docs/modules/pet-profile.md`
-- Modify: `docs/modules/appointments.md`
+- Modify: `docs/plans/2026-09-07-pet-registration-appointment-handoff-design.md`
 
 **Interfaces:**
 - Consumes: contratos y comportamientos de Tasks 1-4.
@@ -201,6 +200,6 @@ Incluir la secuencia: solicitar cita → OTP si corresponde → informar nombre 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/integration/modules/test_appointment_pet_registration_handoff.py docs/modules/pet-profile.md docs/modules/appointments.md
+git add tests/integration/modules/test_appointment_pet_registration_handoff.py docs/plans/2026-09-07-pet-registration-appointment-handoff-design.md docs/superpowers/plans/2026-09-07-pet-registration-appointment-handoff.md
 git commit -m "test(modules): ✅ verify appointment pet registration handoff"
 ```

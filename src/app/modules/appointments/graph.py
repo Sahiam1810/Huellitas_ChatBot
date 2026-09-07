@@ -29,9 +29,9 @@ from app.modules.appointments.nodes.collect_reschedule_data import (
     reschedule_expired,
     start_reschedule,
 )
-from app.modules.appointments.nodes.execute_reschedule import execute_reschedule
 from app.modules.appointments.nodes.execute_appointment_action import create_booking
 from app.modules.appointments.nodes.execute_cancel import execute_cancel
+from app.modules.appointments.nodes.execute_reschedule import execute_reschedule
 from app.modules.appointments.nodes.handle_backend_result import safe_appointments_error
 from app.modules.appointments.nodes.identify_request import (
     is_booking_continuation,
@@ -43,8 +43,8 @@ from app.modules.appointments.services.response_formatter import format_detail
 from app.modules.appointments.state import AppointmentsGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
-    ModuleHandoff,
     ModuleExecutionRequest,
+    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -91,11 +91,7 @@ class AppointmentsModuleExecutor:
                     self._booking_ttl_seconds,
                     context.principal.account_id,
                 )
-                return {
-                    "result": self._message(
-                        message, pending=pending, handoff=handoff
-                    )
-                }
+                return {"result": self._message(message, pending=pending, handoff=handoff)}
             if is_booking_continuation(request.intent):
                 return {"result": await self._continue_booking(request, context)}
             if request.intent == "appointments.cancel":
@@ -211,9 +207,7 @@ class AppointmentsModuleExecutor:
                 "Necesito una confirmación explícita. Responde sí o no.", pending=pending
             )
         appointment_id = UUID(str(pending.payload["appointment_id"]))
-        result_msg = await execute_cancel(
-            self._gateway, appointment_id, context.bearer_token
-        )
+        result_msg = await execute_cancel(self._gateway, appointment_id, context.bearer_token)
         return self._message(result_msg)
 
     async def _continue_reschedule(
@@ -293,6 +287,5 @@ def _invalid_pending_flow_message(intent: str) -> str:
             "Escribe reprogramar mi cita para comenzar de nuevo."
         )
     return (
-        "No pude continuar el agendamiento guardado. "
-        "Escribe agendar cita para comenzar de nuevo."
+        "No pude continuar el agendamiento guardado. Escribe agendar cita para comenzar de nuevo."
     )

@@ -58,9 +58,7 @@ class Gateway:
     async def list_races(self, bearer_token: str) -> tuple[CatalogItem, ...]:
         return (CatalogItem(self.profile.race_id, "Mestizo"),)
 
-    async def create_owned(
-        self, bearer_token: str, registration: PetRegistration
-    ) -> PetProfile:
+    async def create_owned(self, bearer_token: str, registration: PetRegistration) -> PetProfile:
         assert bearer_token == "jwt-secret"
         self.registrations.append(registration)
         return replace(

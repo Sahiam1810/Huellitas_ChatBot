@@ -25,8 +25,8 @@ from app.modules.pet_profile.services.response_formatter import (
 from app.modules.pet_profile.state import PetProfileGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
-    ModuleHandoff,
     ModuleExecutionRequest,
+    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -144,9 +144,7 @@ class PetProfileModuleExecutor:
         if pending is None or pending.action not in {COLLECTION_ACTION, CONFIRMATION_ACTION}:
             return self._message("No hay un registro de mascota pendiente.")
         if confirmation_expired(pending):
-            return self._message(
-                "El registro venció. Solicita registrar la mascota nuevamente."
-            )
+            return self._message("El registro venció. Solicita registrar la mascota nuevamente.")
         if registration_cancelled(request.command.message):
             return self._message("Cancelé el registro; no se creó ninguna mascota.")
         if pending.action == COLLECTION_ACTION:
@@ -166,9 +164,7 @@ class PetProfileModuleExecutor:
                 "Necesito una confirmación explícita. Responde sí o no.",
                 pending=pending,
             )
-        created = await submit_pet_registration(
-            self._gateway, context.bearer_token, pending
-        )
+        created = await submit_pet_registration(self._gateway, context.bearer_token, pending)
         return self._message(
             f"{created.name} fue registrada correctamente como tu mascota.",
             handoff=(

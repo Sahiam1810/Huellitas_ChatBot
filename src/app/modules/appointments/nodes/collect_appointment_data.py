@@ -131,9 +131,7 @@ async def advance_booking(
             (
                 slot
                 for slot in slots
-                if slot.scheduled_start_utc.astimezone(UTC)
-                .isoformat()
-                .replace("+00:00", "Z")
+                if slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
                 == advertised_start
             ),
             None,

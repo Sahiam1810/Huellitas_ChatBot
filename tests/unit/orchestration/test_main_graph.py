@@ -473,11 +473,7 @@ async def test_module_handoff_executes_target_and_propagates_continuation() -> N
     graph = build_main_graph(
         GeneralProcessor(),
         registry,
-        FixedRouter(
-            RoutingDecision.module(
-                intent="appointments.list", module_id="appointments"
-            )
-        ),
+        FixedRouter(RoutingDecision.module(intent="appointments.list", module_id="appointments")),
         InMemorySaver(),
     )
     current = command()
@@ -504,19 +500,13 @@ async def test_module_handoff_executes_target_and_propagates_continuation() -> N
 
 @pytest.mark.anyio
 async def test_module_handoff_rejects_an_unregistered_target() -> None:
-    source = HandoffExecutor(
-        ModuleHandoff(target=ModuleContinuation("missing", "missing.start"))
-    )
+    source = HandoffExecutor(ModuleHandoff(target=ModuleContinuation("missing", "missing.start")))
     registry = ModuleRegistry()
     registry.register(manifest(), source)
     graph = build_main_graph(
         GeneralProcessor(),
         registry,
-        FixedRouter(
-            RoutingDecision.module(
-                intent="appointments.list", module_id="appointments"
-            )
-        ),
+        FixedRouter(RoutingDecision.module(intent="appointments.list", module_id="appointments")),
         InMemorySaver(),
     )
     current = command()
@@ -539,11 +529,7 @@ async def test_module_handoff_rejects_a_cycle() -> None:
     graph = build_main_graph(
         GeneralProcessor(),
         registry,
-        FixedRouter(
-            RoutingDecision.module(
-                intent="appointments.list", module_id="appointments"
-            )
-        ),
+        FixedRouter(RoutingDecision.module(intent="appointments.list", module_id="appointments")),
         InMemorySaver(),
     )
     current = command()
