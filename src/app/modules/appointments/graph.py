@@ -43,6 +43,7 @@ from app.modules.appointments.services.response_formatter import format_detail
 from app.modules.appointments.state import AppointmentsGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
+    ModuleHandoff,
     ModuleExecutionRequest,
     ModuleResult,
     PendingConfirmation,
@@ -84,13 +85,17 @@ class AppointmentsModuleExecutor:
         request = state["request"]
         try:
             if is_booking_start(request.intent):
-                message, pending = await start_booking(
+                message, pending, handoff = await start_booking(
                     self._gateway,
                     context.bearer_token,
                     self._booking_ttl_seconds,
                     context.principal.account_id,
                 )
-                return {"result": self._message(message, pending=pending)}
+                return {
+                    "result": self._message(
+                        message, pending=pending, handoff=handoff
+                    )
+                }
             if is_booking_continuation(request.intent):
                 return {"result": await self._continue_booking(request, context)}
             if request.intent == "appointments.cancel":
@@ -260,13 +265,19 @@ class AppointmentsModuleExecutor:
         return self._message(result_msg)
 
     @staticmethod
-    def _message(message: str, *, pending: PendingConfirmation | None = None) -> ModuleResult:
+    def _message(
+        message: str,
+        *,
+        pending: PendingConfirmation | None = None,
+        handoff: ModuleHandoff | None = None,
+    ) -> ModuleResult:
         return ModuleResult(
             module_id="appointments",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
             rag=RagMessageResult.disabled(),
             pending_confirmation=pending,
+            handoff=handoff,
         )
 
 

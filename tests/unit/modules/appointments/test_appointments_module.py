@@ -9,7 +9,7 @@ from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
 from app.modules.appointments.services.appointment_matcher import select_appointments
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
-from app.orchestration.module_executor import ModuleExecutionRequest
+from app.orchestration.module_executor import ModuleContinuation, ModuleExecutionRequest
 from app.orchestration.rag_contracts import RagStatus
 from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.ports.appointments_gateway import (
@@ -263,6 +263,31 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
     assert gateway.created[0][0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
     assert gateway.created[0][1] == "appointment-1"
     assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_booking_without_pets_hands_off_to_registration_and_preserves_booking() -> None:
+    class GatewayWithoutPets(Gateway):
+        async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
+            options = await super().get_booking_options(bearer_token)
+            return AppointmentBookingOptions(
+                pets=(),
+                services=options.services,
+                veterinarians=options.veterinarians,
+                requires_requester_phone_number=options.requires_requester_phone_number,
+            )
+
+    result = await AppointmentsModuleExecutor(
+        GatewayWithoutPets(), "America/Bogota"
+    ).execute(request("Quiero agendar una cita", "appointments.book"), context())
+
+    assert result.pending_confirmation is None
+    assert result.handoff is not None
+    assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
+    assert result.handoff.continuation == ModuleContinuation(
+        "appointments", "appointments.book"
+    )
+    assert "registrar" in (result.message or "").casefold()
 
 
 @pytest.mark.anyio
