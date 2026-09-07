@@ -9,7 +9,7 @@ from app.modules.pet_profile.graph import PetProfileModuleExecutor
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
-from app.orchestration.module_executor import ModuleExecutionRequest
+from app.orchestration.module_executor import ModuleContinuation, ModuleExecutionRequest
 from app.ports.pet_profile_gateway import (
     CatalogItem,
     PetProfile,
@@ -201,15 +201,19 @@ async def test_update_waits_for_explicit_confirmation_before_patch() -> None:
 async def test_registration_collects_all_fields_and_creates_only_after_confirmation() -> None:
     gateway = Gateway()
     executor = PetProfileModuleExecutor(gateway)
+    continuation = ModuleContinuation("appointments", "appointments.book")
     current = await executor.execute(
         ModuleExecutionRequest(
             command("Quiero registrar una mascota"),
             "pets.register",
             PET_PROFILE_MANIFEST,
+            continuation=continuation,
         ),
         context(),
     )
     assert "llama" in (current.message or "").casefold()
+    assert current.pending_confirmation is not None
+    assert current.pending_confirmation.continuation == continuation
 
     for value in ("Luna", "Canino", "Mestizo", "4", "hembra", "12,5 kg", "ninguna"):
         assert current.pending_confirmation is not None
@@ -244,6 +248,8 @@ async def test_registration_collects_all_fields_and_creates_only_after_confirmat
     assert registration.weight == 12.5
     assert confirmed.pending_confirmation is None
     assert "registrada" in (confirmed.message or "").casefold()
+    assert confirmed.handoff is not None
+    assert confirmed.handoff.target == continuation
 
 
 @pytest.mark.anyio

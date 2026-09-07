@@ -25,6 +25,7 @@ from app.modules.pet_profile.services.response_formatter import (
 from app.modules.pet_profile.state import PetProfileGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
+    ModuleHandoff,
     ModuleExecutionRequest,
     ModuleResult,
     PendingConfirmation,
@@ -100,7 +101,10 @@ class PetProfileModuleExecutor:
         if request.intent == "pet_profile.registration":
             return await self._continue_registration(request, context)
         if request.intent == "pets.register":
-            message, pending = start_pet_registration(self._confirmation_ttl_seconds)
+            message, pending = start_pet_registration(
+                self._confirmation_ttl_seconds,
+                request.continuation,
+            )
             return self._message(message, pending=pending)
 
         profiles = await fetch_owned_profiles(self._gateway, context.bearer_token)
@@ -166,7 +170,12 @@ class PetProfileModuleExecutor:
             self._gateway, context.bearer_token, pending
         )
         return self._message(
-            f"{created.name} fue registrada correctamente como tu mascota."
+            f"{created.name} fue registrada correctamente como tu mascota.",
+            handoff=(
+                ModuleHandoff(target=pending.continuation)
+                if pending.continuation is not None
+                else None
+            ),
         )
 
     async def _continue_confirmation(
@@ -192,10 +201,16 @@ class PetProfileModuleExecutor:
         return self._message(f"El perfil de {updated.name} fue actualizado correctamente.")
 
     @staticmethod
-    def _message(message: str, *, pending: PendingConfirmation | None = None) -> ModuleResult:
+    def _message(
+        message: str,
+        *,
+        pending: PendingConfirmation | None = None,
+        handoff: ModuleHandoff | None = None,
+    ) -> ModuleResult:
         return ModuleResult(
             module_id="pet_profile",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
             pending_confirmation=pending,
+            handoff=handoff,
         )

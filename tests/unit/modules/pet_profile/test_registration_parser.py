@@ -48,6 +48,17 @@ def test_catalog_steps_require_exact_normalized_matches() -> None:
     assert race.draft.step == "age"
 
 
+def test_name_step_extracts_name_from_a_natural_introduction() -> None:
+    result = advance_registration(
+        PetRegistrationDraft(step="name"),
+        "Okey, mi mascota se llama Milou",
+    )
+
+    assert result.accepted
+    assert result.draft.name == "Milou"
+    assert result.draft.step == "species"
+
+
 def test_complete_draft_formats_confirmation_summary() -> None:
     draft = PetRegistrationDraft(
         step="confirmation",

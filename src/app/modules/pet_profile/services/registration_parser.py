@@ -6,6 +6,12 @@ from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.ports.pet_profile_gateway import CatalogItem
 
 
+_NAME_INTRODUCTION = re.compile(
+    r"(?:\bmi\s+mascota\s+)?\bse\s+llama\s+([^,.!?\n]+)[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RegistrationAdvance:
     draft: PetRegistrationDraft
@@ -21,9 +27,10 @@ def advance_registration(
 ) -> RegistrationAdvance:
     text = message.strip()
     if draft.step == "name":
-        if not text or len(text) > 50:
+        name = _pet_name(text)
+        if not name or len(name) > 50:
             return _invalid(draft, "Indica un nombre de máximo 50 caracteres.")
-        return _accepted(replace(draft, name=text, step="species"))
+        return _accepted(replace(draft, name=name, step="species"))
     if draft.step == "species":
         item = _catalog_match(text, species)
         if item is None:
@@ -59,6 +66,11 @@ def advance_registration(
             replace(draft, observations=observations, step="confirmation")
         )
     return _invalid(draft, "El registro ya está listo para confirmar.")
+
+
+def _pet_name(message: str) -> str:
+    match = _NAME_INTRODUCTION.search(message)
+    return match.group(1).strip() if match is not None else message
 
 
 def _catalog_match(message: str, items: tuple[CatalogItem, ...]) -> CatalogItem | None:
