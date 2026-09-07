@@ -934,7 +934,7 @@ def test_semantic_intent_routing_has_safe_adjustable_defaults() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.intent_semantic_routing_enabled is True
-    assert settings.intent_semantic_min_score == 0.55
+    assert settings.intent_semantic_min_score == 0.45
     assert settings.intent_semantic_min_margin == 0.03
 
 

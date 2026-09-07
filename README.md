@@ -241,7 +241,7 @@ determinística se comparan semánticamente con las intenciones declaradas por l
 
 ```dotenv
 HUELLITAS_INTENT_SEMANTIC_ROUTING_ENABLED="true"
-HUELLITAS_INTENT_SEMANTIC_MIN_SCORE="0.55"
+HUELLITAS_INTENT_SEMANTIC_MIN_SCORE="0.45"
 HUELLITAS_INTENT_SEMANTIC_MIN_MARGIN="0.03"
 ```
 

@@ -92,9 +92,16 @@ class SemanticIntentRouter:
                 best_score,
             )
             return RoutingDecision.unknown("semantic intent score is below threshold")
-        if len(scores) > 1:
-            second_score = scores[-2][0]
-            margin = best_score - second_score
+        competing_score = next(
+            (
+                score
+                for score, candidate in reversed(scores[:-1])
+                if candidate.module_id != best.module_id
+            ),
+            None,
+        )
+        if competing_score is not None:
+            margin = best_score - competing_score
             if margin < self._minimum_margin:
                 logger.info(
                     "semantic_intent_ambiguous module=%s intent=%s top_score=%.6f margin=%.6f",

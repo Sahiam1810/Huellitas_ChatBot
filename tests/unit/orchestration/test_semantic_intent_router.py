@@ -133,9 +133,7 @@ async def test_returns_ambiguous_when_two_intents_have_insufficient_margin() -> 
         ),
         (
             SemanticIntentDefinition("services_catalog", "services.list", ("listar servicios",)),
-            SemanticIntentDefinition(
-                "services_catalog", "services.search", ("buscar un servicio",)
-            ),
+            SemanticIntentDefinition("appointments", "appointments.book", ("buscar un servicio",)),
         ),
         minimum_score=0.75,
         minimum_margin=0.05,
@@ -143,10 +141,43 @@ async def test_returns_ambiguous_when_two_intents_have_insufficient_margin() -> 
 
     decision = await router.route(
         command("atenciones veterinarias"),
-        (manifest("services_catalog", "services.list", "services.search"),),
+        (
+            manifest("services_catalog", "services.list"),
+            manifest("appointments", "appointments.book"),
+        ),
     )
 
     assert decision.kind is RoutingKind.AMBIGUOUS
+
+
+@pytest.mark.anyio
+async def test_close_intents_in_same_module_select_best_instead_of_general_fallback() -> None:
+    router = SemanticIntentRouter(
+        ControlledEmbeddings(
+            {
+                "listar prestaciones": (1.0, 0.0),
+                "buscar una prestacion": (0.99, 0.14),
+                "oferta de la clinica": (1.0, 0.04),
+            }
+        ),
+        (
+            SemanticIntentDefinition("services_catalog", "services.list", ("listar prestaciones",)),
+            SemanticIntentDefinition(
+                "services_catalog", "services.search", ("buscar una prestacion",)
+            ),
+        ),
+        minimum_score=0.75,
+        minimum_margin=0.05,
+    )
+
+    decision = await router.route(
+        command("oferta de la clinica"),
+        (manifest("services_catalog", "services.list", "services.search"),),
+    )
+
+    assert decision.kind is RoutingKind.MODULE
+    assert decision.module_id == "services_catalog"
+    assert decision.intent == "services.list"
 
 
 @pytest.mark.anyio

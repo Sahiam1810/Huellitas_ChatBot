@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     embedding_max_batch_size: int = Field(default=64, ge=1, le=2048)
 
     intent_semantic_routing_enabled: bool = True
-    intent_semantic_min_score: float = Field(default=0.55, ge=0, le=1)
+    intent_semantic_min_score: float = Field(default=0.45, ge=0, le=1)
     intent_semantic_min_margin: float = Field(default=0.03, ge=0, le=1)
 
     rag_enabled: bool = False

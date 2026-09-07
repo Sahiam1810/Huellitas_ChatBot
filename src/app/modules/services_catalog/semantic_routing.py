@@ -20,6 +20,9 @@ SERVICES_CATALOG_SEMANTIC_INTENTS = (
             "confirmar si la clínica presta una atención veterinaria específica",
             "buscar un procedimiento concreto dentro de la oferta de la veterinaria",
             "averiguar si realizan un servicio particular para una mascota",
+            "preguntar si la veterinaria maneja un examen o procedimiento específico",
+            "confirmar si ofrecen ecografías radiografías u otra atención concreta",
+            "buscar una prestación particular en el catálogo oficial",
         ),
     ),
     SemanticIntentDefinition(
