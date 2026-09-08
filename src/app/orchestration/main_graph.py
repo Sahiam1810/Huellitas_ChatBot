@@ -16,6 +16,7 @@ from app.orchestration.response_builder import (
     build_human_controlled_result,
     normalize_module_result,
 )
+from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.orchestration.state import (
     MainGraphState,
     confirmation_from_state,
@@ -28,7 +29,6 @@ from app.orchestration.state import (
     routing_decision_from_state,
     routing_decision_to_state,
 )
-from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import GraphCompositionError
 

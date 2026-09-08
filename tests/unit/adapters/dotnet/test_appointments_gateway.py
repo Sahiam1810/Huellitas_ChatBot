@@ -10,6 +10,7 @@ from app.ports.appointments_gateway import (
     AppointmentBookingRequest,
     AppointmentNotFoundError,
     AppointmentsAuthenticationError,
+    AppointmentsConflictError,
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
@@ -213,14 +214,13 @@ async def test_rejects_malformed_contract(bad: object) -> None:
 
 # ── Tests cancel_owned & reschedule_code ───────────────────────────────────
 
-from app.ports.appointments_gateway import AppointmentsConflictError
-
-
 @pytest.mark.anyio
 async def test_cancel_owned_sends_patch_with_jwt() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PATCH"
-        assert request.url.path == "/api/bot/appointments/11111111-1111-1111-1111-111111111111/cancel"
+        assert request.url.path == (
+            "/api/bot/appointments/11111111-1111-1111-1111-111111111111/cancel"
+        )
         assert request.headers["Authorization"] == "Bearer token"
         body = json.loads(request.content)
         assert body.get("comment") == "Cliente solicita cancelar."
@@ -266,7 +266,9 @@ async def test_request_reschedule_code_sends_post_and_returns_session_id() -> No
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/appointments/mine/11111111-1111-1111-1111-111111111111/request-code"
+        assert request.url.path == (
+            "/api/appointments/mine/11111111-1111-1111-1111-111111111111/request-code"
+        )
         body = json.loads(request.content)
         assert body["phoneNumber"] == "3001234567"
         assert body["action"] == "Reschedule"
@@ -313,7 +315,9 @@ async def test_request_reschedule_code_raises_conflict_on_409() -> None:
 async def test_confirm_reschedule_code_sends_post_and_returns_none() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/appointments/mine/11111111-1111-1111-1111-111111111111/confirm-code"
+        assert request.url.path == (
+            "/api/appointments/mine/11111111-1111-1111-1111-111111111111/confirm-code"
+        )
         body = json.loads(request.content)
         assert body["phoneNumber"] == "3001234567"
         assert body["code"] == "123456"
