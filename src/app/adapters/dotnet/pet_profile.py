@@ -39,7 +39,7 @@ class DotNetPetProfileGateway:
 
     async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
         try:
-            response = await self._request("GET", "/api/pets/mine", bearer_token)
+            response = await self._request("GET", "/api/bot/pets", bearer_token)
         except PetProfileNotFoundError:
             raise PetProfileOwnerProfileNotFoundError(
                 "Authenticated owner profile was not found"
@@ -69,7 +69,7 @@ class DotNetPetProfileGateway:
         if patch.change_observations:
             body["observations"] = patch.observations
         response = await self._request(
-            "PATCH", f"/api/pets/mine/{pet_id}", bearer_token, json=body
+            "PATCH", f"/api/bot/pets/{pet_id}", bearer_token, json=body
         )
         return self._profile(self._json(response))
 
@@ -78,7 +78,7 @@ class DotNetPetProfileGateway:
     ) -> PetProfile:
         response = await self._request(
             "POST",
-            "/api/pets/mine",
+            "/api/bot/pets",
             bearer_token,
             json={
                 "name": registration.name,
