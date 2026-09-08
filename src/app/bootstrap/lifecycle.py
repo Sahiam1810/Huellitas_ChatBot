@@ -321,6 +321,12 @@ def build_lifespan(
                     display_time_zone=settings.display_time_zone,
                     confirmation_ttl_seconds=settings.pet_profile_confirmation_ttl_seconds,
                     appointment_booking_ttl_seconds=settings.appointment_booking_ttl_seconds,
+                    appointment_availability_search_days=(
+                        settings.appointment_availability_search_days
+                    ),
+                    appointment_availability_max_dates=(
+                        settings.appointment_availability_max_dates
+                    ),
                 )
                 app.state.dependencies.module_registry = module_registry
             general_processor = MessageProcessor(

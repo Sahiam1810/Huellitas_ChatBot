@@ -1,5 +1,5 @@
 from dataclasses import replace as _replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -10,6 +10,17 @@ from app.modules.appointments.nodes.check_availability import (
     parse_booking_date,
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
+from app.modules.appointments.services.availability_discovery import (
+    discover_available_dates,
+    format_available_dates,
+    is_availability_discovery_request,
+)
+from app.modules.appointments.services.date_resolver import (
+    RESCHEDULE_DATE_PROMPT,
+    DateResolutionError,
+    date_resolution_error_message,
+    resolve_appointment_date,
+)
 from app.modules.appointments.services.response_formatter import format_detail
 from app.orchestration.module_executor import PendingConfirmation
 from app.orchestration.rule_based_intent_router import normalize_for_routing
@@ -50,11 +61,10 @@ async def start_reschedule(
             step="date",
             service_id=str(cita.service_id),
             veterinarian_id=str(cita.veterinarian_id),
+            veterinarian_name=cita.veterinarian_name,
         )
         message = (
-            "Encontré esta cita:\n"
-            + format_detail(cita, time_zone)
-            + "\n¿Para qué fecha deseas reprogramarla? (dd/mm/yyyy)"
+            "Encontré esta cita:\n" + format_detail(cita, time_zone) + "\n" + RESCHEDULE_DATE_PROMPT
         )
         pending = PendingConfirmation.create(
             module_id="appointments",
@@ -66,9 +76,7 @@ async def start_reschedule(
         return message, pending
 
     # Multiple appointments — ask user to choose
-    options = tuple(
-        (str(it.id), f"{it.pet_name} — {it.service_name}") for it in reschedulable
-    )
+    options = tuple((str(it.id), f"{it.pet_name} — {it.service_name}") for it in reschedulable)
     # Use a sentinel draft to store account info + options list
     message = (
         "Tienes varias citas agendadas. ¿Cuál deseas reprogramar? Responde con el número:\n"
@@ -86,6 +94,7 @@ async def start_reschedule(
                     "avail_id": str(it.availability_id),
                     "service_id": str(it.service_id),
                     "vet_id": str(it.veterinarian_id),
+                    "vet_name": it.veterinarian_name,
                     "label": f"{it.pet_name} — {it.service_name}",
                 }
                 for it in reschedulable
@@ -103,6 +112,9 @@ async def advance_reschedule(
     pending: PendingConfirmation,
     message: str,
     time_zone: ZoneInfo,
+    local_today: date,
+    availability_search_days: int,
+    availability_max_dates: int,
 ) -> tuple[str, PendingConfirmation | None]:
     payload = pending.payload
 
@@ -123,12 +135,13 @@ async def advance_reschedule(
             step="date",
             service_id=opt_data["service_id"],
             veterinarian_id=opt_data["vet_id"],
+            veterinarian_name=opt_data.get("vet_name"),
         )
         new_pending = _replace(
             pending,
             payload=draft.to_payload(),
         )
-        return "¿Para qué fecha deseas reprogramarla? (dd/mm/yyyy)", new_pending
+        return RESCHEDULE_DATE_PROMPT, new_pending
 
     # Strip non-dataclass fields before deserializing
     clean_payload = {k: v for k, v in payload.items() if k != "advertised_slot_ends_utc"}
@@ -136,9 +149,32 @@ async def advance_reschedule(
 
     # ── Step: date ───────────────────────────────────────────────────────────
     if draft.step == "date":
-        booking_date = parse_booking_date(message)
-        if booking_date is None:
-            return "No reconocí la fecha. Usa el formato dd/mm/yyyy.", pending
+        resolution = resolve_appointment_date(message, local_today)
+        if resolution.value is None:
+            if (
+                resolution.error is DateResolutionError.UNRECOGNIZED
+                and is_availability_discovery_request(message)
+            ):
+                available_dates = await discover_available_dates(
+                    gateway,
+                    UUID(draft.veterinarian_id),  # type: ignore[arg-type]
+                    UUID(draft.service_id),  # type: ignore[arg-type]
+                    local_today,
+                    bearer_token,
+                    search_days=availability_search_days,
+                    max_dates=availability_max_dates,
+                )
+                return (
+                    format_available_dates(
+                        available_dates,
+                        draft.veterinarian_name,
+                        time_zone,
+                        availability_search_days,
+                    ),
+                    pending,
+                )
+            return date_resolution_error_message(resolution.error, RESCHEDULE_DATE_PROMPT), pending
+        booking_date = resolution.value
         slots = await current_slots(
             gateway,
             UUID(draft.veterinarian_id),  # type: ignore[arg-type]
@@ -162,7 +198,10 @@ async def advance_reschedule(
         new_payload = new_draft.to_payload()
         new_payload["advertised_slot_ends_utc"] = list(slot_ends)
         new_pending = _replace(pending, payload=new_payload)
-        return f"Horarios disponibles:\n{formatted}\n¿Cuál prefieres? Responde con el número.", new_pending
+        return (
+            f"Horarios disponibles:\n{formatted}\n¿Cuál prefieres? Responde con el número.",
+            new_pending,
+        )
 
     # ── Step: slot ───────────────────────────────────────────────────────────
     if draft.step == "slot":
@@ -191,12 +230,17 @@ async def advance_reschedule(
         live_starts = tuple(str(s.scheduled_start_utc) for s in live_slots)
         if chosen_start_str not in live_starts:
             # Slot no longer available — go back to date step
-            new_draft = _replace(draft, step="date", booking_date=None, advertised_slot_starts_utc=())
+            new_draft = _replace(
+                draft,
+                step="date",
+                booking_date=None,
+                advertised_slot_starts_utc=(),
+            )
             new_payload = new_draft.to_payload()
             new_payload.pop("advertised_slot_ends_utc", None)
             new_pending = _replace(pending, payload=new_payload)
             return (
-                "Ese horario ya no está disponible. ¿Para qué fecha deseas reprogramar? (dd/mm/yyyy)",
+                "Ese horario ya no está disponible. " + RESCHEDULE_DATE_PROMPT,
                 new_pending,
             )
 

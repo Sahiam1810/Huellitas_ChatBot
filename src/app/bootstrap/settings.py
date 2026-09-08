@@ -189,6 +189,8 @@ class Settings(BaseSettings):
     backend_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     pet_profile_confirmation_ttl_seconds: int = Field(default=600, ge=60, le=3600)
     appointment_booking_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+    appointment_availability_search_days: int = Field(default=14, ge=1, le=60)
+    appointment_availability_max_dates: int = Field(default=3, ge=1, le=10)
 
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER

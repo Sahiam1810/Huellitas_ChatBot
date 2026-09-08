@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from datetime import date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -60,10 +62,18 @@ class AppointmentsModuleExecutor:
         display_time_zone: str,
         *,
         booking_ttl_seconds: int = 600,
+        today_provider: Callable[[], date] | None = None,
+        availability_search_days: int = 14,
+        availability_max_dates: int = 3,
     ) -> None:
         self._gateway = gateway
         self._time_zone = ZoneInfo(display_time_zone)
         self._booking_ttl_seconds = booking_ttl_seconds
+        self._availability_search_days = availability_search_days
+        self._availability_max_dates = availability_max_dates
+        self._today_provider = today_provider or (
+            lambda: datetime.now(self._time_zone).date()
+        )
         builder = StateGraph(AppointmentsGraphState, context_schema=ExecutionContext)
         builder.add_node("query_appointments", self._query_node)
         builder.add_edge(START, "query_appointments")
@@ -150,6 +160,9 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
+                self._today_provider(),
+                self._availability_search_days,
+                self._availability_max_dates,
             )
             return self._message(message, pending=next_pending)
 
@@ -197,6 +210,7 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
+                self._today_provider(),
             )
             return self._message(message, pending=next_pending)
         choice = confirmation_choice(request.command.message)
@@ -239,6 +253,9 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
+                self._today_provider(),
+                self._availability_search_days,
+                self._availability_max_dates,
             )
             return self._message(message, pending=next_pending)
         # OTP sent — confirm
