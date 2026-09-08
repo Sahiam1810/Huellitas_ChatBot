@@ -10,8 +10,13 @@ from app.modules.appointments.nodes.check_availability import (
     parse_booking_date,
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
+from app.modules.appointments.services.availability_discovery import (
+    discover_available_dates,
+    format_available_dates,
+    is_availability_discovery_request,
+)
 from app.modules.appointments.services.date_resolver import (
-    NATURAL_DATE_PROMPT,
+    RESCHEDULE_DATE_PROMPT,
     date_resolution_error_message,
     resolve_appointment_date,
 )
@@ -60,7 +65,7 @@ async def start_reschedule(
             "Encontré esta cita:\n"
             + format_detail(cita, time_zone)
             + "\n"
-            + NATURAL_DATE_PROMPT
+            + RESCHEDULE_DATE_PROMPT
         )
         pending = PendingConfirmation.create(
             module_id="appointments",
@@ -110,6 +115,8 @@ async def advance_reschedule(
     message: str,
     time_zone: ZoneInfo,
     local_today: date,
+    availability_search_days: int,
+    availability_max_dates: int,
 ) -> tuple[str, PendingConfirmation | None]:
     payload = pending.payload
 
@@ -135,7 +142,7 @@ async def advance_reschedule(
             pending,
             payload=draft.to_payload(),
         )
-        return NATURAL_DATE_PROMPT, new_pending
+        return RESCHEDULE_DATE_PROMPT, new_pending
 
     # Strip non-dataclass fields before deserializing
     clean_payload = {k: v for k, v in payload.items() if k != "advertised_slot_ends_utc"}
@@ -145,7 +152,28 @@ async def advance_reschedule(
     if draft.step == "date":
         resolution = resolve_appointment_date(message, local_today)
         if resolution.value is None:
-            return date_resolution_error_message(resolution.error), pending
+            if is_availability_discovery_request(message):
+                available_dates = await discover_available_dates(
+                    gateway,
+                    UUID(draft.veterinarian_id),  # type: ignore[arg-type]
+                    UUID(draft.service_id),  # type: ignore[arg-type]
+                    local_today,
+                    bearer_token,
+                    search_days=availability_search_days,
+                    max_dates=availability_max_dates,
+                )
+                return (
+                    format_available_dates(
+                        available_dates,
+                        None,
+                        time_zone,
+                        availability_search_days,
+                    ),
+                    pending,
+                )
+            return date_resolution_error_message(
+                resolution.error, RESCHEDULE_DATE_PROMPT
+            ), pending
         booking_date = resolution.value
         slots = await current_slots(
             gateway,
@@ -212,7 +240,7 @@ async def advance_reschedule(
             new_payload.pop("advertised_slot_ends_utc", None)
             new_pending = _replace(pending, payload=new_payload)
             return (
-                "Ese horario ya no está disponible. " + NATURAL_DATE_PROMPT,
+                "Ese horario ya no está disponible. " + RESCHEDULE_DATE_PROMPT,
                 new_pending,
             )
 

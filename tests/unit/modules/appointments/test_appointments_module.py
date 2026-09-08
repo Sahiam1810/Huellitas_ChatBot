@@ -324,6 +324,73 @@ async def test_booking_natural_date_queries_selected_veterinarian_availability()
 
 
 @pytest.mark.anyio
+async def test_booking_professional_date_prompt_and_availability_discovery() -> None:
+    class DiscoveryGateway(Gateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[tuple[UUID, UUID, date]] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append((veterinarian_id, service_id, booking_date))
+            if booking_date not in {date(2026, 9, 9), date(2026, 9, 11)}:
+                return ()
+            return (
+                AppointmentBookingSlot(
+                    SLOT_AVAILABILITY_ID,
+                    datetime(2026, 9, booking_date.day, 15, tzinfo=UTC),
+                    datetime(2026, 9, booking_date.day, 15, 30, tzinfo=UTC),
+                ),
+            )
+
+    gateway = DiscoveryGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+        availability_search_days=14,
+        availability_max_dates=2,
+    )
+    result = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    assert result.message == "¿Para qué fecha deseas agendar la cita?"
+
+    result = await executor.execute(
+        request(
+            "¿Qué días hay disponibles?",
+            "appointments.booking",
+            result.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert "tiene disponibilidad" in (result.message or "").casefold()
+    assert "miércoles 9 de septiembre" in (result.message or "").casefold()
+    assert "viernes 11 de septiembre" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+    assert gateway.slot_requests == [
+        (
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+            date(2026, 9, day),
+        )
+        for day in range(8, 12)
+    ]
+
+
+@pytest.mark.anyio
 async def test_booking_past_date_is_rejected_without_querying_slots() -> None:
     class RecordingSlotsGateway(Gateway):
         def __init__(self) -> None:
@@ -654,7 +721,7 @@ async def test_reschedule_start_with_one_appointment_asks_for_date() -> None:
         request("Reprogramar mi cita", "appointments.reschedule"), context()
     )
     assert "Encontré esta cita" in (result.message or "")
-    assert "mañana" in (result.message or "").casefold()
+    assert (result.message or "").endswith("¿Para qué fecha deseas reprogramar la cita?")
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.action == "appointments.reschedule.collect"
 
@@ -746,6 +813,65 @@ async def test_reschedule_natural_date_queries_original_veterinarian_availabilit
     assert "horarios disponibles" in (result.message or "").casefold()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.payload["step"] == "slot"
+
+
+@pytest.mark.anyio
+async def test_reschedule_availability_discovery_uses_original_selection() -> None:
+    class DiscoveryGateway(GatewayWithReschedule):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[tuple[UUID, UUID, date]] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append((veterinarian_id, service_id, booking_date))
+            if booking_date != date(2026, 9, 10):
+                return ()
+            return (
+                AppointmentBookingSlot(
+                    SLOT_AVAILABILITY_ID,
+                    datetime(2026, 9, 10, 15, tzinfo=UTC),
+                    datetime(2026, 9, 10, 15, 30, tzinfo=UTC),
+                ),
+            )
+
+    gateway = DiscoveryGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+        availability_search_days=4,
+        availability_max_dates=3,
+    )
+    started = await executor.execute(
+        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    )
+
+    result = await executor.execute(
+        request(
+            "¿Cuándo tiene cupo?",
+            "appointments.rescheduling",
+            started.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert "jueves 10 de septiembre" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+    assert gateway.slot_requests == [
+        (
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+            date(2026, 9, day),
+        )
+        for day in range(8, 12)
+    ]
 
 
 @pytest.mark.anyio

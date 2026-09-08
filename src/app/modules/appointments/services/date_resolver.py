@@ -18,20 +18,21 @@ class DateResolution:
     error: DateResolutionError | None = None
 
 
-NATURAL_DATE_PROMPT = (
-    "¿Qué día prefieres? Puedes decir “mañana”, "
-    "“el martes de la próxima semana” o “el 15 de este mes”."
-)
+BOOKING_DATE_PROMPT = "¿Para qué fecha deseas agendar la cita?"
+RESCHEDULE_DATE_PROMPT = "¿Para qué fecha deseas reprogramar la cita?"
 
 
-def date_resolution_error_message(error: DateResolutionError | None) -> str:
+def date_resolution_error_message(
+    error: DateResolutionError | None,
+    prompt: str = BOOKING_DATE_PROMPT,
+) -> str:
     if error is DateResolutionError.PAST:
         return "Esa fecha ya pasó. Indica una fecha válida desde hoy en adelante."
     if error is DateResolutionError.INVALID:
         return "Esa fecha no existe. Indica otra fecha válida."
     if error is DateResolutionError.AMBIGUOUS:
         return "No pude determinar una sola fecha. Indica un día más específico."
-    return "No entendí la fecha. " + NATURAL_DATE_PROMPT
+    return "No entendí la fecha. " + prompt
 
 
 _WEEKDAYS = {

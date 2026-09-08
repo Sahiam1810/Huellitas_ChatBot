@@ -63,10 +63,14 @@ class AppointmentsModuleExecutor:
         *,
         booking_ttl_seconds: int = 600,
         today_provider: Callable[[], date] | None = None,
+        availability_search_days: int = 14,
+        availability_max_dates: int = 3,
     ) -> None:
         self._gateway = gateway
         self._time_zone = ZoneInfo(display_time_zone)
         self._booking_ttl_seconds = booking_ttl_seconds
+        self._availability_search_days = availability_search_days
+        self._availability_max_dates = availability_max_dates
         self._today_provider = today_provider or (
             lambda: datetime.now(self._time_zone).date()
         )
@@ -157,6 +161,8 @@ class AppointmentsModuleExecutor:
                 request.command.message,
                 self._time_zone,
                 self._today_provider(),
+                self._availability_search_days,
+                self._availability_max_dates,
             )
             return self._message(message, pending=next_pending)
 
@@ -248,6 +254,8 @@ class AppointmentsModuleExecutor:
                 request.command.message,
                 self._time_zone,
                 self._today_provider(),
+                self._availability_search_days,
+                self._availability_max_dates,
             )
             return self._message(message, pending=next_pending)
         # OTP sent — confirm
