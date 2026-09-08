@@ -173,6 +173,60 @@ class ConfirmingExecutor(Executor):
         )
 
 
+class ExpiredPetRegistrationExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(module_id="pet_profile")
+
+    async def execute(
+        self,
+        request: ModuleExecutionRequest,
+        execution_context: ExecutionContext,
+    ) -> ModuleResult:
+        self.requests.append(request)
+        self.contexts.append(execution_context)
+        if request.pending_confirmation is None:
+            return ModuleResult(
+                module_id="pet_profile",
+                message="¿Cómo se llama tu mascota?",
+                response_type=MessageResponseType.RETRIEVED,
+                pending_confirmation=PendingConfirmation.create(
+                    module_id="pet_profile",
+                    action="pets.register.collect",
+                    payload={"step": "name"},
+                    ttl_seconds=-1,
+                    intent="pet_profile.registration",
+                ),
+            )
+        return ModuleResult(
+            module_id="pet_profile",
+            message="El registro venció.",
+            response_type=MessageResponseType.RETRIEVED,
+        )
+
+
+class MessageRouter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def route(
+        self,
+        current: MessageCommand,
+        manifests: tuple[ModuleManifest, ...],
+    ) -> RoutingDecision:
+        self.calls.append(current.message)
+        if current.message == "Registrar una mascota":
+            return RoutingDecision.module(
+                intent="pets.register",
+                module_id="pet_profile",
+            )
+        if current.message == "Quiero agendar una cita":
+            return RoutingDecision.module(
+                intent="appointments.list",
+                module_id="appointments",
+            )
+        return RoutingDecision.unknown("not matched")
+
+
 class HandoffExecutor(Executor):
     def __init__(self, handoff: ModuleHandoff) -> None:
         super().__init__()
@@ -314,6 +368,116 @@ async def test_pending_confirmation_survives_and_returns_to_the_same_module() ->
     assert executor.requests[-1].pending_confirmation.payload == {"appointment_id": "a-1"}
     assert second_state["confirmation"] is None
     assert router.calls == 1
+
+
+@pytest.mark.anyio
+async def test_expired_pending_operation_does_not_capture_a_new_routable_request() -> None:
+    general = GeneralProcessor()
+    pet_executor = ExpiredPetRegistrationExecutor()
+    appointment_executor = Executor()
+    pet_manifest = ModuleManifest(
+        module_id="pet_profile",
+        version="1.0.0",
+        description="Pet profile operations",
+        intents=("pets.register", "pet_profile.registration"),
+    )
+    appointment_manifest = manifest()
+    registry = ModuleRegistry()
+    registry.register(pet_manifest, pet_executor)
+    registry.register(appointment_manifest, appointment_executor)
+    router = MessageRouter()
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(message="Registrar una mascota", idempotency_key="message-001")
+
+    first_state = await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(message="Quiero agendar una cita", idempotency_key="message-002")
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    assert first_state["confirmation"] is not None
+    assert router.calls == ["Registrar una mascota", "Quiero agendar una cita"]
+    assert len(pet_executor.requests) == 1
+    assert appointment_executor.requests[-1].pending_confirmation is None
+    assert second_state["selected_module_id"] == "appointments"
+
+
+@pytest.mark.anyio
+async def test_expired_pending_operation_with_ambiguous_reply_returns_restart_guidance() -> None:
+    general = GeneralProcessor()
+    pet_executor = ExpiredPetRegistrationExecutor()
+    pet_manifest = ModuleManifest(
+        module_id="pet_profile",
+        version="1.0.0",
+        description="Pet profile operations",
+        intents=("pets.register", "pet_profile.registration"),
+    )
+    registry = ModuleRegistry()
+    registry.register(pet_manifest, pet_executor)
+    router = MessageRouter()
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(message="Registrar una mascota", idempotency_key="message-001")
+
+    await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(message="sí", idempotency_key="message-002")
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    result = message_result_from_state(second_state["result"])
+    assert router.calls == ["Registrar una mascota", "sí"]
+    assert "proceso anterior venció" in (result.message or "").casefold()
+    assert general.commands == []
+    assert len(pet_executor.requests) == 1
+
+
+@pytest.mark.anyio
+async def test_expired_pending_operation_allows_a_new_general_question() -> None:
+    general = GeneralProcessor()
+    pet_executor = ExpiredPetRegistrationExecutor()
+    pet_manifest = ModuleManifest(
+        module_id="pet_profile",
+        version="1.0.0",
+        description="Pet profile operations",
+        intents=("pets.register", "pet_profile.registration"),
+    )
+    registry = ModuleRegistry()
+    registry.register(pet_manifest, pet_executor)
+    router = MessageRouter()
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(message="Registrar una mascota", idempotency_key="message-001")
+
+    await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(
+        message="¿Qué cuidados necesita un cachorro?",
+        idempotency_key="message-002",
+    )
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    result = message_result_from_state(second_state["result"])
+    assert result.message == "general:¿Qué cuidados necesita un cachorro?"
+    assert general.commands == [second]
+    assert second_state["confirmation"] is None
 
 
 @pytest.mark.anyio

@@ -34,7 +34,7 @@ def profile_payload() -> dict[str, object]:
 @pytest.mark.anyio
 async def test_list_owned_deserializes_profile_and_forwards_bearer_token() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/pets/mine"
+        assert request.url.path == "/api/bot/pets"
         assert request.headers["authorization"] == "Bearer jwt-secret"
         return httpx.Response(200, json=[profile_payload()])
 
@@ -87,7 +87,7 @@ async def test_list_owned_maps_missing_client_profile_separately() -> None:
     assert error_type is not None
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/pets/mine"
+        assert request.url.path == "/api/bot/pets"
         return httpx.Response(
             404,
             json={"detail": "El usuario autenticado no tiene un perfil de cliente asociado."},
@@ -110,7 +110,7 @@ async def test_list_owned_maps_missing_client_profile_separately() -> None:
 async def test_create_owned_posts_registration_and_returns_authoritative_profile() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/pets/mine"
+        assert request.url.path == "/api/bot/pets"
         assert request.headers["authorization"] == "Bearer jwt-secret"
         assert request.content.decode() == (
             '{"name":"Luna","age":4,"gender":"F","weight":12.5,'

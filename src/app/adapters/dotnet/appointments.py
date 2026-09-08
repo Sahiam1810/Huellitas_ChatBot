@@ -45,7 +45,7 @@ class DotNetAppointmentsGateway:
         self, scope: AppointmentScope, bearer_token: str
     ) -> tuple[AppointmentItem, ...]:
         response = await self._request(
-            "/api/appointments/mine", bearer_token, params={"scope": scope.value}
+            "/api/bot/appointments", bearer_token, params={"scope": scope.value}
         )
         payload = self._json(response)
         if not isinstance(payload, list):
@@ -53,11 +53,11 @@ class DotNetAppointmentsGateway:
         return tuple(self._appointment(item) for item in payload)
 
     async def get_owned(self, appointment_id: UUID, bearer_token: str) -> AppointmentItem:
-        response = await self._request(f"/api/appointments/mine/{appointment_id}", bearer_token)
+        response = await self._request(f"/api/bot/appointments/{appointment_id}", bearer_token)
         return self._appointment(self._json(response))
 
     async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
-        response = await self._request("/api/appointments/booking/options", bearer_token)
+        response = await self._request("/api/bot/appointments/booking/options", bearer_token)
         payload = self._json(response)
         if not isinstance(payload, Mapping):
             raise AppointmentsInvalidResponseError("Backend returned invalid booking options")
@@ -99,7 +99,7 @@ class DotNetAppointmentsGateway:
         bearer_token: str,
     ) -> tuple[AppointmentBookingSlot, ...]:
         response = await self._request(
-            "/api/appointments/booking/slots",
+            "/api/bot/appointments/booking/slots",
             bearer_token,
             params={
                 "veterinarianId": str(veterinarian_id),
@@ -131,7 +131,7 @@ class DotNetAppointmentsGateway:
         bearer_token: str,
     ) -> AppointmentItem:
         response = await self._request(
-            "/api/appointments/mine",
+            "/api/bot/appointments",
             bearer_token,
             method="POST",
             json_body={
@@ -150,7 +150,7 @@ class DotNetAppointmentsGateway:
         self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
     ) -> None:
         await self._request(
-            f"/api/appointments/mine/{appointment_id}/cancel",
+            f"/api/bot/appointments/{appointment_id}/cancel",
             bearer_token,
             method="PATCH",
             json_body={"comment": comment},

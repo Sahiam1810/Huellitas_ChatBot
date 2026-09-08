@@ -51,6 +51,13 @@ class PendingConfirmation:
             continuation=continuation,
         )
 
+    def is_expired(self, now: datetime | None = None) -> bool:
+        current = now or datetime.now(UTC)
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return expires_at <= current
+
 
 @dataclass(frozen=True, slots=True)
 class ModuleExecutionRequest:

@@ -10,6 +10,7 @@ from app.ports.appointments_gateway import (
     AppointmentBookingRequest,
     AppointmentNotFoundError,
     AppointmentsAuthenticationError,
+    AppointmentsConflictError,
     AppointmentScope,
     AppointmentsForbiddenError,
     AppointmentsInvalidResponseError,
@@ -40,7 +41,7 @@ def payload() -> dict[str, object]:
 @pytest.mark.anyio
 async def test_list_owned_sends_scope_and_parses_contract_without_phone() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/appointments/mine"
+        assert request.url.path == "/api/bot/appointments"
         assert request.url.params["scope"] == "upcoming"
         assert request.headers["Authorization"] == "Bearer token"
         return httpx.Response(200, json=[payload()])
@@ -57,7 +58,7 @@ async def test_list_owned_sends_scope_and_parses_contract_without_phone() -> Non
 @pytest.mark.anyio
 async def test_get_owned_uses_owned_detail_route() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path.endswith("/11111111-1111-1111-1111-111111111111")
+        assert request.url.path == "/api/bot/appointments/11111111-1111-1111-1111-111111111111"
         return httpx.Response(200, json=payload())
 
     gateway = DotNetAppointmentsGateway(
@@ -70,7 +71,7 @@ async def test_get_owned_uses_owned_detail_route() -> None:
 @pytest.mark.anyio
 async def test_get_booking_options_parses_owned_catalog() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/appointments/booking/options"
+        assert request.url.path == "/api/bot/appointments/booking/options"
         assert request.headers["Authorization"] == "Bearer token"
         return httpx.Response(
             200,
@@ -109,7 +110,7 @@ async def test_get_booking_options_parses_owned_catalog() -> None:
 @pytest.mark.anyio
 async def test_list_booking_slots_sends_iso_date_and_parses_utc() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/appointments/booking/slots"
+        assert request.url.path == "/api/bot/appointments/booking/slots"
         assert request.url.params["date"] == "2026-09-10"
         return httpx.Response(
             200,
@@ -141,7 +142,7 @@ async def test_list_booking_slots_sends_iso_date_and_parses_utc() -> None:
 async def test_create_owned_sends_idempotency_header_and_minimal_body() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/appointments/mine"
+        assert request.url.path == "/api/bot/appointments"
         assert request.headers["Idempotency-Key"] == "message-001"
         body = json.loads(request.content)
         assert set(body) == {
@@ -213,14 +214,13 @@ async def test_rejects_malformed_contract(bad: object) -> None:
 
 # ── Tests cancel_owned & reschedule_code ───────────────────────────────────
 
-from app.ports.appointments_gateway import AppointmentsConflictError
-
-
 @pytest.mark.anyio
 async def test_cancel_owned_sends_patch_with_jwt() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PATCH"
-        assert request.url.path == "/api/appointments/mine/11111111-1111-1111-1111-111111111111/cancel"
+        assert request.url.path == (
+            "/api/bot/appointments/11111111-1111-1111-1111-111111111111/cancel"
+        )
         assert request.headers["Authorization"] == "Bearer token"
         body = json.loads(request.content)
         assert body.get("comment") == "Cliente solicita cancelar."
@@ -266,7 +266,9 @@ async def test_request_reschedule_code_sends_post_and_returns_session_id() -> No
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/appointments/mine/11111111-1111-1111-1111-111111111111/request-code"
+        assert request.url.path == (
+            "/api/appointments/mine/11111111-1111-1111-1111-111111111111/request-code"
+        )
         body = json.loads(request.content)
         assert body["phoneNumber"] == "3001234567"
         assert body["action"] == "Reschedule"
@@ -313,7 +315,9 @@ async def test_request_reschedule_code_raises_conflict_on_409() -> None:
 async def test_confirm_reschedule_code_sends_post_and_returns_none() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.path == "/api/appointments/mine/11111111-1111-1111-1111-111111111111/confirm-code"
+        assert request.url.path == (
+            "/api/appointments/mine/11111111-1111-1111-1111-111111111111/confirm-code"
+        )
         body = json.loads(request.content)
         assert body["phoneNumber"] == "3001234567"
         assert body["code"] == "123456"
