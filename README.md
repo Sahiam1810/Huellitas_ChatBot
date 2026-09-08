@@ -254,6 +254,36 @@ reglas determinísticas siguen disponibles y el fallback general permanece restr
 El enrutamiento semántico de módulos no es el routing adaptativo de RAG: el primero elige
 el ejecutor especializado; el segundo decide si reutilizar o adjuntar conocimiento después.
 
+#### Adjudicación de intenciones cercanas
+
+Cuando las dos mejores coincidencias pertenecen a módulos diferentes y su margen es
+pequeño, puede habilitarse un clasificador acotado para desempatar antes de ejecutar un
+módulo. El clasificador solo recibe hasta tres intenciones registradas, devuelve una de
+ellas mediante JSON estricto y no responde al usuario ni ejecuta herramientas:
+
+```dotenv
+HUELLITAS_INTENT_ADJUDICATOR_ENABLED="true"
+HUELLITAS_INTENT_ADJUDICATOR_MODEL=""
+HUELLITAS_INTENT_ADJUDICATOR_TRIGGER_MARGIN="0.10"
+HUELLITAS_INTENT_ADJUDICATOR_MIN_CONFIDENCE="0.70"
+HUELLITAS_INTENT_ADJUDICATOR_MAX_OUTPUT_TOKENS="60"
+HUELLITAS_INTENT_ADJUDICATOR_TIMEOUT_SECONDS="5"
+```
+
+Un valor vacío en `HUELLITAS_INTENT_ADJUDICATOR_MODEL` reutiliza el modelo conversacional
+activo. También puede indicarse un modelo más económico del mismo proveedor; reutilizará
+sus credenciales, pero tendrá su propio límite de salida y timeout. Para habilitarlo deben
+estar activos chat, embeddings y `HUELLITAS_INTENT_SEMANTIC_ROUTING_ENABLED`.
+
+Con los valores anteriores, una diferencia inferior a `0.10` activa una sola llamada de
+clasificación. Una salida inválida, una confianza inferior a `0.70`, un timeout o una
+intención no registrada se consideran ambiguos de forma segura. Las reglas determinísticas
+siguen teniendo prioridad y las coincidencias claras no consumen esta llamada adicional.
+
+Después de reconstruir el contenedor, una comprobación representativa es enviar
+`Quiero sacar una consulta general para mi cachorro`: debe iniciar el flujo de citas y no
+responder como orientación veterinaria general.
+
 ## Colecciones para RAG
 
 La preparación vectorial está deshabilitada por defecto. Requiere habilitar conjuntamente Qdrant, embeddings y RAG:

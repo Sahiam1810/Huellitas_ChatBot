@@ -173,3 +173,34 @@ async def test_create_owned_maps_backend_errors_without_leaking_payload(
     assert "jwt-secret" not in str(captured.value)
     assert "Luna" not in str(captured.value)
     await gateway.close()
+
+
+@pytest.mark.anyio
+async def test_list_races_filters_the_catalog_by_species_id() -> None:
+    species_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/races"
+        assert request.url.params.get("speciesId") == str(species_id)
+        assert request.headers["authorization"] == "Bearer jwt-secret"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "33333333-3333-3333-3333-333333333333",
+                    "name": "Mestizo",
+                    "speciesId": str(species_id),
+                }
+            ],
+        )
+
+    gateway = DotNetPetProfileGateway(
+        "http://backend.test",
+        5,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    races = await gateway.list_races(species_id, "jwt-secret")
+
+    assert [race.name for race in races] == ["Mestizo"]
+    await gateway.close()

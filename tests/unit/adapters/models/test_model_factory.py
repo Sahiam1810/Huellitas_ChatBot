@@ -76,6 +76,35 @@ def test_factory_builds_direct_openai_with_no_sdk_retries(
     )
 
 
+def test_factory_applies_model_and_timeout_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructor = Mock(return_value=Mock())
+    monkeypatch.setattr(model_factory, "AsyncOpenAI", constructor)
+    settings = Settings(
+        chat_enabled=True,
+        chat_provider="openai",
+        openai_api_key="openai-secret",
+        openai_model="gpt-main",
+        _env_file=None,
+    )
+
+    model = model_factory.create_chat_model(
+        settings,
+        model_override="gpt-cheap",
+        timeout_override=5,
+    )
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model == "gpt-cheap"
+    constructor.assert_called_once_with(
+        api_key="openai-secret",
+        base_url="https://api.openai.com/v1",
+        timeout=5,
+        max_retries=0,
+    )
+
+
 @pytest.mark.anyio
 async def test_factory_builds_gemini_with_timeout_and_one_attempt(
     monkeypatch: pytest.MonkeyPatch,

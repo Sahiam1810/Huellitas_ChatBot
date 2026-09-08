@@ -1,8 +1,10 @@
+import math
 from uuid import uuid4
 
 import pytest
 
-from app.orchestration.intent_router import RoutingKind
+from app.orchestration.intent_adjudicator import IntentCandidate
+from app.orchestration.intent_router import RoutingDecision, RoutingKind
 from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.semantic_intent_router import (
@@ -42,6 +44,26 @@ class ControlledEmbeddings:
             model="controlled",
             usage=EmbeddingUsage(input_tokens=1, total_tokens=1),
         )
+
+
+class Adjudicator:
+    def __init__(self, decision: RoutingDecision) -> None:
+        self._decision = decision
+        self.calls = 0
+        self.received_candidates: tuple[IntentCandidate, ...] = ()
+
+    async def adjudicate(
+        self,
+        command: MessageCommand,
+        candidates: tuple[IntentCandidate, ...],
+    ) -> RoutingDecision:
+        self.calls += 1
+        self.received_candidates = candidates
+        return self._decision
+
+
+def vector_for_score(score: float) -> tuple[float, float]:
+    return (score, math.sqrt(1 - score**2))
 
 
 def command(message: str) -> MessageCommand:
@@ -227,3 +249,131 @@ async def test_reuses_prepared_intent_embeddings_between_messages() -> None:
     await router.route(command("que atenciones ofrecen"), manifests)
 
     assert embeddings.document_calls == 1
+
+
+@pytest.mark.anyio
+async def test_close_cross_module_scores_use_one_adjudication() -> None:
+    message = "Quiero sacar una consulta general para mi cachorro"
+    adjudicator = Adjudicator(
+        RoutingDecision.module(module_id="appointments", intent="appointments.book")
+    )
+    router = SemanticIntentRouter(
+        ControlledEmbeddings(
+            {
+                "pregunta general de salud": vector_for_score(0.640084),
+                "reservar consulta veterinaria": vector_for_score(0.586304),
+                message: (1.0, 0.0),
+            }
+        ),
+        (
+            SemanticIntentDefinition(
+                "veterinary_guidance", "guidance.ask", ("pregunta general de salud",)
+            ),
+            SemanticIntentDefinition(
+                "appointments", "appointments.book", ("reservar consulta veterinaria",)
+            ),
+        ),
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
+
+    decision = await router.route(
+        command(message),
+        (
+            manifest("veterinary_guidance", "guidance.ask"),
+            manifest("appointments", "appointments.book"),
+        ),
+    )
+
+    assert decision == RoutingDecision.module(
+        module_id="appointments", intent="appointments.book"
+    )
+    assert adjudicator.calls == 1
+    assert len(adjudicator.received_candidates) == 2
+
+
+@pytest.mark.anyio
+async def test_adjudicator_cannot_select_a_candidate_outside_active_manifests() -> None:
+    message = "solicitud ambigua"
+    adjudicator = Adjudicator(
+        RoutingDecision.module(module_id="invented", intent="invented.execute")
+    )
+    router = SemanticIntentRouter(
+        ControlledEmbeddings(
+            {
+                "orientacion veterinaria": vector_for_score(0.70),
+                "reservar cita": vector_for_score(0.65),
+                message: (1.0, 0.0),
+            }
+        ),
+        (
+            SemanticIntentDefinition(
+                "veterinary_guidance", "guidance.ask", ("orientacion veterinaria",)
+            ),
+            SemanticIntentDefinition(
+                "appointments", "appointments.book", ("reservar cita",)
+            ),
+        ),
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
+
+    decision = await router.route(
+        command(message),
+        (
+            manifest("veterinary_guidance", "guidance.ask"),
+            manifest("appointments", "appointments.book"),
+        ),
+    )
+
+    assert decision.kind is RoutingKind.AMBIGUOUS
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("best_score", "competing_score", "expected_kind"),
+    ((0.80, 0.40, RoutingKind.MODULE), (0.40, 0.35, RoutingKind.UNKNOWN)),
+)
+async def test_clear_or_low_score_match_does_not_use_adjudicator(
+    best_score: float,
+    competing_score: float,
+    expected_kind: RoutingKind,
+) -> None:
+    message = "consulta controlada"
+    adjudicator = Adjudicator(RoutingDecision.ambiguous("must not be called"))
+    router = SemanticIntentRouter(
+        ControlledEmbeddings(
+            {
+                "orientacion veterinaria": vector_for_score(best_score),
+                "reservar cita": vector_for_score(competing_score),
+                message: (1.0, 0.0),
+            }
+        ),
+        (
+            SemanticIntentDefinition(
+                "veterinary_guidance", "guidance.ask", ("orientacion veterinaria",)
+            ),
+            SemanticIntentDefinition(
+                "appointments", "appointments.book", ("reservar cita",)
+            ),
+        ),
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
+
+    decision = await router.route(
+        command(message),
+        (
+            manifest("veterinary_guidance", "guidance.ask"),
+            manifest("appointments", "appointments.book"),
+        ),
+    )
+
+    assert decision.kind is expected_kind
+    assert adjudicator.calls == 0

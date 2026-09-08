@@ -104,6 +104,15 @@ CONVERSATION_LOCK_ENV_KEYS = (
     "HUELLITAS_CONVERSATION_LOCK_TIMEOUT_SECONDS",
 )
 
+INTENT_ADJUDICATOR_ENV_KEYS = (
+    "HUELLITAS_INTENT_ADJUDICATOR_ENABLED",
+    "HUELLITAS_INTENT_ADJUDICATOR_MODEL",
+    "HUELLITAS_INTENT_ADJUDICATOR_TRIGGER_MARGIN",
+    "HUELLITAS_INTENT_ADJUDICATOR_MIN_CONFIDENCE",
+    "HUELLITAS_INTENT_ADJUDICATOR_MAX_OUTPUT_TOKENS",
+    "HUELLITAS_INTENT_ADJUDICATOR_TIMEOUT_SECONDS",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -117,6 +126,7 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *REDIS_ENV_KEYS,
         *CHECKPOINT_ENV_KEYS,
         *CONVERSATION_LOCK_ENV_KEYS,
+        *INTENT_ADJUDICATOR_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
@@ -952,3 +962,97 @@ def test_semantic_intent_routing_rejects_values_outside_cosine_range(
 ) -> None:
     with pytest.raises(ValidationError):
         Settings(**{field: value}, _env_file=None)
+
+
+def test_enabled_intent_adjudicator_exposes_bounded_configuration() -> None:
+    settings = Settings(
+        chat_enabled=True,
+        chat_provider="openai",
+        openai_api_key="secret",
+        openai_model="gpt-main",
+        embedding_enabled=True,
+        embedding_openai_api_key="secret",
+        embedding_model="embedding-test",
+        embedding_dimensions=2,
+        intent_adjudicator_enabled=True,
+        intent_adjudicator_model="gpt-cheap",
+        _env_file=None,
+    )
+
+    active = settings.active_intent_adjudicator_configuration()
+
+    assert active is not None
+    assert active.model == "gpt-cheap"
+    assert active.trigger_margin == 0.10
+    assert active.minimum_confidence == 0.70
+    assert active.max_output_tokens == 60
+    assert active.timeout_seconds == 5
+
+
+def test_disabled_intent_adjudicator_has_no_active_configuration() -> None:
+    assert Settings(_env_file=None).active_intent_adjudicator_configuration() is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("intent_adjudicator_trigger_margin", -0.01),
+        ("intent_adjudicator_trigger_margin", 1.01),
+        ("intent_adjudicator_min_confidence", -0.01),
+        ("intent_adjudicator_min_confidence", 1.01),
+        ("intent_adjudicator_max_output_tokens", 15),
+        ("intent_adjudicator_max_output_tokens", 257),
+        ("intent_adjudicator_timeout_seconds", 0),
+        ("intent_adjudicator_timeout_seconds", 31),
+    ),
+)
+def test_intent_adjudicator_rejects_unbounded_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"chat_enabled": False}, "chat"),
+        ({"intent_semantic_routing_enabled": False}, "semantic"),
+        ({"embedding_enabled": False}, "embeddings"),
+    ),
+)
+def test_intent_adjudicator_requires_active_dependencies(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "chat_enabled": True,
+        "openrouter_api_key": "secret",
+        "embedding_enabled": True,
+        "embedding_openai_api_key": "secret",
+        "embedding_model": "embedding-test",
+        "embedding_dimensions": 2,
+        "intent_adjudicator_enabled": True,
+        "_env_file": None,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(**values)
+
+
+def test_blank_intent_adjudicator_model_reuses_active_model() -> None:
+    settings = Settings(
+        chat_enabled=True,
+        openrouter_api_key="secret",
+        embedding_enabled=True,
+        embedding_openai_api_key="secret",
+        embedding_model="embedding-test",
+        embedding_dimensions=2,
+        intent_adjudicator_enabled=True,
+        intent_adjudicator_model="   ",
+        _env_file=None,
+    )
+
+    active = settings.active_intent_adjudicator_configuration()
+
+    assert active is not None
+    assert active.model is None

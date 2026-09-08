@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -61,6 +61,70 @@ def test_lifespan_owns_embedding_model_without_calling_provider(
 
     embedding_model.close.assert_awaited_once_with()
     assert app.state.dependencies.embedding_model is None
+
+
+def test_lifecycle_closes_distinct_adjudicator_model_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat_model = SimpleNamespace(model="main", close=AsyncMock())
+    adjudicator_model = SimpleNamespace(model="cheap", close=AsyncMock())
+    embedding_model = SimpleNamespace(dimensions=2, close=AsyncMock())
+
+    def create_model(settings: Settings, **kwargs: object) -> object:
+        return adjudicator_model if kwargs.get("model_override") else chat_model
+
+    monkeypatch.setattr(lifecycle, "create_chat_model", create_model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding_model)
+    app = create_application(
+        Settings(
+            environment="test",
+            chat_enabled=True,
+            openrouter_api_key="secret",
+            embedding_enabled=True,
+            embedding_openai_api_key="secret",
+            embedding_model="embedding-test",
+            embedding_dimensions=2,
+            intent_adjudicator_enabled=True,
+            intent_adjudicator_model="cheap",
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app):
+        assert app.state.dependencies.intent_adjudicator_model is adjudicator_model
+
+    chat_model.close.assert_awaited_once()
+    adjudicator_model.close.assert_awaited_once()
+    embedding_model.close.assert_awaited_once()
+
+
+def test_lifecycle_reuses_main_model_without_double_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat_model = SimpleNamespace(model="main", close=AsyncMock())
+    embedding_model = SimpleNamespace(dimensions=2, close=AsyncMock())
+    create_model = Mock(return_value=chat_model)
+    monkeypatch.setattr(lifecycle, "create_chat_model", create_model)
+    monkeypatch.setattr(lifecycle, "create_embedding_model", lambda settings: embedding_model)
+    app = create_application(
+        Settings(
+            environment="test",
+            chat_enabled=True,
+            openrouter_api_key="secret",
+            embedding_enabled=True,
+            embedding_openai_api_key="secret",
+            embedding_model="embedding-test",
+            embedding_dimensions=2,
+            intent_adjudicator_enabled=True,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app):
+        assert app.state.dependencies.intent_adjudicator_model is None
+
+    create_model.assert_called_once()
+    chat_model.close.assert_awaited_once()
 
 
 def test_disabled_chat_still_builds_message_processor() -> None:

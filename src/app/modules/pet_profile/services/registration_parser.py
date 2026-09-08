@@ -5,6 +5,11 @@ from app.modules.pet_profile.contracts_registration import PetRegistrationDraft
 from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.ports.pet_profile_gateway import CatalogItem
 
+_NAME_INTRODUCTION = re.compile(
+    r"(?:\bmi\s+mascota\s+)?\bse\s+llama\s+([^,.!?\n]+)[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RegistrationAdvance:
@@ -21,16 +26,15 @@ def advance_registration(
 ) -> RegistrationAdvance:
     text = message.strip()
     if draft.step == "name":
-        if not text or len(text) > 50:
+        name = _pet_name(text)
+        if not name or len(name) > 50:
             return _invalid(draft, "Indica un nombre de máximo 50 caracteres.")
-        return _accepted(replace(draft, name=text, step="species"))
+        return _accepted(replace(draft, name=name, step="species"))
     if draft.step == "species":
         item = _catalog_match(text, species)
         if item is None:
             return _invalid(draft, "La especie no coincide con el catálogo disponible.")
-        return _accepted(
-            replace(draft, species_id=item.id, species_name=item.name, step="race")
-        )
+        return _accepted(replace(draft, species_id=item.id, species_name=item.name, step="race"))
     if draft.step == "race":
         item = _catalog_match(text, races)
         if item is None:
@@ -55,10 +59,13 @@ def advance_registration(
         observations = None if normalized in {"ninguna", "ninguno", "no"} else text
         if observations is not None and (not observations or len(observations) > 500):
             return _invalid(draft, "Las observaciones deben tener máximo 500 caracteres.")
-        return _accepted(
-            replace(draft, observations=observations, step="confirmation")
-        )
+        return _accepted(replace(draft, observations=observations, step="confirmation"))
     return _invalid(draft, "El registro ya está listo para confirmar.")
+
+
+def _pet_name(message: str) -> str:
+    match = _NAME_INTRODUCTION.search(message)
+    return match.group(1).strip() if match is not None else message
 
 
 def _catalog_match(message: str, items: tuple[CatalogItem, ...]) -> CatalogItem | None:

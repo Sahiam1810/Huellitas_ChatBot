@@ -95,8 +95,12 @@ class DotNetPetProfileGateway:
     async def list_species(self, bearer_token: str) -> tuple[CatalogItem, ...]:
         return await self._catalog("/api/species", bearer_token)
 
-    async def list_races(self, bearer_token: str) -> tuple[CatalogItem, ...]:
-        return await self._catalog("/api/races", bearer_token)
+    async def list_races(
+        self, species_id: UUID, bearer_token: str
+    ) -> tuple[CatalogItem, ...]:
+        return await self._catalog(
+            f"/api/races?speciesId={species_id}", bearer_token
+        )
 
     async def _catalog(self, path: str, token: str) -> tuple[CatalogItem, ...]:
         payload = self._json(await self._request("GET", path, token))

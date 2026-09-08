@@ -3,7 +3,7 @@ from dataclasses import replace
 from app.modules.pet_profile.contracts_registration import PetRegistrationDraft
 from app.modules.pet_profile.services.registration_formatter import registration_prompt
 from app.modules.pet_profile.services.registration_parser import advance_registration
-from app.orchestration.module_executor import PendingConfirmation
+from app.orchestration.module_executor import ModuleContinuation, PendingConfirmation
 from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.ports.pet_profile_gateway import CatalogItem, PetProfileGateway
 
@@ -12,7 +12,10 @@ CONFIRMATION_ACTION = "pets.register"
 REGISTRATION_INTENT = "pet_profile.registration"
 
 
-def start_pet_registration(ttl_seconds: int) -> tuple[str, PendingConfirmation]:
+def start_pet_registration(
+    ttl_seconds: int,
+    continuation: ModuleContinuation | None = None,
+) -> tuple[str, PendingConfirmation]:
     draft = PetRegistrationDraft()
     pending = PendingConfirmation.create(
         module_id="pet_profile",
@@ -20,6 +23,7 @@ def start_pet_registration(ttl_seconds: int) -> tuple[str, PendingConfirmation]:
         payload=draft.to_payload(),
         ttl_seconds=ttl_seconds,
         intent=REGISTRATION_INTENT,
+        continuation=continuation,
     )
     return registration_prompt(draft), pending
 
@@ -31,20 +35,16 @@ async def collect_pet_registration(
     message: str,
 ) -> tuple[str, PendingConfirmation]:
     draft = PetRegistrationDraft.from_payload(pending.payload)
-    species, races = await _catalogs_for_step(gateway, bearer_token, draft.step)
+    species, races = await _catalogs_for_step(gateway, bearer_token, draft)
     advanced = advance_registration(draft, message, species, races)
     if not advanced.accepted:
         prompt = registration_prompt(draft, species or races)
         return f"{advanced.error} {prompt}", pending
 
     next_species, next_races = await _catalogs_for_step(
-        gateway, bearer_token, advanced.draft.step
+        gateway, bearer_token, advanced.draft
     )
-    action = (
-        CONFIRMATION_ACTION
-        if advanced.draft.step == "confirmation"
-        else COLLECTION_ACTION
-    )
+    action = CONFIRMATION_ACTION if advanced.draft.step == "confirmation" else COLLECTION_ACTION
     next_pending = replace(
         pending,
         action=action,
@@ -61,10 +61,10 @@ def registration_cancelled(message: str) -> bool:
 async def _catalogs_for_step(
     gateway: PetProfileGateway,
     bearer_token: str,
-    step: str,
+    draft: PetRegistrationDraft,
 ) -> tuple[tuple[CatalogItem, ...], tuple[CatalogItem, ...]]:
-    if step == "species":
+    if draft.step == "species":
         return await gateway.list_species(bearer_token), ()
-    if step == "race":
-        return (), await gateway.list_races(bearer_token)
+    if draft.step == "race" and draft.species_id is not None:
+        return (), await gateway.list_races(draft.species_id, bearer_token)
     return (), ()

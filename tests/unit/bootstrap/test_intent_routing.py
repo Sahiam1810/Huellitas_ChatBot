@@ -1,7 +1,9 @@
+from unittest.mock import ANY, Mock
 from uuid import uuid4
 
 import pytest
 
+from app.bootstrap import intent_routing
 from app.bootstrap.intent_routing import SEMANTIC_INTENTS, build_intent_router
 from app.orchestration.composite_intent_router import CompositeIntentRouter
 from app.orchestration.intent_router import RoutingKind
@@ -101,6 +103,34 @@ def test_keeps_deterministic_router_when_embeddings_are_unavailable() -> None:
     )
 
     assert isinstance(router, RuleBasedIntentRouter)
+
+
+def test_build_intent_router_passes_adjudicator_to_semantic_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    semantic_router = Mock()
+    constructor = Mock(return_value=semantic_router)
+    adjudicator = Mock()
+    monkeypatch.setattr(intent_routing, "SemanticIntentRouter", constructor)
+
+    router = intent_routing.build_intent_router(
+        Embeddings(),  # type: ignore[arg-type]
+        semantic_enabled=True,
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
+
+    assert isinstance(router, CompositeIntentRouter)
+    constructor.assert_called_once_with(
+        ANY,
+        SEMANTIC_INTENTS,
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
 
 
 @pytest.mark.anyio

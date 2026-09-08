@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Protocol
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -28,7 +29,9 @@ from app.orchestration.state import (
     routing_decision_from_state,
     routing_decision_to_state,
 )
-from app.shared.exceptions import GraphCompositionError
+from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
+
+MAX_MODULE_HANDOFFS = 2
 
 
 class GeneralMessageProcessor(Protocol):
@@ -132,21 +135,54 @@ def build_main_graph(
         decision = routing_decision_from_state(routing_state)
         if decision.intent is None:
             raise GraphCompositionError("Module execution routing is incomplete")
+        command = message_command_from_state(state["command"])
         registration = registry.get_registration(selected_module_id)
         if registration.executor is None:
             raise GraphCompositionError("Selected module executor is not configured")
-        result = await registration.executor.execute(
-            ModuleExecutionRequest(
-                command=message_command_from_state(state["command"]),
-                intent=decision.intent,
-                manifest=registration.manifest,
-                pending_confirmation=confirmation_from_state(state.get("confirmation")),
-            ),
-            runtime.context,
+        request = ModuleExecutionRequest(
+            command=command,
+            intent=decision.intent,
+            manifest=registration.manifest,
+            pending_confirmation=confirmation_from_state(state.get("confirmation")),
         )
+        messages: list[str] = []
+        handoff_count = 0
+        while True:
+            result = await registration.executor.execute(request, runtime.context)
+            if result.module_id.strip() != registration.manifest.module_id:
+                raise InvalidModuleResultError("module result does not match the selected module")
+            if result.message:
+                messages.append(result.message)
+            handoff = result.handoff
+            if handoff is None:
+                break
+            if handoff_count >= MAX_MODULE_HANDOFFS:
+                raise GraphCompositionError("Module handoff limit exceeded")
+            target = handoff.target
+            if target.module_id == registration.manifest.module_id:
+                raise GraphCompositionError("Module handoff cycle detected")
+            try:
+                next_registration = registry.get_registration(target.module_id)
+            except ModuleNotFoundError:
+                raise GraphCompositionError("Module handoff target is not registered") from None
+            if target.intent not in next_registration.manifest.intents:
+                raise GraphCompositionError("Module handoff intent is outside the target manifest")
+            if next_registration.executor is None:
+                raise GraphCompositionError("Module handoff target executor is not configured")
+            registration = next_registration
+            selected_module_id = registration.manifest.module_id
+            request = ModuleExecutionRequest(
+                command=command,
+                intent=target.intent,
+                manifest=registration.manifest,
+                continuation=handoff.continuation,
+            )
+            handoff_count += 1
+        result = replace(result, message="\n\n".join(messages), handoff=None)
         return {
             "module_result": module_result_to_state(result),
             "confirmation": confirmation_to_state(result.pending_confirmation),
+            "selected_module_id": selected_module_id,
         }
 
     async def normalize_result(state: MainGraphState) -> MainGraphState:
