@@ -28,6 +28,7 @@ from app.orchestration.state import (
     routing_decision_from_state,
     routing_decision_to_state,
 )
+from app.shared.enums import MessageResponseType
 from app.shared.exceptions import GraphCompositionError
 
 
@@ -65,6 +66,9 @@ def build_main_graph(
         command = message_command_from_state(state["command"])
         guest = is_guest(command.roles)
         pending = confirmation_from_state(state.get("confirmation"))
+        pending_expired = pending is not None and pending.is_expired()
+        if pending_expired:
+            pending = None
         if pending is not None and not guest:
             try:
                 registration = registry.get_registration(pending.module_id)
@@ -89,6 +93,23 @@ def build_main_graph(
             raise GraphCompositionError("Intent router is not configured")
         decision = await router.route(command, manifests)
         if decision.kind is not RoutingKind.MODULE:
+            if pending_expired:
+                return {
+                    "routing": routing_decision_to_state(decision),
+                    "confirmation": None,
+                    "fallback_reason": "confirmation_expired",
+                    "result": message_result_to_state(
+                        MessageResult(
+                            message=(
+                                "El proceso anterior venció. Indícame nuevamente qué deseas "
+                                "hacer, por ejemplo registrar una mascota o agendar una cita."
+                            ),
+                            conversation_id=command.conversation_id,
+                            correlation_id=command.correlation_id,
+                            response_type=MessageResponseType.RETRIEVED,
+                        )
+                    ),
+                }
             if guest:
                 return {
                     "routing": routing_decision_to_state(decision),
@@ -115,6 +136,7 @@ def build_main_graph(
         return {
             "routing": routing_decision_to_state(decision),
             "selected_module_id": registration.manifest.module_id,
+            "confirmation": None if pending_expired else state.get("confirmation"),
         }
 
     async def execute_general(state: MainGraphState) -> MainGraphState:
@@ -169,6 +191,8 @@ def build_main_graph(
         return "human" if state["command"]["is_escalated"] else "route"
 
     def after_routing(state: MainGraphState) -> str:
+        if state.get("result") is not None:
+            return "completed"
         if state.get("guest_link_required"):
             return "guest_link_required"
         return "module" if state.get("selected_module_id") is not None else "general"
@@ -197,6 +221,7 @@ def build_main_graph(
             "general": "execute_general",
             "module": "execute_module",
             "guest_link_required": "build_guest_link_required",
+            "completed": END,
         },
     )
     builder.add_edge("build_guest_link_required", END)
