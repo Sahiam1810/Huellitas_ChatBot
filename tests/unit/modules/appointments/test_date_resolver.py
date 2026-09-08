@@ -7,7 +7,6 @@ from app.modules.appointments.services.date_resolver import (
     resolve_appointment_date,
 )
 
-
 REFERENCE_DATE = date(2026, 9, 8)
 
 

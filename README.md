@@ -180,6 +180,12 @@ cancelar y reprogramar. Para lectura usa `GET /api/appointments/mine?scope=upcom
 
 El flujo solicita mascota, servicio, veterinario, fecha y horario; solo pide teléfono cuando el
 perfil no lo tiene. Antes de crear muestra un resumen y exige una respuesta explícita `sí` o `no`.
+La fecha puede escribirse con formato numérico o mediante expresiones naturales como `mañana`,
+`el martes de la próxima semana` o `el 15 de este mes`. Se interpreta en
+`HUELLITAS_DISPLAY_TIME_ZONE`; las fechas pasadas, inexistentes o ambiguas se rechazan sin asumir
+otro mes o año. Después de resolverla, el agente consulta en .NET los horarios reales del
+veterinario y servicio seleccionados. Si no existen horarios, conserva esas selecciones y solicita
+otra fecha.
 El borrador se conserva en el checkpoint del `conversationId`, queda ligado a la cuenta autenticada,
 vence en 10 minutos por defecto y puede abandonarse escribiendo `cancelar`. Los números de horario
 se resuelven contra el instante UTC que se mostró y nunca se desplazan silenciosamente si cambia la

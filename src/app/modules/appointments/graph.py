@@ -204,6 +204,7 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
+                self._today_provider(),
             )
             return self._message(message, pending=next_pending)
         choice = confirmation_choice(request.command.message)
@@ -246,6 +247,7 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
+                self._today_provider(),
             )
             return self._message(message, pending=next_pending)
         # OTP sent — confirm

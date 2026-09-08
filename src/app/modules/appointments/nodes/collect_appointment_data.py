@@ -8,7 +8,6 @@ from app.modules.appointments.contracts_booking import AppointmentBookingDraft
 from app.modules.appointments.nodes.check_availability import (
     current_slots,
     format_slots,
-    parse_booking_date,
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
 from app.modules.appointments.nodes.request_confirmation import booking_summary
@@ -105,7 +104,10 @@ async def advance_booking(
         slots = await _slots(gateway, draft, booking_date, bearer_token)
         if not slots:
             veterinarian = draft.veterinarian_name or "El veterinario seleccionado"
-            return f"{veterinarian} no tiene horarios disponibles ese día. Indica otra fecha.", pending
+            return (
+                f"{veterinarian} no tiene horarios disponibles ese día. Indica otra fecha.",
+                pending,
+            )
         advertised_starts = tuple(
             slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
             for slot in slots

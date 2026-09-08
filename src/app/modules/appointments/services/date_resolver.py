@@ -156,7 +156,9 @@ def resolve_appointment_date(text: str, reference_date: date) -> DateResolution:
 
 def _normalize(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value.casefold())
-    without_accents = "".join(character for character in decomposed if not unicodedata.combining(character))
+    without_accents = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
     without_punctuation = re.sub(r"[^a-z0-9\s/-]", " ", without_accents)
     return " ".join(without_punctuation.split())
 

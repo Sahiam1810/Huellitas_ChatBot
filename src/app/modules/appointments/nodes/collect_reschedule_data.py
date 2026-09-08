@@ -1,5 +1,5 @@
 from dataclasses import replace as _replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -10,6 +10,11 @@ from app.modules.appointments.nodes.check_availability import (
     parse_booking_date,
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
+from app.modules.appointments.services.date_resolver import (
+    NATURAL_DATE_PROMPT,
+    date_resolution_error_message,
+    resolve_appointment_date,
+)
 from app.modules.appointments.services.response_formatter import format_detail
 from app.orchestration.module_executor import PendingConfirmation
 from app.orchestration.rule_based_intent_router import normalize_for_routing
@@ -54,7 +59,8 @@ async def start_reschedule(
         message = (
             "Encontré esta cita:\n"
             + format_detail(cita, time_zone)
-            + "\n¿Para qué fecha deseas reprogramarla? (dd/mm/yyyy)"
+            + "\n"
+            + NATURAL_DATE_PROMPT
         )
         pending = PendingConfirmation.create(
             module_id="appointments",
@@ -103,6 +109,7 @@ async def advance_reschedule(
     pending: PendingConfirmation,
     message: str,
     time_zone: ZoneInfo,
+    local_today: date,
 ) -> tuple[str, PendingConfirmation | None]:
     payload = pending.payload
 
@@ -128,7 +135,7 @@ async def advance_reschedule(
             pending,
             payload=draft.to_payload(),
         )
-        return "¿Para qué fecha deseas reprogramarla? (dd/mm/yyyy)", new_pending
+        return NATURAL_DATE_PROMPT, new_pending
 
     # Strip non-dataclass fields before deserializing
     clean_payload = {k: v for k, v in payload.items() if k != "advertised_slot_ends_utc"}
@@ -136,9 +143,10 @@ async def advance_reschedule(
 
     # ── Step: date ───────────────────────────────────────────────────────────
     if draft.step == "date":
-        booking_date = parse_booking_date(message)
-        if booking_date is None:
-            return "No reconocí la fecha. Usa el formato dd/mm/yyyy.", pending
+        resolution = resolve_appointment_date(message, local_today)
+        if resolution.value is None:
+            return date_resolution_error_message(resolution.error), pending
+        booking_date = resolution.value
         slots = await current_slots(
             gateway,
             UUID(draft.veterinarian_id),  # type: ignore[arg-type]
@@ -162,7 +170,10 @@ async def advance_reschedule(
         new_payload = new_draft.to_payload()
         new_payload["advertised_slot_ends_utc"] = list(slot_ends)
         new_pending = _replace(pending, payload=new_payload)
-        return f"Horarios disponibles:\n{formatted}\n¿Cuál prefieres? Responde con el número.", new_pending
+        return (
+            f"Horarios disponibles:\n{formatted}\n¿Cuál prefieres? Responde con el número.",
+            new_pending,
+        )
 
     # ── Step: slot ───────────────────────────────────────────────────────────
     if draft.step == "slot":
@@ -191,12 +202,17 @@ async def advance_reschedule(
         live_starts = tuple(str(s.scheduled_start_utc) for s in live_slots)
         if chosen_start_str not in live_starts:
             # Slot no longer available — go back to date step
-            new_draft = _replace(draft, step="date", booking_date=None, advertised_slot_starts_utc=())
+            new_draft = _replace(
+                draft,
+                step="date",
+                booking_date=None,
+                advertised_slot_starts_utc=(),
+            )
             new_payload = new_draft.to_payload()
             new_payload.pop("advertised_slot_ends_utc", None)
             new_pending = _replace(pending, payload=new_payload)
             return (
-                "Ese horario ya no está disponible. ¿Para qué fecha deseas reprogramar? (dd/mm/yyyy)",
+                "Ese horario ya no está disponible. " + NATURAL_DATE_PROMPT,
                 new_pending,
             )
 
