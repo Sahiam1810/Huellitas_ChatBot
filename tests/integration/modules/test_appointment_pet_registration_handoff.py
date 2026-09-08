@@ -81,7 +81,10 @@ class PetGateway:
     async def list_species(self, bearer_token: str) -> tuple[CatalogItem, ...]:
         return (CatalogItem(SPECIES_ID, "Canino"),)
 
-    async def list_races(self, bearer_token: str) -> tuple[CatalogItem, ...]:
+    async def list_races(
+        self, species_id: UUID, bearer_token: str
+    ) -> tuple[CatalogItem, ...]:
+        assert species_id == SPECIES_ID
         return (CatalogItem(RACE_ID, "Mestizo"),)
 
     async def close(self) -> None:

@@ -5,8 +5,8 @@ from app.bootstrap.module_registry import build_module_registry
 from app.bootstrap.settings import Settings
 from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
-from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.modules.preventive_care.manifest import PREVENTIVE_CARE_MANIFEST
+from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
 from app.orchestration.module_registry import ModuleRegistry
 
@@ -21,7 +21,9 @@ class PetGateway:
     async def list_species(self, bearer_token: str) -> tuple[object, ...]:
         return ()
 
-    async def list_races(self, bearer_token: str) -> tuple[object, ...]:
+    async def list_races(
+        self, species_id: object, bearer_token: str
+    ) -> tuple[object, ...]:
         return ()
 
     async def close(self) -> None:

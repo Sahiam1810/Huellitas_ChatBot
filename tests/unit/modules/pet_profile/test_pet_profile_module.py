@@ -55,7 +55,10 @@ class Gateway:
     async def list_species(self, bearer_token: str) -> tuple[CatalogItem, ...]:
         return (CatalogItem(self.profile.species_id, "Canino"),)
 
-    async def list_races(self, bearer_token: str) -> tuple[CatalogItem, ...]:
+    async def list_races(
+        self, species_id: UUID, bearer_token: str
+    ) -> tuple[CatalogItem, ...]:
+        assert species_id == self.profile.species_id
         return (CatalogItem(self.profile.race_id, "Mestizo"),)
 
     async def create_owned(self, bearer_token: str, registration: PetRegistration) -> PetProfile:
