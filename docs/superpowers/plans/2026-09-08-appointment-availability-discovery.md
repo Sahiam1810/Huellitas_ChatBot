@@ -220,4 +220,5 @@ Expected: clean working tree with the discovery changes committed on `feat/natur
 - [x] Preserve `PAST`, `INVALID`, and `AMBIGUOUS` date errors even when the message also asks about availability.
 - [x] Recognize plural dates, available schedules, and direct availability requests.
 - [x] Preserve and display the veterinarian name during rescheduling discovery.
+- [x] Keep legacy pending rescheduling selections without a veterinarian name compatible.
 - [x] Add regression tests for all three review findings.

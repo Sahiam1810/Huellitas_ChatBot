@@ -793,6 +793,43 @@ async def test_reschedule_start_with_no_appointments_returns_no_appointments_mes
 
 
 @pytest.mark.anyio
+async def test_reschedule_accepts_legacy_selection_draft_without_veterinarian_name() -> None:
+    from app.orchestration.module_executor import PendingConfirmation
+
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.collect",
+        payload={
+            "account_id": str(DEFAULT_ACCOUNT_ID),
+            "_selecting": True,
+            "options": [
+                {
+                    "id": "11111111-1111-1111-1111-111111111111",
+                    "avail_id": "66666666-6666-6666-6666-666666666666",
+                    "service_id": "44444444-4444-4444-4444-444444444444",
+                    "vet_id": "33333333-3333-3333-3333-333333333333",
+                    "label": "Luna — Consulta general",
+                }
+            ],
+        },
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
+
+    result = await AppointmentsModuleExecutor(
+        GatewayWithReschedule(), "America/Bogota"
+    ).execute(request("1", "appointments.rescheduling", pending), context())
+
+    assert result.message == "¿Para qué fecha deseas reprogramar la cita?"
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+    assert result.pending_confirmation.payload["veterinarian_id"] == (
+        "33333333-3333-3333-3333-333333333333"
+    )
+    assert "veterinarian_name" not in result.pending_confirmation.payload
+
+
+@pytest.mark.anyio
 async def test_reschedule_date_step_shows_available_slots() -> None:
     from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
     from app.orchestration.module_executor import PendingConfirmation

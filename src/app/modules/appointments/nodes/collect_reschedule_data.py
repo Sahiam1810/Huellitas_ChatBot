@@ -135,7 +135,7 @@ async def advance_reschedule(
             step="date",
             service_id=opt_data["service_id"],
             veterinarian_id=opt_data["vet_id"],
-            veterinarian_name=opt_data["vet_name"],
+            veterinarian_name=opt_data.get("vet_name"),
         )
         new_pending = _replace(
             pending,
