@@ -29,21 +29,21 @@
 - Consumes: `PendingConfirmation.expires_at`, `IntentRouter.route(...)`.
 - Produces: `PendingConfirmation.is_expired(now: datetime | None = None) -> bool` and routing behavior that clears an expired checkpoint before selecting a module.
 
-- [ ] **Step 1: Write failing graph tests**
+- [x] **Step 1: Write failing graph tests**
 
 Add one test with an expired `pet_profile.registration` confirmation and a fresh appointment command. Assert that the router is called, the appointments executor receives `pending_confirmation=None`, and the stale pet executor is not called. Add one test where routing is unknown and assert a deterministic expiration message rather than a call to the general processor.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/unit/orchestration/test_main_graph.py -q`
 
 Expected: the stale confirmation captures the command or the general processor is called.
 
-- [ ] **Step 3: Implement minimal expiration handling**
+- [x] **Step 3: Implement minimal expiration handling**
 
 Add `PendingConfirmation.is_expired()` using UTC time. In `route_intent`, clear expired confirmation before routing. Preserve the non-expired confirmation path unchanged. When an expired confirmation cannot be freshly routed, return a deterministic result telling the user that the prior operation expired and to state the operation again.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest tests/unit/orchestration/test_main_graph.py -q`
 
@@ -64,19 +64,19 @@ Expected: all tests pass.
 - Produces: claim type `token_use`, value `telegram_agent`, policy `AuthorizationPolicies.TelegramAgentOnly`.
 - Policy contract: authenticated principal with exact `token_use=telegram_agent`; `telegram_guest` and ordinary JWTs are denied.
 
-- [ ] **Step 1: Write failing token and policy tests**
+- [x] **Step 1: Write failing token and policy tests**
 
 Assert that `GetAsync` emits `token_use=telegram_agent`, `GetGuest` does not emit that value, and policy evaluation succeeds only for the delegated value.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the two focused test classes with `dotnet test --filter` and expect missing claim/policy failures.
 
-- [ ] **Step 3: Implement claim emission and policy**
+- [x] **Step 3: Implement claim emission and policy**
 
 Extend token issuance with an optional trusted token-use value, invoke it only from `AgentDelegatedIdentityProvider.GetAsync`, and register `TelegramAgentOnly` with `RequireClaim`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the same focused classes and expect all tests to pass.
 
@@ -90,21 +90,21 @@ Run the same focused classes and expect all tests to pass.
 - Consumes: existing pet DTOs/mappings and `GetMyPetsQuery`, `RegisterMyPetCommand`, `UpdateMyPetProfileCommand`.
 - Produces: `GET/POST /api/bot/pets` and `PATCH /api/bot/pets/{petId}` under `TelegramAgentOnly`.
 
-- [ ] **Step 1: Write failing controller and authorization tests**
+- [x] **Step 1: Write failing controller and authorization tests**
 
 Assert JWT `sub` is passed to the existing use cases, response shapes/statuses match the current gateway contract, invalid `sub` returns 401, and an ordinary authenticated token receives 403 in an HTTP authorization test.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `dotnet test tests/Api.Tests/Api.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~BotPetsApiTests`
 
 Expected: route/controller is missing.
 
-- [ ] **Step 3: Implement controller**
+- [x] **Step 3: Implement controller**
 
 Create only API adapters; do not duplicate domain/application logic. Derive account ID from `sub` and dispatch existing requests.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the same focused test class and the existing `PetsMineGoneTests`.
 
@@ -118,19 +118,19 @@ Run the same focused test class and the existing `PetsMineGoneTests`.
 - Consumes: existing appointment DTOs/mappings and ownership-safe self-service queries/commands.
 - Produces: bot routes for list, detail, booking options, slots, create and cancel under `TelegramAgentOnly`.
 
-- [ ] **Step 1: Write failing controller and authorization tests**
+- [x] **Step 1: Write failing controller and authorization tests**
 
 Cover derived `sub`, query parameters, required idempotency key, success statuses, invalid identity, and denial without the delegated claim.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the new test class and expect missing route/controller failures.
 
-- [ ] **Step 3: Implement controller**
+- [x] **Step 3: Implement controller**
 
 Adapt requests to `GetMyAppointmentsQuery`, `GetMyAppointmentByIdQuery`, `GetAppointmentBookingOptionsQuery`, `GetAppointmentBookingSlotsQuery`, `CreateMyAppointmentCommand` and `CancelMyAppointmentCommand`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the new class plus `AppointmentSelfServiceQueryApiTests`, `MyAppointmentsCancelGoneTests`, and the four existing Application handler classes.
 
@@ -146,15 +146,15 @@ Run the new class plus `AppointmentSelfServiceQueryApiTests`, `MyAppointmentsCan
 - Consumes: backend contracts from Tasks 3–4.
 - Produces: unchanged Python gateway interfaces with new HTTP paths.
 
-- [ ] **Step 1: Change path expectations in tests and verify RED**
+- [x] **Step 1: Change path expectations in tests and verify RED**
 
 Expected paths are `/api/bot/pets...` and `/api/bot/appointments...`; run both files and confirm old `/mine` calls fail.
 
-- [ ] **Step 2: Implement path-only adapter changes**
+- [x] **Step 2: Implement path-only adapter changes**
 
 Keep parsing, payloads, error translation and port signatures unchanged.
 
-- [ ] **Step 3: Verify GREEN**
+- [x] **Step 3: Verify GREEN**
 
 Run both adapter test files and expect all tests to pass.
 
@@ -166,15 +166,14 @@ Run both adapter test files and expect all tests to pass.
 **Interfaces:**
 - Verifies the combined contract; produces no new API.
 
-- [ ] **Step 1: Run focused chatbot regression**
+- [x] **Step 1: Run focused chatbot regression**
 
 Run the main graph, appointment module, pet-profile module and two gateway test files. Expected: all pass.
 
-- [ ] **Step 2: Run focused backend regression**
+- [x] **Step 2: Run focused backend regression**
 
 Build the solution, then run delegated-token/policy, BotPets, BotAppointments, legacy 410 and relevant Application handler tests. Expected: build and tests pass.
 
-- [ ] **Step 3: Review compatibility**
+- [x] **Step 3: Review compatibility**
 
 Confirm no migration, seed or `.env` secret changed; run `git diff --check`; verify `/mine` remains 410 and new bot routes accept only delegated Telegram-agent JWTs.
-

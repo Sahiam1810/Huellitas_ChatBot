@@ -57,4 +57,3 @@ Use focused tests only:
 - backend HTTP: successful bot pet/appointment actions, ownership derivation, ordinary/guest JWT denial, legacy 410 preservation;
 - chatbot gateways: exact new paths and unchanged payload parsing;
 - module regression: appointment booking and pet registration.
-
