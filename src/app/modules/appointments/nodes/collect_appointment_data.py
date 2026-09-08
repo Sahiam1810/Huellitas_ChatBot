@@ -12,7 +12,11 @@ from app.modules.appointments.nodes.check_availability import (
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
 from app.modules.appointments.nodes.request_confirmation import booking_summary
-from app.orchestration.module_executor import PendingConfirmation
+from app.orchestration.module_executor import (
+    ModuleContinuation,
+    ModuleHandoff,
+    PendingConfirmation,
+)
 from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.ports.appointments_gateway import AppointmentBookingOptions, AppointmentsGateway
 
@@ -26,13 +30,22 @@ async def start_booking(
     bearer_token: str,
     ttl_seconds: int,
     account_id: UUID,
-) -> tuple[str, PendingConfirmation | None]:
+) -> tuple[str, PendingConfirmation | None, ModuleHandoff | None]:
     options = await gateway.get_booking_options(bearer_token)
+    if not options.pets:
+        return (
+            "No tienes mascotas registradas. Vamos a registrar una antes de continuar con la cita.",
+            None,
+            ModuleHandoff(
+                target=ModuleContinuation("pet_profile", "pets.register"),
+                continuation=ModuleContinuation("appointments", "appointments.book"),
+            ),
+        )
     unavailable = _unavailable_reason(options)
     if unavailable is not None:
-        return unavailable, None
+        return unavailable, None, None
     draft = AppointmentBookingDraft(account_id=str(account_id))
-    return _pet_prompt(options), _pending(draft, ttl_seconds)
+    return _pet_prompt(options), _pending(draft, ttl_seconds), None
 
 
 async def advance_booking(
@@ -118,9 +131,7 @@ async def advance_booking(
             (
                 slot
                 for slot in slots
-                if slot.scheduled_start_utc.astimezone(UTC)
-                .isoformat()
-                .replace("+00:00", "Z")
+                if slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
                 == advertised_start
             ),
             None,
@@ -200,8 +211,6 @@ def _replace_pending(
 
 
 def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:
-    if not options.pets:
-        return "No tienes mascotas registradas. Registra una mascota antes de agendar una cita."
     if not options.services:
         return "No hay servicios activos disponibles para agendar en este momento."
     if not options.veterinarians:

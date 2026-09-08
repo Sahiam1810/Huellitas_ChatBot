@@ -26,6 +26,7 @@ from app.modules.pet_profile.state import PetProfileGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
     ModuleExecutionRequest,
+    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -100,7 +101,10 @@ class PetProfileModuleExecutor:
         if request.intent == "pet_profile.registration":
             return await self._continue_registration(request, context)
         if request.intent == "pets.register":
-            message, pending = start_pet_registration(self._confirmation_ttl_seconds)
+            message, pending = start_pet_registration(
+                self._confirmation_ttl_seconds,
+                request.continuation,
+            )
             return self._message(message, pending=pending)
 
         profiles = await fetch_owned_profiles(self._gateway, context.bearer_token)
@@ -140,9 +144,7 @@ class PetProfileModuleExecutor:
         if pending is None or pending.action not in {COLLECTION_ACTION, CONFIRMATION_ACTION}:
             return self._message("No hay un registro de mascota pendiente.")
         if confirmation_expired(pending):
-            return self._message(
-                "El registro venció. Solicita registrar la mascota nuevamente."
-            )
+            return self._message("El registro venció. Solicita registrar la mascota nuevamente.")
         if registration_cancelled(request.command.message):
             return self._message("Cancelé el registro; no se creó ninguna mascota.")
         if pending.action == COLLECTION_ACTION:
@@ -162,11 +164,14 @@ class PetProfileModuleExecutor:
                 "Necesito una confirmación explícita. Responde sí o no.",
                 pending=pending,
             )
-        created = await submit_pet_registration(
-            self._gateway, context.bearer_token, pending
-        )
+        created = await submit_pet_registration(self._gateway, context.bearer_token, pending)
         return self._message(
-            f"{created.name} fue registrada correctamente como tu mascota."
+            f"{created.name} fue registrada correctamente como tu mascota.",
+            handoff=(
+                ModuleHandoff(target=pending.continuation)
+                if pending.continuation is not None
+                else None
+            ),
         )
 
     async def _continue_confirmation(
@@ -192,10 +197,16 @@ class PetProfileModuleExecutor:
         return self._message(f"El perfil de {updated.name} fue actualizado correctamente.")
 
     @staticmethod
-    def _message(message: str, *, pending: PendingConfirmation | None = None) -> ModuleResult:
+    def _message(
+        message: str,
+        *,
+        pending: PendingConfirmation | None = None,
+        handoff: ModuleHandoff | None = None,
+    ) -> ModuleResult:
         return ModuleResult(
             module_id="pet_profile",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
             pending_confirmation=pending,
+            handoff=handoff,
         )

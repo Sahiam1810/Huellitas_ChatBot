@@ -4,7 +4,11 @@ from uuid import UUID
 
 from app.orchestration.intent_router import RoutingDecision, RoutingKind
 from app.orchestration.message_processor import MessageCommand, MessageResult
-from app.orchestration.module_executor import ModuleResult, PendingConfirmation
+from app.orchestration.module_executor import (
+    ModuleContinuation,
+    ModuleResult,
+    PendingConfirmation,
+)
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.chat_model import ModelProvider
 from app.shared.enums import AccessRequirement, MessageResponseType
@@ -224,12 +228,21 @@ def confirmation_to_state(
 ) -> dict[str, object] | None:
     if confirmation is None:
         return None
+    continuation = confirmation.continuation
     return {
         "module_id": confirmation.module_id,
         "action": confirmation.action,
         "payload": confirmation.payload,
         "expires_at": confirmation.expires_at.isoformat(),
         "intent": confirmation.intent,
+        "continuation": (
+            {
+                "module_id": continuation.module_id,
+                "intent": continuation.intent,
+            }
+            if continuation is not None
+            else None
+        ),
     }
 
 
@@ -239,12 +252,20 @@ def confirmation_from_state(state: dict[str, object] | None) -> PendingConfirmat
     payload = state["payload"]
     if not isinstance(payload, dict):
         raise ValueError("confirmation payload must be an object")
+    continuation_state = state.get("continuation")
+    continuation = None
+    if isinstance(continuation_state, dict):
+        continuation = ModuleContinuation(
+            module_id=str(continuation_state["module_id"]),
+            intent=str(continuation_state["intent"]),
+        )
     return PendingConfirmation(
         module_id=str(state["module_id"]),
         action=str(state["action"]),
         payload=payload,
         expires_at=datetime.fromisoformat(str(state["expires_at"])),
         intent=str(state["intent"]),
+        continuation=continuation,
     )
 
 

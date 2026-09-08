@@ -21,6 +21,7 @@ from app.adapters.knowledge.service_knowledge import ServiceKnowledgeRetriever
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
 from app.adapters.vector_store.vector_store_factory import create_vector_store
+from app.bootstrap.intent_routing import build_intent_router
 from app.bootstrap.module_registry import build_module_registry
 from app.bootstrap.settings import (
     ActiveCheckpointConfiguration,
@@ -32,11 +33,6 @@ from app.bootstrap.settings import (
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.document_lock import DocumentWriteLock
 from app.knowledge.management_service import KnowledgeManagementService
-from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
-from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
-from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
-from app.modules.preventive_care.routing import PREVENTIVE_CARE_ROUTING_RULES
-from app.modules.veterinary_guidance.routing import VETERINARY_GUIDANCE_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
@@ -48,7 +44,7 @@ from app.orchestration.idempotent_message_processor import IdempotentMessageProc
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
-from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
+from app.orchestration.model_intent_adjudicator import ModelIntentAdjudicator
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.checkpoint_store import CheckpointStore
 from app.ports.runtime_store import RuntimeStore
@@ -224,6 +220,34 @@ def build_lifespan(
             app.state.dependencies.chat_model = chat_model
             embedding_model = create_embedding_model(settings)
             app.state.dependencies.embedding_model = embedding_model
+            intent_adjudicator = None
+            intent_adjudicator_configuration = (
+                settings.active_intent_adjudicator_configuration()
+            )
+            if intent_adjudicator_configuration is not None and chat_model is not None:
+                configured_model = intent_adjudicator_configuration.model
+                if configured_model is None or configured_model == chat_model.model:
+                    resolved_adjudicator_model = chat_model
+                else:
+                    resolved_adjudicator_model = create_chat_model(
+                        settings,
+                        model_override=configured_model,
+                        timeout_override=intent_adjudicator_configuration.timeout_seconds,
+                    )
+                    app.state.dependencies.intent_adjudicator_model = (
+                        resolved_adjudicator_model
+                    )
+                if resolved_adjudicator_model is not None:
+                    intent_adjudicator = ModelIntentAdjudicator(
+                        resolved_adjudicator_model,
+                        minimum_confidence=(
+                            intent_adjudicator_configuration.minimum_confidence
+                        ),
+                        max_output_tokens=(
+                            intent_adjudicator_configuration.max_output_tokens
+                        ),
+                        timeout_seconds=intent_adjudicator_configuration.timeout_seconds,
+                    )
             context_retriever = None
             memory_writer = None
             if (
@@ -309,12 +333,17 @@ def build_lifespan(
             graph_checkpointer = checkpoint_store.saver
             intent_router = None
             if module_registry.list_registrations():
-                intent_router = RuleBasedIntentRouter(
-                    PET_PROFILE_ROUTING_RULES
-                    + SERVICES_CATALOG_ROUTING_RULES
-                    + APPOINTMENTS_ROUTING_RULES
-                    + VETERINARY_GUIDANCE_ROUTING_RULES
-                    + PREVENTIVE_CARE_ROUTING_RULES
+                intent_router = build_intent_router(
+                    embedding_model,
+                    semantic_enabled=settings.intent_semantic_routing_enabled,
+                    minimum_score=settings.intent_semantic_min_score,
+                    minimum_margin=settings.intent_semantic_min_margin,
+                    adjudicator=intent_adjudicator,
+                    adjudication_margin=(
+                        intent_adjudicator_configuration.trigger_margin
+                        if intent_adjudicator_configuration is not None
+                        else None
+                    ),
                 )
             main_graph = build_main_graph(
                 general_processor=general_processor,
@@ -370,6 +399,10 @@ def build_lifespan(
             app.state.dependencies.conversation_memory_store = None
             chat_model = app.state.dependencies.chat_model
             app.state.dependencies.chat_model = None
+            intent_adjudicator_model = (
+                app.state.dependencies.intent_adjudicator_model
+            )
+            app.state.dependencies.intent_adjudicator_model = None
             embedding_model = app.state.dependencies.embedding_model
             app.state.dependencies.embedding_model = None
             vector_store = app.state.dependencies.vector_store
@@ -407,28 +440,32 @@ def build_lifespan(
                                     await conversation_lock.close()
                             finally:
                                 try:
-                                    if chat_model is not None:
-                                        await chat_model.close()
+                                    if intent_adjudicator_model is not None:
+                                        await intent_adjudicator_model.close()
                                 finally:
                                     try:
-                                        if embedding_model is not None:
-                                            await embedding_model.close()
+                                        if chat_model is not None:
+                                            await chat_model.close()
                                     finally:
                                         try:
-                                            if vector_store is not None:
-                                                await vector_store.close()
+                                            if embedding_model is not None:
+                                                await embedding_model.close()
                                         finally:
                                             try:
-                                                if runtime_store is not None:
-                                                    await runtime_store.close()
+                                                if vector_store is not None:
+                                                    await vector_store.close()
                                             finally:
                                                 try:
-                                                    if checkpoint_store is not None:
-                                                        await checkpoint_store.close()
+                                                    if runtime_store is not None:
+                                                        await runtime_store.close()
                                                 finally:
-                                                    logger.info(
-                                                        "application_stopped name=%s",
-                                                        settings.app_name,
-                                                    )
+                                                    try:
+                                                        if checkpoint_store is not None:
+                                                            await checkpoint_store.close()
+                                                    finally:
+                                                        logger.info(
+                                                            "application_stopped name=%s",
+                                                            settings.app_name,
+                                                        )
 
     return lifespan

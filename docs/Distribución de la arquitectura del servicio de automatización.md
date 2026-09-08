@@ -394,7 +394,14 @@ No incorpora campos privados de citas, orientación, perfiles o recordatorios.
 
 ## Registro de módulos
 
-Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` cuando sus dependencias están disponibles. Los módulos que requieren datos privados solo se registran con la integración .NET habilitada; los módulos de conocimiento requieren sus puertos correspondientes. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico recibe reglas declaradas por los módulos y el grafo principal no contiene condiciones específicas de mascotas, servicios, citas u orientación veterinaria.
+Existe una sola instancia activa de `ModuleRegistry`. Orquestación define su contrato y `bootstrap` registra `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` cuando sus dependencias están disponibles. Los módulos que requieren datos privados solo se registran con la integración .NET habilitada; los módulos de conocimiento requieren sus puertos correspondientes. Los conflictos de identificador y de intención exacta se rechazan. Cada manifiesto también declara si admite la identidad interna invitada. El router genérico combina reglas determinísticas de alta confianza con un fallback de similitud semántica declarado por los propios módulos; el grafo principal no contiene condiciones específicas de mascotas, servicios, citas u orientación veterinaria.
+
+La clasificación semántica utiliza el puerto neutral `EmbeddingModel`, no depende de Qdrant y
+solo puede elegir pares `module_id/intent` presentes en el registro. Exige un puntaje mínimo y
+un margen sobre la segunda intención; una confianza insuficiente produce una ruta desconocida
+y un empate produce una ruta ambigua. Los prototipos se calculan una vez por proceso y cada
+consulta genera solamente el embedding del mensaje. Si el proveedor falla, se conserva la
+decisión determinística original y el servicio no se interrumpe.
 
 Cada manifiesto declara:
 
@@ -981,7 +988,7 @@ El incremento actual no implementa:
 - Consulta o persistencia del historial canónico.
 - Bloqueos distribuidos y coordinación segura entre múltiples réplicas.
 - Implementación de los módulos veterinarios todavía pendientes.
-- Enrutamiento de intención con un modelo; los módulos activos usan reglas deterministas.
+- Evaluación continua de los umbrales y ejemplos del enrutamiento semántico con mensajes reales.
 - Usos funcionales adicionales de Redis para idempotencia, caché, locks, colas o sesiones.
 - Herramientas, streaming o respuestas estructuradas de negocio.
 
@@ -1008,6 +1015,9 @@ HTTP/JWT -> disponibilidad de checkpoint -> idempotencia -> bloqueo local por co
 - El registro asocia `ModuleManifest` con `ModuleExecutor`; producción registra `pet_profile`, `services_catalog`, `appointments`, `veterinary_guidance` y `preventive_care` cuando están configuradas sus dependencias.
 - Una conversación marcada como escalada finaliza antes del routing, el modelo, Qdrant o cualquier ejecutor modular.
 - Una intención desconocida o ambigua utiliza el fallback general y nunca inventa un módulo.
+- El fallback general distingue orientación veterinaria de datos operativos: sin contexto oficial
+  no puede afirmar servicios, precios, disponibilidad, mascotas, citas, vacunas ni registros de
+  Huellitas.
 
 El rol exacto `TelegramGuest` activa una compuerta previa al routing modular:
 la ejecución utiliza el fallback cerrado `guest_general_only` y solo llega al

@@ -11,12 +11,25 @@ from app.shared.enums import MessageResponseType
 
 
 @dataclass(frozen=True, slots=True)
+class ModuleContinuation:
+    module_id: str
+    intent: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleHandoff:
+    target: ModuleContinuation
+    continuation: ModuleContinuation | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PendingConfirmation:
     module_id: str
     action: str
     payload: dict[str, object]
     expires_at: datetime
     intent: str
+    continuation: ModuleContinuation | None = None
 
     @classmethod
     def create(
@@ -27,6 +40,7 @@ class PendingConfirmation:
         payload: dict[str, object],
         ttl_seconds: int,
         intent: str | None = None,
+        continuation: ModuleContinuation | None = None,
     ) -> "PendingConfirmation":
         return cls(
             module_id=module_id,
@@ -34,6 +48,7 @@ class PendingConfirmation:
             payload=payload,
             expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
             intent=intent or f"{module_id}.confirmation",
+            continuation=continuation,
         )
 
     def is_expired(self, now: datetime | None = None) -> bool:
@@ -50,6 +65,7 @@ class ModuleExecutionRequest:
     intent: str
     manifest: ModuleManifest
     pending_confirmation: PendingConfirmation | None = None
+    continuation: ModuleContinuation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +79,7 @@ class ModuleResult:
     output_tokens: int | None = None
     rag: RagMessageResult = field(default_factory=RagMessageResult.disabled)
     pending_confirmation: PendingConfirmation | None = None
+    handoff: ModuleHandoff | None = None
 
 
 @runtime_checkable

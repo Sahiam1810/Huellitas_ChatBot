@@ -234,6 +234,56 @@ Al habilitarla son obligatorios una API key exclusiva, el modelo y sus dimension
 
 El arranque solo construye y registra el adaptador detrás de `EmbeddingModel`; no solicita vectores ni consume créditos. Con RAG habilitado, `POST /api/v1/messages` utiliza `embed_query` y la administración documental utiliza `embed_documents` internamente al registrar o reemplazar contenido. Ninguna operación de embeddings se expone directamente como endpoint HTTP. Los reintentos automáticos del SDK están deshabilitados y sus errores se traducen a categorías neutrales.
 
+### Enrutamiento semántico de módulos
+
+Cuando embeddings está disponible, las preguntas que no coinciden con una regla
+determinística se comparan semánticamente con las intenciones declaradas por los módulos:
+
+```dotenv
+HUELLITAS_INTENT_SEMANTIC_ROUTING_ENABLED="true"
+HUELLITAS_INTENT_SEMANTIC_MIN_SCORE="0.45"
+HUELLITAS_INTENT_SEMANTIC_MIN_MARGIN="0.03"
+```
+
+El puntaje mínimo evita seleccionar un módulo para mensajes sin relación y el margen
+mínimo evita escoger arbitrariamente entre dos intenciones similares. Esta clasificación
+utiliza el proveedor neutral de embeddings, no requiere Qdrant y nunca convierte los
+ejemplos semánticos en datos de negocio. Si embeddings no está configurado o falla, las
+reglas determinísticas siguen disponibles y el fallback general permanece restringido.
+
+El enrutamiento semántico de módulos no es el routing adaptativo de RAG: el primero elige
+el ejecutor especializado; el segundo decide si reutilizar o adjuntar conocimiento después.
+
+#### Adjudicación de intenciones cercanas
+
+Cuando las dos mejores coincidencias pertenecen a módulos diferentes y su margen es
+pequeño, puede habilitarse un clasificador acotado para desempatar antes de ejecutar un
+módulo. El clasificador solo recibe hasta tres intenciones registradas, devuelve una de
+ellas mediante JSON estricto y no responde al usuario ni ejecuta herramientas:
+
+```dotenv
+HUELLITAS_INTENT_ADJUDICATOR_ENABLED="true"
+HUELLITAS_INTENT_ADJUDICATOR_MODEL=""
+HUELLITAS_INTENT_ADJUDICATOR_TRIGGER_MARGIN="0.10"
+HUELLITAS_INTENT_ADJUDICATOR_MIN_CONFIDENCE="0.70"
+HUELLITAS_INTENT_ADJUDICATOR_MAX_OUTPUT_TOKENS="60"
+HUELLITAS_INTENT_ADJUDICATOR_TIMEOUT_SECONDS="5"
+```
+
+Un valor vacío en `HUELLITAS_INTENT_ADJUDICATOR_MODEL` reutiliza el modelo conversacional
+activo. También puede indicarse un modelo más económico del mismo proveedor; reutilizará
+sus credenciales, pero tendrá su propio límite de salida y timeout. Para habilitarlo deben
+estar activos chat, embeddings y `HUELLITAS_INTENT_SEMANTIC_ROUTING_ENABLED`.
+
+Con los valores anteriores, una diferencia inferior a `0.10` activa una sola llamada de
+clasificación. Una salida inválida, una confianza inferior a `0.70`, un timeout o una
+intención no registrada se consideran ambiguos de forma segura. Las reglas determinísticas
+siguen teniendo prioridad y las coincidencias claras no consumen esta llamada adicional.
+
+Después de reconstruir el contenedor, una comprobación representativa es enviar
+`Quiero sacar una consulta general para mi cachorro`: debe iniciar el flujo de citas y no
+responder como orientación veterinaria general.
+
 ## Colecciones para RAG
 
 La preparación vectorial está deshabilitada por defecto. Requiere habilitar conjuntamente Qdrant, embeddings y RAG:

@@ -9,10 +9,28 @@ from app.bootstrap.settings import Settings
 from app.ports.chat_model import ChatModel, ModelProvider
 
 
-def create_chat_model(settings: Settings) -> ChatModel | None:
+def create_chat_model(
+    settings: Settings,
+    *,
+    model_override: str | None = None,
+    timeout_override: float | None = None,
+) -> ChatModel | None:
     configuration = settings.active_model_configuration()
     if configuration is None:
         return None
+
+    updates: dict[str, object] = {}
+    if model_override is not None:
+        normalized_model = model_override.strip()
+        if not normalized_model:
+            raise ValueError("Chat model override cannot be blank")
+        updates["model"] = normalized_model
+    if timeout_override is not None:
+        if timeout_override <= 0:
+            raise ValueError("Chat model timeout override must be positive")
+        updates["timeout_seconds"] = timeout_override
+    if updates:
+        configuration = configuration.model_copy(update=updates)
 
     api_key = configuration.api_key.get_secret_value()
 

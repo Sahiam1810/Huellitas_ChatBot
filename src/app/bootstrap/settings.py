@@ -54,6 +54,16 @@ class ActiveModelConfiguration(BaseModel):
     base_url: AnyHttpUrl | None = None
 
 
+class ActiveIntentAdjudicatorConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    model: str | None
+    trigger_margin: float
+    minimum_confidence: float
+    max_output_tokens: int
+    timeout_seconds: float
+
+
 class ActiveIdempotencyConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -235,6 +245,16 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     embedding_max_batch_size: int = Field(default=64, ge=1, le=2048)
 
+    intent_semantic_routing_enabled: bool = True
+    intent_semantic_min_score: float = Field(default=0.45, ge=0, le=1)
+    intent_semantic_min_margin: float = Field(default=0.03, ge=0, le=1)
+    intent_adjudicator_enabled: bool = False
+    intent_adjudicator_model: str | None = None
+    intent_adjudicator_trigger_margin: float = Field(default=0.10, ge=0, le=1)
+    intent_adjudicator_min_confidence: float = Field(default=0.70, ge=0, le=1)
+    intent_adjudicator_max_output_tokens: int = Field(default=60, ge=16, le=256)
+    intent_adjudicator_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+
     rag_enabled: bool = False
     qdrant_global_knowledge_collection: str = Field(default="knowledge_global", min_length=1)
     qdrant_conversation_memory_collection: str = Field(default="conversation_memory", min_length=1)
@@ -289,6 +309,17 @@ class Settings(BaseSettings):
                 raise ValueError("RAG must be enabled when semantic routing is enabled")
             if self.qdrant_vector_distance is not VectorDistance.COSINE:
                 raise ValueError("RAG semantic routing requires cosine distance")
+        if self.intent_adjudicator_enabled:
+            if not self.chat_enabled:
+                raise ValueError("chat must be enabled for intent adjudication")
+            if not self.intent_semantic_routing_enabled:
+                raise ValueError("semantic intent routing must be enabled for adjudication")
+            if not self.embedding_enabled:
+                raise ValueError("embeddings must be enabled for intent adjudication")
+            if self.intent_adjudicator_trigger_margin < self.intent_semantic_min_margin:
+                raise ValueError(
+                    "Intent adjudicator trigger margin must not be smaller than semantic margin"
+                )
         if self.chat_enabled:
             api_key, model, _, _ = self._selected_values()
             if api_key is None or not api_key.get_secret_value().strip():
@@ -374,6 +405,21 @@ class Settings(BaseSettings):
             model=model,
             timeout_seconds=timeout_seconds,
             base_url=base_url,
+        )
+
+    def active_intent_adjudicator_configuration(
+        self,
+    ) -> ActiveIntentAdjudicatorConfiguration | None:
+        if not self.intent_adjudicator_enabled:
+            return None
+        model = self.intent_adjudicator_model
+        normalized_model = model.strip() if model is not None else ""
+        return ActiveIntentAdjudicatorConfiguration(
+            model=normalized_model or None,
+            trigger_margin=self.intent_adjudicator_trigger_margin,
+            minimum_confidence=self.intent_adjudicator_min_confidence,
+            max_output_tokens=self.intent_adjudicator_max_output_tokens,
+            timeout_seconds=self.intent_adjudicator_timeout_seconds,
         )
 
     def active_idempotency_configuration(
