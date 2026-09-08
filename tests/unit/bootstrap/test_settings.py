@@ -928,3 +928,27 @@ def test_display_time_zone_defaults_to_bogota() -> None:
 def test_display_time_zone_rejects_unknown_iana_zone() -> None:
     with pytest.raises(ValidationError, match="IANA"):
         Settings(display_time_zone="Mars/Olympus", _env_file=None)
+
+
+def test_semantic_intent_routing_has_safe_adjustable_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.intent_semantic_routing_enabled is True
+    assert settings.intent_semantic_min_score == 0.45
+    assert settings.intent_semantic_min_margin == 0.03
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intent_semantic_min_score", -0.01),
+        ("intent_semantic_min_score", 1.01),
+        ("intent_semantic_min_margin", -0.01),
+        ("intent_semantic_min_margin", 1.01),
+    ],
+)
+def test_semantic_intent_routing_rejects_values_outside_cosine_range(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)

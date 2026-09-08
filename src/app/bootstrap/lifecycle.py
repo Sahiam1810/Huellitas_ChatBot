@@ -21,6 +21,7 @@ from app.adapters.knowledge.service_knowledge import ServiceKnowledgeRetriever
 from app.adapters.models.model_factory import create_chat_model
 from app.adapters.runtime_store.runtime_store_factory import create_runtime_store
 from app.adapters.vector_store.vector_store_factory import create_vector_store
+from app.bootstrap.intent_routing import build_intent_router
 from app.bootstrap.module_registry import build_module_registry
 from app.bootstrap.settings import (
     ActiveCheckpointConfiguration,
@@ -32,11 +33,6 @@ from app.bootstrap.settings import (
 from app.knowledge.document_chunker import DocumentChunker
 from app.knowledge.document_lock import DocumentWriteLock
 from app.knowledge.management_service import KnowledgeManagementService
-from app.modules.appointments.routing import APPOINTMENTS_ROUTING_RULES
-from app.modules.pet_profile.routing import PET_PROFILE_ROUTING_RULES
-from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
-from app.modules.preventive_care.routing import PREVENTIVE_CARE_ROUTING_RULES
-from app.modules.veterinary_guidance.routing import VETERINARY_GUIDANCE_ROUTING_RULES
 from app.observability.logging import SafeLoggingGraphObserver, configure_logging
 from app.observability.metrics import InMemoryGraphMetrics
 from app.observability.tracing import CompositeGraphRunObserver
@@ -48,7 +44,6 @@ from app.orchestration.idempotent_message_processor import IdempotentMessageProc
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
-from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.checkpoint_store import CheckpointStore
 from app.ports.runtime_store import RuntimeStore
@@ -309,12 +304,11 @@ def build_lifespan(
             graph_checkpointer = checkpoint_store.saver
             intent_router = None
             if module_registry.list_registrations():
-                intent_router = RuleBasedIntentRouter(
-                    PET_PROFILE_ROUTING_RULES
-                    + SERVICES_CATALOG_ROUTING_RULES
-                    + APPOINTMENTS_ROUTING_RULES
-                    + VETERINARY_GUIDANCE_ROUTING_RULES
-                    + PREVENTIVE_CARE_ROUTING_RULES
+                intent_router = build_intent_router(
+                    embedding_model,
+                    semantic_enabled=settings.intent_semantic_routing_enabled,
+                    minimum_score=settings.intent_semantic_min_score,
+                    minimum_margin=settings.intent_semantic_min_margin,
                 )
             main_graph = build_main_graph(
                 general_processor=general_processor,
