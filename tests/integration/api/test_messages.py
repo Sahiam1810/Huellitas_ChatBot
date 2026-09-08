@@ -313,6 +313,7 @@ def test_messages_endpoint_returns_active_provider_response(
         "conversationId": CONVERSATION_ID,
         "correlationId": CORRELATION_ID,
         "responseType": "ai_generated",
+        "accessRequirement": "none",
         "provider": "openrouter",
         "model": "router-model",
         "usage": {"inputTokens": 8, "outputTokens": 3},
@@ -350,6 +351,7 @@ def test_escalated_message_returns_human_control_without_model() -> None:
         "conversationId": CONVERSATION_ID,
         "correlationId": CORRELATION_ID,
         "responseType": "human_controlled",
+        "accessRequirement": "none",
         "provider": None,
         "model": None,
         "usage": None,
@@ -490,6 +492,7 @@ def test_high_private_memory_replays_directly_without_model_or_write(
         "conversationId": CONVERSATION_ID,
         "correlationId": CORRELATION_ID,
         "responseType": "retrieved",
+        "accessRequirement": "none",
         "provider": None,
         "model": None,
         "usage": None,
@@ -569,8 +572,8 @@ def test_high_document_uses_contextual_model_route(
     assert response.json()["rag"]["route"] == "contextual"
     assert response.json()["rag"]["topScore"] == 0.99
     request = model.generate.await_args.args[0]
-    assert "<global_knowledge>" in request.messages[0].content
-    assert "Las vacunas requieren valoración veterinaria." in request.messages[0].content
+    assert "<global_knowledge>" in request.messages[1].content
+    assert "Las vacunas requieren valoración veterinaria." in request.messages[1].content
     store.remember.assert_awaited_once()
 
 
