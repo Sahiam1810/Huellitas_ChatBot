@@ -147,3 +147,15 @@ def test_formats_empty_discovery_without_inventing_slots() -> None:
     assert "próximos 14 días" in message
     assert "otro veterinario" in message
     assert "fecha posterior" in message
+
+
+def test_empty_discovery_without_name_uses_professional_wording() -> None:
+    message = format_available_dates(
+        (),
+        None,
+        ZoneInfo("America/Bogota"),
+        search_days=14,
+    )
+
+    assert "para el veterinario seleccionado" in message.casefold()
+    assert "con el veterinario seleccionado" not in message.casefold()

@@ -185,7 +185,9 @@ La fecha puede escribirse con formato numérico o mediante expresiones naturales
 `HUELLITAS_DISPLAY_TIME_ZONE`; las fechas pasadas, inexistentes o ambiguas se rechazan sin asumir
 otro mes o año. Después de resolverla, el agente consulta en .NET los horarios reales del
 veterinario y servicio seleccionados. Si no existen horarios, conserva esas selecciones y solicita
-otra fecha.
+otra fecha. Si el usuario pregunta qué días o próximos horarios están disponibles, consulta hasta
+`HUELLITAS_APPOINTMENT_AVAILABILITY_SEARCH_DAYS` fechas desde el día actual y muestra como máximo
+`HUELLITAS_APPOINTMENT_AVAILABILITY_MAX_DATES` fechas con cupos confirmados por .NET.
 El borrador se conserva en el checkpoint del `conversationId`, queda ligado a la cuenta autenticada,
 vence en 10 minutos por defecto y puede abandonarse escribiendo `cancelar`. Los números de horario
 se resuelven contra el instante UTC que se mostró y nunca se desplazan silenciosamente si cambia la
@@ -199,6 +201,8 @@ Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas`, `¿Cuándo es l
 ```dotenv
 HUELLITAS_DISPLAY_TIME_ZONE="America/Bogota"
 HUELLITAS_APPOINTMENT_BOOKING_TTL_SECONDS="600"
+HUELLITAS_APPOINTMENT_AVAILABILITY_SEARCH_DAYS="14"
+HUELLITAS_APPOINTMENT_AVAILABILITY_MAX_DATES="3"
 ```
 
 Las fechas cruzan HTTP en UTC y se muestran en la zona configurada. Consultar, agendar, cancelar y

@@ -29,17 +29,17 @@
 - Consumes: `AppointmentsGateway`, selected UUIDs, local start date, bearer token, `search_days`, and `max_dates`.
 - Produces: `is_availability_discovery_request`, `discover_available_dates`, and `format_available_dates`.
 
-- [ ] **Step 1: Write failing intent and bounded-search tests**
+- [x] **Step 1: Write failing intent and bounded-search tests**
 
 Test literal phrases including `qué días hay disponibles`, `cuándo tiene cupo`, and `muéstrame los próximos horarios`. Use a recording gateway whose slots exist on offsets 1, 3, 5, and 7; assert that a 14-day search stops after offsets 1, 3, and 5 and every call receives the same veterinarian and service UUIDs. Add an empty-result test asserting exactly 14 date requests.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run: `uv run pytest tests/unit/modules/appointments/test_availability_discovery.py -q`
 
 Expected: collection fails because `availability_discovery` does not exist.
 
-- [ ] **Step 3: Implement the deterministic service**
+- [x] **Step 3: Implement the deterministic service**
 
 Create these public contracts:
 
@@ -96,13 +96,13 @@ def format_available_dates(
 
 Normalize accents, punctuation, and repeated spaces for intent matching. Query dates sequentially from `start_date` through `start_date + search_days - 1`, append only non-empty results, and break at `max_dates`. Format Spanish dates and local slot times; when empty, state the exact search window and offer another veterinarian or a later date.
 
-- [ ] **Step 4: Run service tests to verify GREEN**
+- [x] **Step 4: Run service tests to verify GREEN**
 
 Run: `uv run pytest tests/unit/modules/appointments/test_availability_discovery.py -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the service**
+- [x] **Step 5: Commit the service**
 
 ```bash
 git add src/app/modules/appointments/services/availability_discovery.py tests/unit/modules/appointments/test_availability_discovery.py
@@ -122,17 +122,17 @@ git commit -m "feat(appointments): discover upcoming availability"
 - Consumes: Task 1 discovery functions and executor limits.
 - Produces: professional date prompts and availability discovery within both date collection flows.
 
-- [ ] **Step 1: Write failing flow tests**
+- [x] **Step 1: Write failing flow tests**
 
 Add a booking test that advances through pet, service, and veterinarian, sends `qué días hay disponibles`, and asserts that the response names the selected veterinarian and lists real dates while the pending step remains `date`. Add the equivalent rescheduling test and assert original veterinarian/service IDs are used. Add prompt assertions for `¿Para qué fecha deseas agendar la cita?` and `¿Para qué fecha deseas reprogramar la cita?`.
 
-- [ ] **Step 2: Run focused tests to verify RED**
+- [x] **Step 2: Run focused tests to verify RED**
 
 Run: `uv run pytest tests/unit/modules/appointments/test_appointments_module.py -q -k "availability_discovery or professional_date_prompt"`
 
 Expected: failures because discovery questions are still sent to the date resolver and prompts still contain examples.
 
-- [ ] **Step 3: Integrate discovery with date resolution**
+- [x] **Step 3: Integrate discovery with date resolution**
 
 Define:
 
@@ -143,13 +143,13 @@ RESCHEDULE_DATE_PROMPT = "¿Para qué fecha deseas reprogramar la cita?"
 
 Allow `date_resolution_error_message(error, prompt)` to append the correct professional prompt for unrecognized dates. Add `availability_search_days: int = 14` and `availability_max_dates: int = 3` to `AppointmentsModuleExecutor` and pass them to booking and rescheduling. Resolve an explicit natural date first; only when no date resolves, detect the availability question and invoke Task 1 discovery. Return the formatted discovery response with the original pending draft unchanged.
 
-- [ ] **Step 4: Run appointment tests to verify GREEN**
+- [x] **Step 4: Run appointment tests to verify GREEN**
 
 Run: `uv run pytest tests/unit/modules/appointments -q`
 
 Expected: all appointment tests pass.
 
-- [ ] **Step 5: Commit flow integration**
+- [x] **Step 5: Commit flow integration**
 
 ```bash
 git add src/app/modules/appointments/services/date_resolver.py src/app/modules/appointments/nodes/collect_appointment_data.py src/app/modules/appointments/nodes/collect_reschedule_data.py src/app/modules/appointments/graph.py tests/unit/modules/appointments/test_appointments_module.py
@@ -170,17 +170,17 @@ git commit -m "feat(appointments): answer availability questions"
 - Consumes: executor configuration from Task 2.
 - Produces: `HUELLITAS_APPOINTMENT_AVAILABILITY_SEARCH_DAYS` and `HUELLITAS_APPOINTMENT_AVAILABILITY_MAX_DATES` settings.
 
-- [ ] **Step 1: Write failing settings tests**
+- [x] **Step 1: Write failing settings tests**
 
 Assert defaults of 14 and 3. Assert zero values are rejected and explicit values load from the two `HUELLITAS_` environment fields.
 
-- [ ] **Step 2: Run settings tests to verify RED**
+- [x] **Step 2: Run settings tests to verify RED**
 
 Run: `uv run pytest tests/unit/bootstrap/test_pet_profile_settings.py -q`
 
 Expected: failures because the settings fields do not exist.
 
-- [ ] **Step 3: Add settings and wire the registry**
+- [x] **Step 3: Add settings and wire the registry**
 
 Add:
 
@@ -191,7 +191,7 @@ appointment_availability_max_dates: int = Field(default=3, ge=1, le=10)
 
 Pass both fields from lifecycle to `build_module_registry` and from the registry to `AppointmentsModuleExecutor`. Document both variables in `.env.example` and explain availability discovery in `README.md`.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 Run:
 
@@ -204,7 +204,7 @@ git diff --check
 
 Expected: every command exits zero.
 
-- [ ] **Step 5: Commit and inspect**
+- [x] **Step 5: Commit and inspect**
 
 ```bash
 git add src/app/bootstrap/settings.py src/app/bootstrap/module_registry.py src/app/bootstrap/lifecycle.py .env.example README.md tests/unit/bootstrap/test_pet_profile_settings.py docs/superpowers/plans/2026-09-08-appointment-availability-discovery.md

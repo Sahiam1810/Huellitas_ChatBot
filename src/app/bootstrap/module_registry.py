@@ -30,6 +30,8 @@ def build_module_registry(
     display_time_zone: str = "America/Bogota",
     confirmation_ttl_seconds: int = 600,
     appointment_booking_ttl_seconds: int = 600,
+    appointment_availability_search_days: int = 14,
+    appointment_availability_max_dates: int = 3,
 ) -> ModuleRegistry:
     registry = ModuleRegistry()
     if pet_profile_gateway is not None:
@@ -55,6 +57,8 @@ def build_module_registry(
                 appointments_gateway,
                 display_time_zone,
                 booking_ttl_seconds=appointment_booking_ttl_seconds,
+                availability_search_days=appointment_availability_search_days,
+                availability_max_dates=appointment_availability_max_dates,
             ),
         )
     if (

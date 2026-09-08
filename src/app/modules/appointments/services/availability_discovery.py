@@ -90,8 +90,13 @@ def format_available_dates(
 ) -> str:
     name = veterinarian_name or "El veterinario seleccionado"
     if not dates:
+        subject = (
+            f"con {veterinarian_name}"
+            if veterinarian_name
+            else "para el veterinario seleccionado"
+        )
         return (
-            f"No encontré horarios disponibles con {name} durante los próximos "
+            f"No encontré horarios disponibles {subject} durante los próximos "
             f"{search_days} días. Puedes elegir otro veterinario o indicar una fecha posterior."
         )
     lines = "\n".join(_format_available_date(item, zone) for item in dates)
