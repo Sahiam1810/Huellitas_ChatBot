@@ -401,6 +401,43 @@ async def test_expired_pending_operation_with_ambiguous_reply_returns_restart_gu
 
 
 @pytest.mark.anyio
+async def test_expired_pending_operation_allows_a_new_general_question() -> None:
+    general = GeneralProcessor()
+    pet_executor = ExpiredPetRegistrationExecutor()
+    pet_manifest = ModuleManifest(
+        module_id="pet_profile",
+        version="1.0.0",
+        description="Pet profile operations",
+        intents=("pets.register", "pet_profile.registration"),
+    )
+    registry = ModuleRegistry()
+    registry.register(pet_manifest, pet_executor)
+    router = MessageRouter()
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(message="Registrar una mascota", idempotency_key="message-001")
+
+    await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(
+        message="¿Qué cuidados necesita un cachorro?",
+        idempotency_key="message-002",
+    )
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    result = message_result_from_state(second_state["result"])
+    assert result.message == "general:¿Qué cuidados necesita un cachorro?"
+    assert general.commands == [second]
+    assert second_state["confirmation"] is None
+
+
+@pytest.mark.anyio
 async def test_telegram_guest_requesting_private_module_requires_identity_verification() -> None:
     general = GeneralProcessor()
     executor = Executor()

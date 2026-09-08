@@ -28,12 +28,29 @@ from app.orchestration.state import (
     routing_decision_from_state,
     routing_decision_to_state,
 )
+from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.shared.enums import MessageResponseType
 from app.shared.exceptions import GraphCompositionError
 
 
 class GeneralMessageProcessor(Protocol):
     async def process(self, command: MessageCommand) -> MessageResult: ...
+
+
+_CONFIRMATION_ONLY_REPLIES = {
+    "si",
+    "no",
+    "confirmo",
+    "confirmar",
+    "acepto",
+    "de acuerdo",
+    "adelante",
+    "cancelar",
+}
+
+
+def _is_confirmation_only(message: str) -> bool:
+    return normalize_for_routing(message) in _CONFIRMATION_ONLY_REPLIES
 
 
 def build_main_graph(
@@ -93,7 +110,10 @@ def build_main_graph(
             raise GraphCompositionError("Intent router is not configured")
         decision = await router.route(command, manifests)
         if decision.kind is not RoutingKind.MODULE:
-            if pending_expired:
+            if pending_expired and (
+                decision.kind is RoutingKind.AMBIGUOUS
+                or _is_confirmation_only(command.message)
+            ):
                 return {
                     "routing": routing_decision_to_state(decision),
                     "confirmation": None,
@@ -118,6 +138,7 @@ def build_main_graph(
             return {
                 "routing": routing_decision_to_state(decision),
                 "fallback_reason": decision.reason,
+                "confirmation": None if pending_expired else state.get("confirmation"),
             }
         if decision.module_id is None or decision.intent is None:
             raise GraphCompositionError("Router returned incomplete module selection")
