@@ -266,6 +266,137 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
 
 
 @pytest.mark.anyio
+async def test_booking_natural_date_queries_selected_veterinarian_availability() -> None:
+    class RecordingSlotsGateway(Gateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[tuple[UUID, UUID, date]] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append((veterinarian_id, service_id, booking_date))
+            return (
+                AppointmentBookingSlot(
+                    SLOT_AVAILABILITY_ID,
+                    datetime(2026, 9, 15, 15, tzinfo=UTC),
+                    datetime(2026, 9, 15, 15, 30, tzinfo=UTC),
+                ),
+            )
+
+    gateway = RecordingSlotsGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+    )
+    result = await executor.execute(request("Quiero agendar una cita", "appointments.book"), context())
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request(
+            "la quiero para el martes de la próxima semana",
+            "appointments.booking",
+            result.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert gateway.slot_requests == [
+        (
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+            date(2026, 9, 15),
+        )
+    ]
+    assert "horario" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "slot"
+
+
+@pytest.mark.anyio
+async def test_booking_past_date_is_rejected_without_querying_slots() -> None:
+    class RecordingSlotsGateway(Gateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[date] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append(booking_date)
+            return ()
+
+    gateway = RecordingSlotsGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+    )
+    result = await executor.execute(request("Quiero agendar una cita", "appointments.book"), context())
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request("el 5 de este mes", "appointments.booking", result.pending_confirmation),
+        context(),
+    )
+
+    assert gateway.slot_requests == []
+    assert "ya pasó" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+
+
+@pytest.mark.anyio
+async def test_booking_no_slots_preserves_selected_veterinarian() -> None:
+    class NoSlotsGateway(Gateway):
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            return ()
+
+    executor = AppointmentsModuleExecutor(
+        NoSlotsGateway(),
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+    )
+    result = await executor.execute(request("Quiero agendar una cita", "appointments.book"), context())
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request("mañana", "appointments.booking", result.pending_confirmation), context()
+    )
+
+    assert "dra." in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["veterinarian_id"] == (
+        "33333333-3333-3333-3333-333333333333"
+    )
+    assert result.pending_confirmation.payload["step"] == "date"
+
+
+@pytest.mark.anyio
 async def test_booking_without_pets_hands_off_to_registration_and_preserves_booking() -> None:
     class GatewayWithoutPets(Gateway):
         async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:

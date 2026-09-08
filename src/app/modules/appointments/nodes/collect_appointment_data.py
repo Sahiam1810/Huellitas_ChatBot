@@ -1,6 +1,6 @@
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,11 @@ from app.modules.appointments.nodes.check_availability import (
 )
 from app.modules.appointments.nodes.present_options import choose_option, numbered_options
 from app.modules.appointments.nodes.request_confirmation import booking_summary
+from app.modules.appointments.services.date_resolver import (
+    NATURAL_DATE_PROMPT,
+    date_resolution_error_message,
+    resolve_appointment_date,
+)
 from app.orchestration.module_executor import (
     ModuleContinuation,
     ModuleHandoff,
@@ -54,6 +59,7 @@ async def advance_booking(
     pending: PendingConfirmation,
     message: str,
     zone: ZoneInfo,
+    local_today: date,
 ) -> tuple[str, PendingConfirmation]:
     draft = AppointmentBookingDraft.from_payload(pending.payload)
     options = await gateway.get_booking_options(bearer_token)
@@ -90,17 +96,16 @@ async def advance_booking(
             veterinarian_name=veterinarian_name,
             step="date",
         )
-        return (
-            "Indica la fecha que prefieres en formato AAAA-MM-DD o DD/MM/AAAA.",
-            _replace_pending(pending, draft),
-        )
+        return NATURAL_DATE_PROMPT, _replace_pending(pending, draft)
     if draft.step == "date":
-        booking_date = parse_booking_date(message)
-        if booking_date is None:
-            return "No entendí la fecha. Escríbela como 2026-09-10 o 10/09/2026.", pending
+        resolution = resolve_appointment_date(message, local_today)
+        if resolution.value is None:
+            return date_resolution_error_message(resolution.error), pending
+        booking_date = resolution.value
         slots = await _slots(gateway, draft, booking_date, bearer_token)
         if not slots:
-            return "No hay horarios disponibles ese día. Indica otra fecha.", pending
+            veterinarian = draft.veterinarian_name or "El veterinario seleccionado"
+            return f"{veterinarian} no tiene horarios disponibles ese día. Indica otra fecha.", pending
         advertised_starts = tuple(
             slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
             for slot in slots
