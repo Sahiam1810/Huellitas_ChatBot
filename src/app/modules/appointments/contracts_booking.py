@@ -84,6 +84,7 @@ class AppointmentRescheduleDraft:
     step: RescheduleStep = "date"
     service_id: str | None = None
     veterinarian_id: str | None = None
+    veterinarian_name: str | None = None
     service_duration_minutes: int | None = None
     booking_date: str | None = None
     new_availability_id: str | None = None

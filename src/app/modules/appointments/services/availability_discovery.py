@@ -36,11 +36,12 @@ _MONTHS = (
 )
 
 _AVAILABILITY_PATTERNS = (
-    re.compile(r"\bque\s+dias?\b.*\bdispon"),
-    re.compile(r"\bque\s+fecha\b.*\bdispon"),
+    re.compile(r"\bque\s+(?:dias?|fechas?)\b.*\bdispon"),
     re.compile(r"\bcuando\b.*\b(?:cupo|dispon)"),
     re.compile(r"\bproxim(?:o|a|os|as)\b.*\b(?:horarios?|cupos?|disponibilidad)\b"),
     re.compile(r"\b(?:hay|tiene)\b.*\b(?:cupos?|disponibilidad)\b"),
+    re.compile(r"\b(?:dias?|fechas?|horarios?|cupos?)\b.*\bdispon"),
+    re.compile(r"\bdisponibilidad\b"),
 )
 
 

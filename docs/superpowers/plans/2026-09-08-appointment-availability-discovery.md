@@ -214,3 +214,10 @@ git log --oneline -8
 ```
 
 Expected: clean working tree with the discovery changes committed on `feat/natural-language-appointment-dates`.
+
+### Review follow-up
+
+- [x] Preserve `PAST`, `INVALID`, and `AMBIGUOUS` date errors even when the message also asks about availability.
+- [x] Recognize plural dates, available schedules, and direct availability requests.
+- [x] Preserve and display the veterinarian name during rescheduling discovery.
+- [x] Add regression tests for all three review findings.

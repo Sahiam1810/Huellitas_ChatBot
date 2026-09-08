@@ -17,6 +17,7 @@ from app.modules.appointments.services.availability_discovery import (
 )
 from app.modules.appointments.services.date_resolver import (
     RESCHEDULE_DATE_PROMPT,
+    DateResolutionError,
     date_resolution_error_message,
     resolve_appointment_date,
 )
@@ -60,12 +61,10 @@ async def start_reschedule(
             step="date",
             service_id=str(cita.service_id),
             veterinarian_id=str(cita.veterinarian_id),
+            veterinarian_name=cita.veterinarian_name,
         )
         message = (
-            "Encontré esta cita:\n"
-            + format_detail(cita, time_zone)
-            + "\n"
-            + RESCHEDULE_DATE_PROMPT
+            "Encontré esta cita:\n" + format_detail(cita, time_zone) + "\n" + RESCHEDULE_DATE_PROMPT
         )
         pending = PendingConfirmation.create(
             module_id="appointments",
@@ -77,9 +76,7 @@ async def start_reschedule(
         return message, pending
 
     # Multiple appointments — ask user to choose
-    options = tuple(
-        (str(it.id), f"{it.pet_name} — {it.service_name}") for it in reschedulable
-    )
+    options = tuple((str(it.id), f"{it.pet_name} — {it.service_name}") for it in reschedulable)
     # Use a sentinel draft to store account info + options list
     message = (
         "Tienes varias citas agendadas. ¿Cuál deseas reprogramar? Responde con el número:\n"
@@ -97,6 +94,7 @@ async def start_reschedule(
                     "avail_id": str(it.availability_id),
                     "service_id": str(it.service_id),
                     "vet_id": str(it.veterinarian_id),
+                    "vet_name": it.veterinarian_name,
                     "label": f"{it.pet_name} — {it.service_name}",
                 }
                 for it in reschedulable
@@ -137,6 +135,7 @@ async def advance_reschedule(
             step="date",
             service_id=opt_data["service_id"],
             veterinarian_id=opt_data["vet_id"],
+            veterinarian_name=opt_data["vet_name"],
         )
         new_pending = _replace(
             pending,
@@ -152,7 +151,10 @@ async def advance_reschedule(
     if draft.step == "date":
         resolution = resolve_appointment_date(message, local_today)
         if resolution.value is None:
-            if is_availability_discovery_request(message):
+            if (
+                resolution.error is DateResolutionError.UNRECOGNIZED
+                and is_availability_discovery_request(message)
+            ):
                 available_dates = await discover_available_dates(
                     gateway,
                     UUID(draft.veterinarian_id),  # type: ignore[arg-type]
@@ -165,15 +167,13 @@ async def advance_reschedule(
                 return (
                     format_available_dates(
                         available_dates,
-                        None,
+                        draft.veterinarian_name,
                         time_zone,
                         availability_search_days,
                     ),
                     pending,
                 )
-            return date_resolution_error_message(
-                resolution.error, RESCHEDULE_DATE_PROMPT
-            ), pending
+            return date_resolution_error_message(resolution.error, RESCHEDULE_DATE_PROMPT), pending
         booking_date = resolution.value
         slots = await current_slots(
             gateway,

@@ -433,6 +433,62 @@ async def test_booking_past_date_is_rejected_without_querying_slots() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "expected_error"),
+    [
+        ("¿Tiene cupo el 31 de febrero?", "fecha no existe"),
+        ("¿Tiene cupo el día 15?", "día más específico"),
+    ],
+)
+async def test_booking_structured_date_error_with_availability_words_is_rejected(
+    message: str,
+    expected_error: str,
+) -> None:
+    class RecordingSlotsGateway(Gateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[date] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append(booking_date)
+            return ()
+
+    gateway = RecordingSlotsGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+    )
+    result = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request(
+            message,
+            "appointments.booking",
+            result.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert gateway.slot_requests == []
+    assert expected_error in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+
+
+@pytest.mark.anyio
 async def test_booking_no_slots_preserves_selected_veterinarian() -> None:
     class NoSlotsGateway(Gateway):
         async def list_booking_slots(
@@ -862,6 +918,7 @@ async def test_reschedule_availability_discovery_uses_original_selection() -> No
     )
 
     assert "jueves 10 de septiembre" in (result.message or "").casefold()
+    assert "dra. ana" in (result.message or "").casefold()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.payload["step"] == "date"
     assert gateway.slot_requests == [
@@ -904,6 +961,48 @@ async def test_reschedule_natural_past_date_is_rejected_without_querying_slots()
     result = await executor.execute(
         request(
             "el 5 de este mes",
+            "appointments.rescheduling",
+            started.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert gateway.slot_requests == []
+    assert "ya pasó" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+
+
+@pytest.mark.anyio
+async def test_reschedule_past_date_with_availability_words_is_rejected() -> None:
+    class RecordingRescheduleGateway(GatewayWithReschedule):
+        def __init__(self) -> None:
+            super().__init__()
+            self.slot_requests: list[date] = []
+
+        async def list_booking_slots(
+            self,
+            veterinarian_id: UUID,
+            service_id: UUID,
+            booking_date: date,
+            bearer_token: str,
+        ) -> tuple[AppointmentBookingSlot, ...]:
+            self.slot_requests.append(booking_date)
+            return ()
+
+    gateway = RecordingRescheduleGateway()
+    executor = AppointmentsModuleExecutor(
+        gateway,
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 8),
+    )
+    started = await executor.execute(
+        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    )
+
+    result = await executor.execute(
+        request(
+            "¿Cuándo tiene cupo el 5 de este mes?",
             "appointments.rescheduling",
             started.pending_confirmation,
         ),

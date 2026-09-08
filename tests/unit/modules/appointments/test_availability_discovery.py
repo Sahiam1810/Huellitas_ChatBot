@@ -47,6 +47,10 @@ class RecordingSlotsGateway:
         "¿Cuándo tiene cupo el veterinario?",
         "Muéstrame los próximos horarios",
         "qué fecha tiene disponible",
+        "¿Qué fechas hay disponibles?",
+        "¿Hay horarios disponibles?",
+        "¿Cuáles horarios están disponibles?",
+        "Muéstrame la disponibilidad",
     ],
 )
 def test_recognizes_availability_discovery_requests(message: str) -> None:
@@ -55,6 +59,7 @@ def test_recognizes_availability_discovery_requests(message: str) -> None:
 
 def test_explicit_natural_date_is_not_an_availability_discovery_request() -> None:
     assert not is_availability_discovery_request("mañana")
+    assert not is_availability_discovery_request("el 15 de este mes")
 
 
 @pytest.mark.anyio

@@ -18,6 +18,7 @@ from app.modules.appointments.services.availability_discovery import (
 )
 from app.modules.appointments.services.date_resolver import (
     BOOKING_DATE_PROMPT,
+    DateResolutionError,
     date_resolution_error_message,
     resolve_appointment_date,
 )
@@ -106,7 +107,10 @@ async def advance_booking(
     if draft.step == "date":
         resolution = resolve_appointment_date(message, local_today)
         if resolution.value is None:
-            if is_availability_discovery_request(message):
+            if (
+                resolution.error is DateResolutionError.UNRECOGNIZED
+                and is_availability_discovery_request(message)
+            ):
                 available_dates = await discover_available_dates(
                     gateway,
                     UUID(draft.veterinarian_id),  # type: ignore[arg-type]
