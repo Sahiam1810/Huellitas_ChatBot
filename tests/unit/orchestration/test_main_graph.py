@@ -16,7 +16,11 @@ from app.orchestration.module_executor import (
 )
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.module_registry import ModuleRegistry
-from app.orchestration.state import message_command_to_state, message_result_from_state
+from app.orchestration.state import (
+    confirmation_to_state,
+    message_command_to_state,
+    message_result_from_state,
+)
 from app.ports.token_validator import AuthenticatedPrincipal
 from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
@@ -575,6 +579,39 @@ async def test_telegram_guest_continues_pending_offer_in_its_public_module() -> 
     assert executor.requests[-1].pending_confirmation is not None
     assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
     assert result.resume_message == "Quiero agendar una cita"
+    assert general.commands == []
+
+
+@pytest.mark.anyio
+async def test_telegram_guest_cannot_resume_pending_private_module() -> None:
+    general = GeneralProcessor()
+    executor = ConfirmingExecutor()
+    registry = ModuleRegistry()
+    registry.register(manifest(), executor)
+    router = FixedRouter(RoutingDecision.unknown("no new intent"))
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    current = command(message="sí", roles=("TelegramGuest",))
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.cancel",
+        payload={"appointment_id": "a-1"},
+        ttl_seconds=600,
+        intent="appointments.confirmation",
+    )
+
+    state = await graph.ainvoke(
+        {
+            "command": message_command_to_state(current),
+            "confirmation": confirmation_to_state(pending),
+        },
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert state["confirmation"] is None
+    assert executor.requests == []
     assert general.commands == []
 
 
