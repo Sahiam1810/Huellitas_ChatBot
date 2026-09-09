@@ -163,6 +163,7 @@ class AppointmentsModuleExecutor:
                 self._today_provider(),
                 self._availability_search_days,
                 self._availability_max_dates,
+                self._booking_ttl_seconds,
             )
             return self._message(message, pending=next_pending)
 

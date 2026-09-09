@@ -1,6 +1,6 @@
 import re
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -67,6 +67,7 @@ async def advance_booking(
     local_today: date,
     availability_search_days: int,
     availability_max_dates: int,
+    ttl_seconds: int,
 ) -> tuple[str, PendingConfirmation]:
     draft = AppointmentBookingDraft.from_payload(pending.payload)
     options = await gateway.get_booking_options(bearer_token)
@@ -75,7 +76,7 @@ async def advance_booking(
         if selected is None:
             return "No identifiqué la mascota. " + _pet_prompt(options), pending
         draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
-        return _service_prompt(options), _replace_pending(pending, draft)
+        return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds)
     if draft.step == "service":
         selected = choose_option(
             message, tuple((str(item.id), item.name) for item in options.services)
@@ -85,7 +86,7 @@ async def advance_booking(
         draft = replace(
             draft, service_id=selected[0], service_name=selected[1], step="veterinarian"
         )
-        return _veterinarian_prompt(options), _replace_pending(pending, draft)
+        return _veterinarian_prompt(options), _replace_pending(pending, draft, ttl_seconds)
     if draft.step == "veterinarian":
         selected = choose_option(
             message,
@@ -103,7 +104,7 @@ async def advance_booking(
             veterinarian_name=veterinarian_name,
             step="date",
         )
-        return BOOKING_DATE_PROMPT, _replace_pending(pending, draft)
+        return BOOKING_DATE_PROMPT, _replace_pending(pending, draft, ttl_seconds)
     if draft.step == "date":
         resolution = resolve_appointment_date(message, local_today)
         if resolution.value is None:
@@ -127,7 +128,7 @@ async def advance_booking(
                         zone,
                         availability_search_days,
                     ),
-                    pending,
+                    _refresh_pending(pending, ttl_seconds),
                 )
             return date_resolution_error_message(resolution.error), pending
         booking_date = resolution.value
@@ -137,7 +138,7 @@ async def advance_booking(
             return (
                 f"{veterinarian} no tiene horarios disponibles ese día. "
                 "Puedes indicar otra fecha o preguntar qué días tiene disponibles.",
-                pending,
+                _refresh_pending(pending, ttl_seconds),
             )
         advertised_starts = tuple(
             slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
@@ -151,7 +152,7 @@ async def advance_booking(
         )
         return (
             "Elige un horario respondiendo con su número:\n" + format_slots(slots, zone),
-            _replace_pending(pending, draft),
+            _replace_pending(pending, draft, ttl_seconds),
         )
     if draft.step == "slot":
         if draft.booking_date is None:
@@ -183,7 +184,7 @@ async def advance_booking(
             )
             return (
                 "Ese horario ya no está disponible. Indica otra fecha para consultar horarios.",
-                _replace_pending(pending, draft),
+                _replace_pending(pending, draft, ttl_seconds),
             )
         step = "phone" if options.requires_requester_phone_number else "confirmation"
         draft = replace(
@@ -194,7 +195,7 @@ async def advance_booking(
             step=step,
         )
         action = CONFIRMATION_ACTION if step == "confirmation" else COLLECTION_ACTION
-        next_pending = _replace_pending(pending, draft, action=action)
+        next_pending = _replace_pending(pending, draft, ttl_seconds, action=action)
         if step == "phone":
             return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending
         return booking_summary(draft, zone), next_pending
@@ -204,7 +205,7 @@ async def advance_booking(
             return "El teléfono debe contener entre 7 y 20 dígitos.", pending
         draft = replace(draft, requester_phone_number=phone, step="confirmation")
         return booking_summary(draft, zone), _replace_pending(
-            pending, draft, action=CONFIRMATION_ACTION
+            pending, draft, ttl_seconds, action=CONFIRMATION_ACTION
         )
     return booking_summary(draft, zone), pending
 
@@ -242,10 +243,24 @@ def _pending(draft: AppointmentBookingDraft, ttl_seconds: int) -> PendingConfirm
 def _replace_pending(
     pending: PendingConfirmation,
     draft: AppointmentBookingDraft,
+    ttl_seconds: int,
     *,
     action: str = COLLECTION_ACTION,
 ) -> PendingConfirmation:
-    return replace(pending, action=action, payload=draft.to_payload(), intent=BOOKING_INTENT)
+    return replace(
+        pending,
+        action=action,
+        payload=draft.to_payload(),
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+        intent=BOOKING_INTENT,
+    )
+
+
+def _refresh_pending(pending: PendingConfirmation, ttl_seconds: int) -> PendingConfirmation:
+    return replace(
+        pending,
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
+    )
 
 
 def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:

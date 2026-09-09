@@ -1,4 +1,5 @@
-from datetime import UTC, date, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -266,6 +267,27 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
 
 
 @pytest.mark.anyio
+async def test_booking_activity_refreshes_expiration() -> None:
+    executor = AppointmentsModuleExecutor(
+        Gateway(),
+        "America/Bogota",
+        booking_ttl_seconds=600,
+    )
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    near_expiration = datetime.now(UTC) + timedelta(seconds=5)
+    pending = replace(started.pending_confirmation, expires_at=near_expiration)
+
+    advanced = await executor.execute(
+        request("1", "appointments.booking", pending), context()
+    )
+
+    assert advanced.pending_confirmation is not None
+    assert advanced.pending_confirmation.expires_at > near_expiration + timedelta(minutes=9)
+
+
+@pytest.mark.anyio
 async def test_booking_natural_date_queries_selected_veterinarian_availability() -> None:
     class RecordingSlotsGateway(Gateway):
         def __init__(self) -> None:
@@ -365,6 +387,7 @@ async def test_booking_professional_date_prompt_and_availability_discovery() -> 
         )
 
     assert result.message == "¿Para qué fecha deseas agendar la cita?"
+    expiration_before_discovery = result.pending_confirmation.expires_at
 
     result = await executor.execute(
         request(
@@ -380,6 +403,7 @@ async def test_booking_professional_date_prompt_and_availability_discovery() -> 
     assert "viernes 11 de septiembre" in (result.message or "").casefold()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.payload["step"] == "date"
+    assert result.pending_confirmation.expires_at > expiration_before_discovery
     assert gateway.slot_requests == [
         (
             UUID("33333333-3333-3333-3333-333333333333"),
