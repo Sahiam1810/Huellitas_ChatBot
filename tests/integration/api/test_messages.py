@@ -240,6 +240,7 @@ def provider_settings() -> Settings:
         chat_provider="openrouter",
         openrouter_api_key="test-key",
         openrouter_model="router-model",
+        safety_enabled=False,
         _env_file=None,
     )
 
@@ -251,6 +252,7 @@ def rag_provider_settings() -> Settings:
         chat_provider="openrouter",
         openrouter_api_key="test-key",
         openrouter_model="router-model",
+        safety_enabled=False,
         vector_store_enabled=True,
         qdrant_startup_max_attempts=1,
         qdrant_startup_retry_delay_seconds=0,
@@ -270,6 +272,7 @@ def semantic_rag_provider_settings() -> Settings:
         chat_provider="openrouter",
         openrouter_api_key="test-key",
         openrouter_model="router-model",
+        safety_enabled=False,
         vector_store_enabled=True,
         qdrant_startup_max_attempts=1,
         qdrant_startup_retry_delay_seconds=0,
