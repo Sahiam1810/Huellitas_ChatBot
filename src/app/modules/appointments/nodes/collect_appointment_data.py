@@ -22,6 +22,9 @@ from app.modules.appointments.services.date_resolver import (
     date_resolution_error_message,
     resolve_appointment_date,
 )
+from app.modules.appointments.services.new_pet_selection import (
+    wants_to_register_another_pet,
+)
 from app.modules.appointments.services.time_resolver import resolve_appointment_time
 from app.orchestration.module_executor import (
     ModuleContinuation,
@@ -73,25 +76,38 @@ async def advance_booking(
     availability_search_days: int,
     availability_max_dates: int,
     ttl_seconds: int,
-) -> tuple[str, PendingConfirmation]:
+) -> tuple[str, PendingConfirmation | None, ModuleHandoff | None]:
     draft = AppointmentBookingDraft.from_payload(pending.payload)
     options = await gateway.get_booking_options(bearer_token)
     if draft.step == "pet":
-        selected = choose_option(message, tuple((str(item.id), item.name) for item in options.pets))
-        if selected is None:
-            return "No identifiqué la mascota. " + _pet_prompt(options), pending
-        draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
-        return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds)
+        if wants_to_register_another_pet(message, len(options.pets)):
+            return (
+                "Vamos a registrar otra mascota antes de continuar con la cita.",
+                None,
+                ModuleHandoff(
+                    target=ModuleContinuation("pet_profile", "pets.register"),
+                    continuation=ModuleContinuation(
+                        "appointments", "appointments.book"
+                    ),
+                ),
+            )
+        selected = choose_option(
+            message, tuple((str(item.id), item.name) for item in options.pets)
+        )
+        if selected is not None:
+            draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
+            return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds), None
+        return "No identifiqué la mascota. " + _pet_prompt(options), pending, None
     if draft.step == "service":
         selected = choose_option(
             message, tuple((str(item.id), item.name) for item in options.services)
         )
         if selected is None:
-            return "No identifiqué el servicio. " + _service_prompt(options), pending
+            return "No identifiqué el servicio. " + _service_prompt(options), pending, None
         draft = replace(
             draft, service_id=selected[0], service_name=selected[1], step="veterinarian"
         )
-        return _veterinarian_prompt(options), _replace_pending(pending, draft, ttl_seconds)
+        return _veterinarian_prompt(options), _replace_pending(pending, draft, ttl_seconds), None
     if draft.step == "veterinarian":
         selected = choose_option(
             message,
@@ -101,7 +117,11 @@ async def advance_booking(
             ),
         )
         if selected is None:
-            return "No identifiqué el veterinario. " + _veterinarian_prompt(options), pending
+            return (
+                "No identifiqué el veterinario. " + _veterinarian_prompt(options),
+                pending,
+                None,
+            )
         veterinarian_name = selected[1].split(" — ", maxsplit=1)[0]
         draft = replace(
             draft,
@@ -109,7 +129,7 @@ async def advance_booking(
             veterinarian_name=veterinarian_name,
             step="date",
         )
-        return BOOKING_DATE_PROMPT, _replace_pending(pending, draft, ttl_seconds)
+        return BOOKING_DATE_PROMPT, _replace_pending(pending, draft, ttl_seconds), None
     if draft.step == "date":
         resolution = resolve_appointment_date(message, local_today)
         if resolution.value is None:
@@ -134,8 +154,9 @@ async def advance_booking(
                         availability_search_days,
                     ),
                     _refresh_pending(pending, ttl_seconds),
+                    None,
                 )
-            return date_resolution_error_message(resolution.error), pending
+            return date_resolution_error_message(resolution.error), pending, None
         booking_date = resolution.value
         slots = await _slots(gateway, draft, booking_date, bearer_token)
         if not slots:
@@ -144,6 +165,7 @@ async def advance_booking(
                 f"{veterinarian} no tiene horarios disponibles ese día. "
                 "Puedes indicar otra fecha o preguntar qué días tiene disponibles.",
                 _refresh_pending(pending, ttl_seconds),
+                None,
             )
         advertised_starts = tuple(
             slot.scheduled_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z")
@@ -179,10 +201,12 @@ async def advance_booking(
                 "Elige uno de los horarios vigentes:\n"
                 + format_slots(slots, zone),
                 _replace_pending(pending, draft, ttl_seconds),
+                None,
             )
         return (
             "Elige un horario respondiendo con su número:\n" + format_slots(slots, zone),
             _replace_pending(pending, draft, ttl_seconds),
+            None,
         )
     if draft.step == "slot":
         if draft.booking_date is None:
@@ -192,6 +216,7 @@ async def advance_booking(
             return (
                 "El horario no es válido. Elige uno de los números mostrados.",
                 pending,
+                None,
             )
         advertised_start = draft.advertised_slot_starts_utc[index]
         booking_date = datetime.fromisoformat(draft.booking_date).date()
@@ -215,6 +240,7 @@ async def advance_booking(
             return (
                 "Ese horario ya no está disponible. Indica otra fecha para consultar horarios.",
                 _replace_pending(pending, draft, ttl_seconds),
+                None,
             )
         return _accept_slot(
             draft,
@@ -227,12 +253,14 @@ async def advance_booking(
     if draft.step == "phone":
         phone = re.sub(r"\D", "", message)
         if not 7 <= len(phone) <= 20:
-            return "El teléfono debe contener entre 7 y 20 dígitos.", pending
+            return "El teléfono debe contener entre 7 y 20 dígitos.", pending, None
         draft = replace(draft, requester_phone_number=phone, step="confirmation")
-        return booking_summary(draft, zone), _replace_pending(
-            pending, draft, ttl_seconds, action=CONFIRMATION_ACTION
+        return (
+            booking_summary(draft, zone),
+            _replace_pending(pending, draft, ttl_seconds, action=CONFIRMATION_ACTION),
+            None,
         )
-    return booking_summary(draft, zone), pending
+    return booking_summary(draft, zone), pending, None
 
 
 def booking_cancelled(message: str) -> bool:
@@ -295,7 +323,7 @@ def _accept_slot(
     pending: PendingConfirmation,
     ttl_seconds: int,
     zone: ZoneInfo,
-) -> tuple[str, PendingConfirmation]:
+) -> tuple[str, PendingConfirmation, ModuleHandoff | None]:
     step = "phone" if requires_phone else "confirmation"
     selected_draft = replace(
         draft,
@@ -312,8 +340,8 @@ def _accept_slot(
         action=action,
     )
     if step == "phone":
-        return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending
-    return booking_summary(selected_draft, zone), next_pending
+        return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending, None
+    return booking_summary(selected_draft, zone), next_pending, None
 
 
 def _format_time(value: time) -> str:
@@ -331,7 +359,9 @@ def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:
 
 
 def _pet_prompt(options: AppointmentBookingOptions) -> str:
-    items = tuple((str(item.id), item.name) for item in options.pets)
+    items = tuple((str(item.id), item.name) for item in options.pets) + (
+        ("register-another-pet", "Registrar otra mascota"),
+    )
     return "¿Para cuál mascota es la cita? Responde con el número:\n" + numbered_options(items)
 
 
