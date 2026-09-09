@@ -35,6 +35,9 @@ APPOINTMENTS_SEMANTIC_INTENTS = (
             "quiero llevar a mi perro a una consulta en la clínica",
             "sacar turno para que atiendan a mi animal",
             "reservar una atención veterinaria para mi perro o gato",
+            "consultar qué días tiene disponibles el veterinario para agendar",
+            "buscar los próximos horarios disponibles para reservar una cita",
+            "consultar disponibilidad antes de elegir la fecha de una cita nueva",
         ),
     ),
     SemanticIntentDefinition(

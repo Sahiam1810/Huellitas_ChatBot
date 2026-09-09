@@ -1,7 +1,7 @@
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -101,20 +101,46 @@ def format_available_dates(
             f"{search_days} días. Puedes elegir otro veterinario o indicar una fecha posterior."
         )
     lines = "\n".join(_format_available_date(item, zone) for item in dates)
-    return f"{name} tiene disponibilidad:\n{lines}\nIndica la fecha que prefieres."
+    return (
+        f"Disponibilidad con {name}:\n{lines}\n"
+        "Escribe la fecha y la hora que prefieres, por ejemplo: "
+        "viernes a las 10 de la mañana."
+    )
 
 
 def _format_available_date(item: AvailableAppointmentDate, zone: ZoneInfo) -> str:
     value = item.value
-    times = ", ".join(_format_time(slot, zone) for slot in item.slots)
+    windows = "; ".join(
+        _format_window(start, end, count, zone)
+        for start, end, count in _consecutive_windows(item.slots)
+    )
     return (
-        f"- {_WEEKDAYS[value.weekday()]} {value.day} de {_MONTHS[value.month - 1]}: "
-        f"{times}"
+        f"- {_WEEKDAYS[value.weekday()]} {value.day} de {_MONTHS[value.month - 1]} — "
+        f"{windows}"
     )
 
 
-def _format_time(slot: AppointmentBookingSlot, zone: ZoneInfo) -> str:
-    local = slot.scheduled_start_utc.astimezone(zone)
+def _consecutive_windows(
+    slots: tuple[AppointmentBookingSlot, ...],
+) -> tuple[tuple[datetime, datetime, int], ...]:
+    ordered = sorted(slots, key=lambda slot: slot.scheduled_start_utc)
+    windows: list[tuple[datetime, datetime, int]] = []
+    for slot in ordered:
+        if windows and slot.scheduled_start_utc == windows[-1][1]:
+            start, _, count = windows[-1]
+            windows[-1] = (start, slot.scheduled_end_utc, count + 1)
+        else:
+            windows.append((slot.scheduled_start_utc, slot.scheduled_end_utc, 1))
+    return tuple(windows)
+
+
+def _format_window(start: datetime, end: datetime, count: int, zone: ZoneInfo) -> str:
+    label = "horario" if count == 1 else "horarios"
+    return f"{_format_time(start, zone)} a {_format_time(end, zone)} ({count} {label})"
+
+
+def _format_time(value: datetime, zone: ZoneInfo) -> str:
+    local = value.astimezone(zone)
     hour = local.hour % 12 or 12
     marker = "a. m." if local.hour < 12 else "p. m."
     return f"{hour}:{local.minute:02d} {marker}"

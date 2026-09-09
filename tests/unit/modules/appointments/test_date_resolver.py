@@ -19,6 +19,8 @@ REFERENCE_DATE = date(2026, 9, 8)
         ("el próximo viernes", date(2026, 9, 11)),
         ("este domingo", date(2026, 9, 13)),
         ("el lunes", date(2026, 9, 14)),
+        ("viernes a las 10 de la mañana", date(2026, 9, 11)),
+        ("mañana a las 10 de la mañana", date(2026, 9, 9)),
     ],
 )
 def test_resolves_relative_spanish_dates(text: str, expected: date) -> None:
@@ -37,6 +39,7 @@ def test_resolves_relative_spanish_dates(text: str, expected: date) -> None:
         ("el 15 de este mes", REFERENCE_DATE, date(2026, 9, 15)),
         ("el 15 del próximo mes", REFERENCE_DATE, date(2026, 10, 15)),
         ("el 15 de septiembre", REFERENCE_DATE, date(2026, 9, 15)),
+        ("11 de septiembre a las 10 de la mañana", REFERENCE_DATE, date(2026, 9, 11)),
         ("el 3 de enero de 2027", REFERENCE_DATE, date(2027, 1, 3)),
         ("el 10 del próximo mes", date(2026, 12, 20), date(2027, 1, 10)),
     ],

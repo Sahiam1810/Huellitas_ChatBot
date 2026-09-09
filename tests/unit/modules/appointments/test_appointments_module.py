@@ -1,4 +1,5 @@
-from datetime import UTC, date, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -266,6 +267,27 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
 
 
 @pytest.mark.anyio
+async def test_booking_activity_refreshes_expiration() -> None:
+    executor = AppointmentsModuleExecutor(
+        Gateway(),
+        "America/Bogota",
+        booking_ttl_seconds=600,
+    )
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    near_expiration = datetime.now(UTC) + timedelta(seconds=5)
+    pending = replace(started.pending_confirmation, expires_at=near_expiration)
+
+    advanced = await executor.execute(
+        request("1", "appointments.booking", pending), context()
+    )
+
+    assert advanced.pending_confirmation is not None
+    assert advanced.pending_confirmation.expires_at > near_expiration + timedelta(minutes=9)
+
+
+@pytest.mark.anyio
 async def test_booking_natural_date_queries_selected_veterinarian_availability() -> None:
     class RecordingSlotsGateway(Gateway):
         def __init__(self) -> None:
@@ -324,6 +346,66 @@ async def test_booking_natural_date_queries_selected_veterinarian_availability()
 
 
 @pytest.mark.anyio
+async def test_booking_selects_an_available_natural_date_and_time_directly() -> None:
+    executor = AppointmentsModuleExecutor(
+        Gateway(),
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 9),
+    )
+    result = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request(
+            "jueves 10 de septiembre a las 10 de la mañana",
+            "appointments.booking",
+            result.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert result.message == "Indica un teléfono de contacto entre 7 y 20 dígitos."
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "phone"
+    assert result.pending_confirmation.payload["scheduled_start_utc"] == "2026-09-10T15:00:00Z"
+
+
+@pytest.mark.anyio
+async def test_booking_rejects_an_unavailable_natural_time_and_shows_current_slots() -> None:
+    executor = AppointmentsModuleExecutor(
+        Gateway(),
+        "America/Bogota",
+        today_provider=lambda: date(2026, 9, 9),
+    )
+    result = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    for answer in ("1", "1", "1"):
+        result = await executor.execute(
+            request(answer, "appointments.booking", result.pending_confirmation), context()
+        )
+
+    result = await executor.execute(
+        request(
+            "jueves 10 de septiembre a las 11 de la mañana",
+            "appointments.booking",
+            result.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert "11:00 a. m. no está disponible" in (result.message or "")
+    assert "1. 10 de septiembre de 2026, 10:00 a. m." in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "slot"
+
+
+@pytest.mark.anyio
 async def test_booking_professional_date_prompt_and_availability_discovery() -> None:
     class DiscoveryGateway(Gateway):
         def __init__(self) -> None:
@@ -365,6 +447,7 @@ async def test_booking_professional_date_prompt_and_availability_discovery() -> 
         )
 
     assert result.message == "¿Para qué fecha deseas agendar la cita?"
+    expiration_before_discovery = result.pending_confirmation.expires_at
 
     result = await executor.execute(
         request(
@@ -375,11 +458,12 @@ async def test_booking_professional_date_prompt_and_availability_discovery() -> 
         context(),
     )
 
-    assert "tiene disponibilidad" in (result.message or "").casefold()
+    assert "disponibilidad con" in (result.message or "").casefold()
     assert "miércoles 9 de septiembre" in (result.message or "").casefold()
     assert "viernes 11 de septiembre" in (result.message or "").casefold()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.payload["step"] == "date"
+    assert result.pending_confirmation.expires_at > expiration_before_discovery
     assert gateway.slot_requests == [
         (
             UUID("33333333-3333-3333-3333-333333333333"),
