@@ -113,6 +113,15 @@ INTENT_ADJUDICATOR_ENV_KEYS = (
     "HUELLITAS_INTENT_ADJUDICATOR_TIMEOUT_SECONDS",
 )
 
+SAFETY_ENV_KEYS = (
+    "HUELLITAS_SAFETY_ENABLED",
+    "HUELLITAS_SAFETY_MAX_INPUT_CHARACTERS",
+    "HUELLITAS_SAFETY_MAX_GENERAL_OUTPUT_TOKENS",
+    "HUELLITAS_SAFETY_MAX_CLASSIFIER_TOKENS",
+    "HUELLITAS_SAFETY_CLASSIFIER_TIMEOUT_SECONDS",
+    "HUELLITAS_SAFETY_MINIMUM_CONFIDENCE",
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -127,6 +136,7 @@ def clean_huellitas_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
         *CHECKPOINT_ENV_KEYS,
         *CONVERSATION_LOCK_ENV_KEYS,
         *INTENT_ADJUDICATOR_ENV_KEYS,
+        *SAFETY_ENV_KEYS,
     ):
         monkeypatch.delenv(key, raising=False)
     yield
@@ -532,6 +542,51 @@ def test_chat_output_limit_uses_safe_default() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.chat_max_output_tokens == 1024
+
+
+def test_conversation_safety_uses_bounded_defaults() -> None:
+    configuration = Settings(_env_file=None).active_conversation_safety_configuration()
+
+    assert configuration is not None
+    assert configuration.max_input_characters == 2000
+    assert configuration.max_general_output_tokens == 512
+    assert configuration.max_classifier_tokens == 48
+    assert configuration.classifier_timeout_seconds == 5
+    assert configuration.minimum_confidence == 0.75
+
+
+def test_disabled_conversation_safety_has_no_active_configuration() -> None:
+    settings = Settings(safety_enabled=False, _env_file=None)
+
+    assert settings.active_conversation_safety_configuration() is None
+
+
+def test_conversation_safety_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HUELLITAS_SAFETY_MAX_INPUT_CHARACTERS", "1500")
+    monkeypatch.setenv("HUELLITAS_SAFETY_MAX_GENERAL_OUTPUT_TOKENS", "384")
+    monkeypatch.setenv("HUELLITAS_SAFETY_MINIMUM_CONFIDENCE", "0.82")
+
+    configuration = Settings(_env_file=None).active_conversation_safety_configuration()
+
+    assert configuration is not None
+    assert configuration.max_input_characters == 1500
+    assert configuration.max_general_output_tokens == 384
+    assert configuration.minimum_confidence == 0.82
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("safety_max_input_characters", 99),
+        ("safety_max_general_output_tokens", 63),
+        ("safety_max_classifier_tokens", 15),
+        ("safety_classifier_timeout_seconds", 0),
+        ("safety_minimum_confidence", 1.1),
+    ),
+)
+def test_conversation_safety_rejects_values_outside_bounds(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)
 
 
 def test_idempotency_uses_bounded_defaults() -> None:

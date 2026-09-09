@@ -44,6 +44,9 @@ from app.orchestration.idempotent_message_processor import IdempotentMessageProc
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageProcessor
+from app.orchestration.model_conversation_safety_guard import (
+    ModelConversationSafetyGuard,
+)
 from app.orchestration.model_intent_adjudicator import ModelIntentAdjudicator
 from app.orchestration.semantic_routing_policy import SemanticRoutingPolicy
 from app.ports.checkpoint_store import CheckpointStore
@@ -329,12 +332,28 @@ def build_lifespan(
                     ),
                 )
                 app.state.dependencies.module_registry = module_registry
+            safety_configuration = settings.active_conversation_safety_configuration()
+            safety_guard = None
+            general_max_output_tokens = settings.chat_max_output_tokens
+            if safety_configuration is not None and chat_model is not None:
+                safety_guard = ModelConversationSafetyGuard(
+                    chat_model,
+                    max_input_characters=safety_configuration.max_input_characters,
+                    max_output_tokens=safety_configuration.max_classifier_tokens,
+                    minimum_confidence=safety_configuration.minimum_confidence,
+                    timeout_seconds=safety_configuration.classifier_timeout_seconds,
+                )
+                general_max_output_tokens = min(
+                    general_max_output_tokens,
+                    safety_configuration.max_general_output_tokens,
+                )
             general_processor = MessageProcessor(
                 chat_model=chat_model,
-                max_output_tokens=settings.chat_max_output_tokens,
+                max_output_tokens=general_max_output_tokens,
                 rag_enabled=settings.rag_enabled,
                 context_retriever=context_retriever,
                 memory_writer=memory_writer,
+                safety_guard=safety_guard,
             )
             graph_checkpointer = checkpoint_store.saver
             intent_router = None

@@ -8,6 +8,9 @@ from app.bootstrap import lifecycle
 from app.bootstrap.application import create_application
 from app.bootstrap.settings import Settings
 from app.orchestration.message_handler import MessageHandler
+from app.orchestration.model_conversation_safety_guard import (
+    ModelConversationSafetyGuard,
+)
 
 
 def test_lifespan_owns_model_and_message_processor(
@@ -35,6 +38,49 @@ def test_lifespan_owns_model_and_message_processor(
     assert app.state.dependencies.graph_checkpointer is None
     assert app.state.dependencies.graph_metrics is None
     assert app.state.ready is False
+
+
+def test_lifespan_injects_bounded_safety_guard_into_general_processor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat_model = SimpleNamespace(
+        provider=SimpleNamespace(value="openrouter"),
+        model="model-test",
+        close=AsyncMock(),
+    )
+    captured: dict[str, object] = {}
+
+    def create_processor(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(process=AsyncMock())
+
+    monkeypatch.setattr(lifecycle, "create_chat_model", lambda settings: chat_model)
+    monkeypatch.setattr(lifecycle, "MessageProcessor", create_processor)
+    app = create_application(
+        Settings(
+            environment="test",
+            chat_enabled=True,
+            openrouter_api_key="secret",
+            chat_max_output_tokens=900,
+            safety_max_general_output_tokens=320,
+            safety_max_input_characters=1500,
+            safety_max_classifier_tokens=32,
+            safety_classifier_timeout_seconds=3,
+            safety_minimum_confidence=0.8,
+            _env_file=None,
+        )
+    )
+
+    with TestClient(app):
+        pass
+
+    safety_guard = captured["safety_guard"]
+    assert isinstance(safety_guard, ModelConversationSafetyGuard)
+    assert captured["max_output_tokens"] == 320
+    assert safety_guard._max_input_characters == 1500
+    assert safety_guard._max_output_tokens == 32
+    assert safety_guard._timeout_seconds == 3
+    assert safety_guard._minimum_confidence == 0.8
 
 
 def test_lifespan_owns_embedding_model_without_calling_provider(

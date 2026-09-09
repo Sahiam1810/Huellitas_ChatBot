@@ -294,6 +294,31 @@ Después de reconstruir el contenedor, una comprobación representativa es envia
 `Quiero sacar una consulta general para mi cachorro`: debe iniciar el flujo de citas y no
 responder como orientación veterinaria general.
 
+### Límite de seguridad conversacional
+
+El fallback general solo admite saludos, funciones de Huellitas y orientación veterinaria
+general breve. Rechaza solicitudes ajenas al sistema, generación extensa de contenido e
+intentos de ignorar, sustituir o revelar las instrucciones internas. La validación ocurre antes
+de consultar RAG, generar la respuesta o guardar memoria, por lo que una solicitud rechazada
+no se publica ni se reutiliza posteriormente desde Qdrant.
+
+Los flujos especializados de OTP, mascotas, servicios, citas y vacunación se enrutan primero y
+no pasan por este clasificador. Así conservan sus estados y respuestas deterministas:
+
+```dotenv
+HUELLITAS_SAFETY_ENABLED="true"
+HUELLITAS_SAFETY_MAX_INPUT_CHARACTERS="2000"
+HUELLITAS_SAFETY_MAX_GENERAL_OUTPUT_TOKENS="512"
+HUELLITAS_SAFETY_MAX_CLASSIFIER_TOKENS="48"
+HUELLITAS_SAFETY_CLASSIFIER_TIMEOUT_SECONDS="5"
+HUELLITAS_SAFETY_MINIMUM_CONFIDENCE="0.75"
+```
+
+El clasificador reutiliza el modelo conversacional activo con un máximo de 48 tokens y un
+timeout independiente. Una salida inválida, de baja confianza o que exceda el tiempo se cierra
+de forma segura y no llega al generador general. Los logs conservan únicamente proveedor,
+modelo, clasificación y consumo; nunca incluyen el mensaje, JWT ni datos personales.
+
 ## Colecciones para RAG
 
 La preparación vectorial está deshabilitada por defecto. Requiere habilitar conjuntamente Qdrant, embeddings y RAG:
