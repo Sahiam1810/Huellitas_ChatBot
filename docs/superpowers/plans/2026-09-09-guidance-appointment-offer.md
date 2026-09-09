@@ -122,7 +122,7 @@ git commit -m "feat: define guidance appointment offer"
 - Consumes: `create_appointment_offer`, `appointment_offer_choice`, `is_guest`, `ModuleContinuation("appointments", "appointments.book")`.
 - Produces: `VeterinaryGuidanceModuleExecutor(..., appointment_offer_ttl_seconds: int = 600)` con resultados que pueden contener `pending_confirmation` o `handoff`.
 
-- [ ] **Step 1: Write failing behavior tests**
+- [x] **Step 1: Write failing behavior tests**
 
 Add focused tests asserting:
 
@@ -150,7 +150,7 @@ Also cover:
 # urgent guidance never contains the booking offer
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/unit/modules/veterinary_guidance/test_veterinary_guidance_module.py -q --tb=short
@@ -158,7 +158,7 @@ Also cover:
 
 Expected: FAIL because the executor currently returns guidance without state or handoff.
 
-- [ ] **Step 3: Implement the executor flow**
+- [x] **Step 3: Implement the executor flow**
 
 In `VeterinaryGuidanceModuleExecutor`:
 
@@ -186,7 +186,7 @@ else:
 
 Expand `_message` to accept `pending` and `handoff`, forwarding both to `ModuleResult`.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/unit/modules/veterinary_guidance/test_veterinary_guidance_module.py tests/unit/modules/veterinary_guidance/test_prepare_safe_guidance.py -q --tb=short
@@ -195,7 +195,7 @@ Expand `_message` to accept `pending` and `handoff`, forwarding both to `ModuleR
 
 Expected: guidance tests pass; authorized and urgent responses remain unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/app/modules/veterinary_guidance/graph.py tests/unit/modules/veterinary_guidance/test_veterinary_guidance_module.py
