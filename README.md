@@ -180,6 +180,10 @@ cancelar y reprogramar. Para lectura usa `GET /api/appointments/mine?scope=upcom
 
 El flujo solicita mascota, servicio, veterinario, fecha y horario; solo pide teléfono cuando el
 perfil no lo tiene. Antes de crear muestra un resumen y exige una respuesta explícita `sí` o `no`.
+Al seleccionar la mascota también ofrece `Registrar otra mascota`. Esa opción puede elegirse por
+su número o con expresiones acotadas como `otra mascota` y `quiero registrar otra`; el agente
+entrega el flujo a `pet_profile` y, después de confirmar la creación, vuelve al agendamiento
+consultando nuevamente al backend para mostrar tanto las mascotas anteriores como la nueva.
 La fecha puede escribirse con formato numérico o mediante expresiones naturales como `mañana`,
 `el martes de la próxima semana` o `el 15 de este mes`. Se interpreta en
 `HUELLITAS_DISPLAY_TIME_ZONE`; las fechas pasadas, inexistentes o ambiguas se rechazan sin asumir

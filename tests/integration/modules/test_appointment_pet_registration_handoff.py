@@ -29,6 +29,7 @@ CONVERSATION_ID = UUID("10000000-0000-0000-0000-000000000001")
 PERSON_ID = UUID("20000000-0000-0000-0000-000000000002")
 ACCOUNT_ID = UUID("30000000-0000-0000-0000-000000000003")
 PET_ID = UUID("40000000-0000-0000-0000-000000000004")
+EXISTING_PET_ID = UUID("40000000-0000-0000-0000-000000000014")
 SPECIES_ID = UUID("50000000-0000-0000-0000-000000000005")
 RACE_ID = UUID("60000000-0000-0000-0000-000000000006")
 
@@ -69,7 +70,7 @@ class PetGateway:
             race_name="Mestizo",
             updated_at=datetime.now(UTC),
         )
-        self.profiles = (profile,)
+        self.profiles = (*self.profiles, profile)
         return profile
 
     async def update_owned(
@@ -202,3 +203,60 @@ async def test_booking_without_pets_registers_one_and_resumes_booking() -> None:
     assert "Milou fue registrada" in (result.message or "")
     assert "¿Para cuál mascota" in (result.message or "")
     assert state["confirmation"]["module_id"] == "appointments"
+
+
+@pytest.mark.anyio
+async def test_booking_registers_another_pet_and_resumes_with_updated_options() -> None:
+    pets = PetGateway()
+    pets.profiles = (
+        PetProfile(
+            id=EXISTING_PET_ID,
+            name="Luna",
+            age=4,
+            gender="hembra",
+            weight=12,
+            observations=None,
+            species_id=SPECIES_ID,
+            species_name="Canino",
+            race_id=RACE_ID,
+            race_name="Mestizo",
+            updated_at=datetime.now(UTC),
+        ),
+    )
+    graph = build_main_graph(
+        NeverGeneral(),
+        build_module_registry(
+            pets,
+            appointments_gateway=AppointmentsGateway(pets),
+        ),
+        InitialBookingRouter(),
+        InMemorySaver(),
+    )
+    configuration = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
+    messages = (
+        "Quiero agendar una consulta para otra mascota",
+        "otra",
+        "Milou",
+        "Canino",
+        "Mestizo",
+        "2",
+        "macho",
+        "8 kg",
+        "ninguna",
+        "sí",
+    )
+
+    for sequence, text in enumerate(messages, start=1):
+        state = await graph.ainvoke(
+            {"command": message_command_to_state(command(text, sequence))},
+            config=configuration,
+            context=context(),
+        )
+
+    result = message_result_from_state(state["result"])
+    assert [registration.name for registration in pets.registrations] == ["Milou"]
+    assert result.module == "appointments"
+    assert state["confirmation"]["module_id"] == "appointments"
+    assert "Luna" in (result.message or "")
+    assert "Milou" in (result.message or "")
+    assert "Registrar otra mascota" in (result.message or "")
