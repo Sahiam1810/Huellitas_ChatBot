@@ -212,13 +212,13 @@ git commit -m "feat: offer appointments after unavailable guidance"
 - Consumes: `appointment_booking_ttl_seconds` already accepted by `build_module_registry`.
 - Produces: a guidance executor configured with the same TTL as appointment booking.
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Build the registry with `appointment_booking_ttl_seconds=900`, retrieve the guidance executor,
 execute an authenticated empty-knowledge request and assert that the resulting pending
 confirmation expires approximately 900 seconds after creation rather than the default 600.
 
-- [ ] **Step 2: Run test to verify RED**
+- [x] **Step 2: Run test to verify RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/integration/bootstrap/test_module_registry.py -q -k guidance_offer_ttl --tb=short
@@ -226,7 +226,7 @@ confirmation expires approximately 900 seconds after creation rather than the de
 
 Expected: FAIL because the registry does not pass the appointment TTL to guidance.
 
-- [ ] **Step 3: Pass the existing TTL into the guidance executor**
+- [x] **Step 3: Pass the existing TTL into the guidance executor**
 
 ```python
 VeterinaryGuidanceModuleExecutor(
@@ -235,7 +235,7 @@ VeterinaryGuidanceModuleExecutor(
 )
 ```
 
-- [ ] **Step 4: Run focused integration verification**
+- [x] **Step 4: Run focused integration verification**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/integration/bootstrap/test_module_registry.py -q -k "guidance or appointment" --tb=short
@@ -246,7 +246,7 @@ git diff --check
 
 Expected: focused tests pass, handoff guards remain green, Ruff and diff checks are clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/app/bootstrap/module_registry.py tests/integration/bootstrap/test_module_registry.py
