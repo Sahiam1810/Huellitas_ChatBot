@@ -19,6 +19,7 @@ from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
 from app.ports.guidance_knowledge_gateway import GuidanceKnowledgeResult
 from app.ports.token_validator import AuthenticatedPrincipal
+from app.shared.enums import AccessRequirement
 
 
 class KnowledgeGateway:
@@ -106,9 +107,35 @@ async def test_guidance_ask_without_knowledge_returns_empty_message() -> None:
     )
     result = await executor.execute(request("mi gato no come"), execution_context())
     assert "guía autorizada" in (result.message or "").lower()
-    assert "escribe: quiero agendar una cita" in (result.message or "").lower()
-    assert result.pending_confirmation is None
+    assert "puedo ayudarte a agendar una cita" in (result.message or "").lower()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == "guidance.offer_appointment"
     assert result.rag.status is RagStatus.EMPTY
+
+
+@pytest.mark.anyio
+async def test_guest_natural_acceptance_requests_identity_and_defers_booking() -> None:
+    executor = VeterinaryGuidanceModuleExecutor(
+        knowledge_gateway=KnowledgeGateway(GuidanceKnowledgeResult(status=RagStatus.EMPTY))
+    )
+    offered = await executor.execute(
+        request("mi gato no come"),
+        execution_context(),
+    )
+
+    result = await executor.execute(
+        request(
+            "sí, por favor",
+            "guidance.appointment_offer",
+            pending=offered.pending_confirmation,
+        ),
+        execution_context(),
+    )
+
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.resume_message == "Quiero agendar una cita"
+    assert result.handoff is None
+    assert result.pending_confirmation is None
 
 
 @pytest.mark.anyio
@@ -124,7 +151,7 @@ async def test_verified_user_without_guidance_receives_resumable_appointment_off
     )
 
     assert "puedo ayudarte a agendar una cita" in (result.message or "").lower()
-    assert "responde sí o no" in (result.message or "").lower()
+    assert "responder de forma natural" in (result.message or "").lower()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.action == "guidance.offer_appointment"
 

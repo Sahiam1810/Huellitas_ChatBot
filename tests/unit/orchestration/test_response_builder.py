@@ -12,7 +12,7 @@ from app.orchestration.response_builder import (
 )
 from app.orchestration.state import initial_run_update, message_command_to_state
 from app.ports.chat_model import ModelProvider
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import InvalidModuleResultError
 
 
@@ -85,6 +85,8 @@ def test_module_result_is_normalized_into_the_existing_message_contract() -> Non
         input_tokens=20,
         output_tokens=8,
         rag=rag,
+        access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+        resume_message="Quiero agendar una cita",
     )
 
     result = normalize_module_result(current, manifest(), module_result)
@@ -99,6 +101,8 @@ def test_module_result_is_normalized_into_the_existing_message_contract() -> Non
     assert result.output_tokens == 8
     assert result.module == "appointments"
     assert result.rag is rag
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.resume_message == "Quiero agendar una cita"
 
 
 @pytest.mark.parametrize("module_id", ["services_catalog", " "])

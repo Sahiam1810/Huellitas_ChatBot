@@ -30,7 +30,7 @@ from app.orchestration.state import (
     routing_decision_from_state,
     routing_decision_to_state,
 )
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
 
 MAX_MODULE_HANDOFFS = 2
@@ -89,13 +89,19 @@ def build_main_graph(
         pending_expired = pending is not None and pending.is_expired()
         if pending_expired:
             pending = None
-        if pending is not None and not guest:
+        if pending is not None:
             try:
                 registration = registry.get_registration(pending.module_id)
             except ModuleNotFoundError:
                 return {"confirmation": None, "fallback_reason": "confirmation_module_missing"}
             if pending.intent not in registration.manifest.intents:
                 return {"confirmation": None, "fallback_reason": "confirmation_intent_missing"}
+            if guest and not registration.manifest.guest_accessible:
+                return {
+                    "confirmation": None,
+                    "fallback_reason": "guest_link_required",
+                    "guest_link_required": True,
+                }
             decision = RoutingDecision.module(
                 intent=pending.intent,
                 module_id=pending.module_id,
@@ -212,6 +218,13 @@ def build_main_graph(
                 raise GraphCompositionError("Module handoff intent is outside the target manifest")
             if next_registration.executor is None:
                 raise GraphCompositionError("Module handoff target executor is not configured")
+            if is_guest(command.roles) and not next_registration.manifest.guest_accessible:
+                result = replace(
+                    result,
+                    access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+                    handoff=None,
+                )
+                break
             registration = next_registration
             selected_module_id = registration.manifest.module_id
             request = ModuleExecutionRequest(

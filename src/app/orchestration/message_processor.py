@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.orchestration.context_retriever import ContextRetriever
+from app.orchestration.conversation_continuation import (
+    conversation_continuation_response,
+    detect_conversation_continuation,
+)
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.conversation_safety import ConversationSafetyGuard
 from app.orchestration.general_response_policy import GENERAL_RESPONSE_SYSTEM_PROMPT
@@ -55,6 +59,7 @@ class MessageResult:
     correlation_id: UUID
     response_type: MessageResponseType
     access_requirement: AccessRequirement = AccessRequirement.NONE
+    resume_message: str | None = None
     provider: ModelProvider | None = None
     model: str | None = None
     input_tokens: int | None = None
@@ -89,6 +94,16 @@ class MessageProcessor:
                 conversation_id=command.conversation_id,
                 correlation_id=command.correlation_id,
                 response_type=MessageResponseType.HUMAN_CONTROLLED,
+                rag=RagMessageResult.skipped(),
+            )
+
+        continuation = detect_conversation_continuation(command.message)
+        if continuation is not None:
+            return MessageResult(
+                message=conversation_continuation_response(continuation),
+                conversation_id=command.conversation_id,
+                correlation_id=command.correlation_id,
+                response_type=MessageResponseType.RETRIEVED,
                 rag=RagMessageResult.skipped(),
             )
 
@@ -176,9 +191,7 @@ class MessageProcessor:
         return await self._context_retriever.retrieve(
             command.message,
             command.conversation_id,
-            allow_direct=(
-                not command.publish_as_global_knowledge and not is_guest(command.roles)
-            ),
+            allow_direct=(not command.publish_as_global_knowledge and not is_guest(command.roles)),
         )
 
     async def _store_exchange(

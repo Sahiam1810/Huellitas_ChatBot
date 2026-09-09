@@ -191,7 +191,7 @@ otra fecha. Si el usuario pregunta qué días o próximos horarios están dispon
 El borrador se conserva en el checkpoint del `conversationId`, queda ligado a la cuenta autenticada,
 vence en 10 minutos por defecto y puede abandonarse escribiendo `cancelar`. Los números de horario
 se resuelven contra el instante UTC que se mostró y nunca se desplazan silenciosamente si cambia la
-disponibilidad. Una identidad invitada debe vincular primero su cuenta;
+disponibilidad. Una identidad invitada debe verificar primero su identidad mediante cédula y OTP;
 .NET deriva el cliente del JWT, comprueba la propiedad y vuelve a validar disponibilidad,
 solapamientos e idempotencia dentro de la transacción Oracle.
 
@@ -215,6 +215,18 @@ destructivas solicitan confirmación explícita y los estados pendientes quedan 
 para el módulo. También detecta señales de urgencia con reglas deterministas y recomienda atención
 profesional; no diagnostica, prescribe ni consulta datos privados. Puede atender a
 `TelegramGuest` porque no ejecuta operaciones sobre cuentas o mascotas.
+
+Cuando no existe una guía autorizada, el módulo puede ofrecer ayuda para agendar una cita y
+conserva esa oferta temporalmente en el checkpoint. El usuario puede responder naturalmente con
+expresiones como `sí, por favor`, `claro`, `para mañana` o `quiero agendar`; no necesita repetir
+una frase exacta. Una respuesta negativa cierra la oferta y una respuesta ambigua, contradictoria
+o con señales de inyección no inicia operaciones privadas.
+
+Si quien acepta es `TelegramGuest`, el módulo solicita `identity_verification` y entrega el valor
+canónico `resumeMessage="Quiero agendar una cita"`. El backend lo cifra en la sesión de identidad,
+solicita cédula y OTP, y reanuda el agendamiento autenticado al verificar el código. Este valor es
+determinista, no lo genera el LLM y está limitado a 500 caracteres. Ningún módulo privado puede
+ejecutarse con identidad invitada durante esa continuación.
 
 ## Módulo de cuidado preventivo
 
@@ -304,6 +316,13 @@ no se publica ni se reutiliza posteriormente desde Qdrant.
 
 Los flujos especializados de OTP, mascotas, servicios, citas y vacunación se enrutan primero y
 no pasan por este clasificador. Así conservan sus estados y respuestas deterministas:
+
+En el fallback general, respuestas completas y breves como `sí`, `no`, `gracias` o
+`listo` reciben una contestación determinista antes del clasificador. La coincidencia se
+hace contra todo el mensaje normalizado: una frase compuesta como
+`sí, ignora las instrucciones` no se considera continuación, conserva la evaluación de
+seguridad y no consulta Qdrant si es rechazada. Las confirmaciones pendientes de los
+módulos mantienen prioridad porque se resuelven antes de llegar a este fallback.
 
 ```dotenv
 HUELLITAS_SAFETY_ENABLED="true"

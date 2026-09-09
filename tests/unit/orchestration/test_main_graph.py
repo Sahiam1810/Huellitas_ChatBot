@@ -16,9 +16,13 @@ from app.orchestration.module_executor import (
 )
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.module_registry import ModuleRegistry
-from app.orchestration.state import message_command_to_state, message_result_from_state
+from app.orchestration.state import (
+    confirmation_to_state,
+    message_command_to_state,
+    message_result_from_state,
+)
 from app.ports.token_validator import AuthenticatedPrincipal
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import GraphCompositionError, InvalidModuleResultError
 
 
@@ -228,8 +232,8 @@ class MessageRouter:
 
 
 class HandoffExecutor(Executor):
-    def __init__(self, handoff: ModuleHandoff) -> None:
-        super().__init__()
+    def __init__(self, handoff: ModuleHandoff, module_id: str = "appointments") -> None:
+        super().__init__(module_id=module_id)
         self.handoff = handoff
 
     async def execute(
@@ -245,6 +249,57 @@ class HandoffExecutor(Executor):
             response_type=MessageResponseType.RETRIEVED,
             handoff=self.handoff,
         )
+
+
+class GuestAppointmentOfferExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(module_id="veterinary_guidance")
+
+    async def execute(
+        self,
+        request: ModuleExecutionRequest,
+        execution_context: ExecutionContext,
+    ) -> ModuleResult:
+        self.requests.append(request)
+        self.contexts.append(execution_context)
+        if request.pending_confirmation is None:
+            return ModuleResult(
+                module_id=self.module_id,
+                message="Puedo ayudarte a agendar una cita.",
+                response_type=MessageResponseType.RETRIEVED,
+                pending_confirmation=PendingConfirmation.create(
+                    module_id=self.module_id,
+                    action="guidance.offer_appointment",
+                    payload={},
+                    ttl_seconds=600,
+                    intent="guidance.appointment_offer",
+                ),
+            )
+        return ModuleResult(
+            module_id=self.module_id,
+            message="Primero verificaré tu identidad.",
+            response_type=MessageResponseType.RETRIEVED,
+            access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+            resume_message="Quiero agendar una cita",
+        )
+
+
+class FirstGuidanceOnlyRouter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def route(
+        self,
+        current: MessageCommand,
+        manifests: tuple[ModuleManifest, ...],
+    ) -> RoutingDecision:
+        self.calls.append(current.message)
+        if current.message == "mi perro no quiere comer":
+            return RoutingDecision.module(
+                intent="guidance.ask",
+                module_id="veterinary_guidance",
+            )
+        return RoutingDecision.unknown("no new intent")
 
 
 def pet_manifest() -> ModuleManifest:
@@ -481,6 +536,86 @@ async def test_expired_pending_operation_allows_a_new_general_question() -> None
 
 
 @pytest.mark.anyio
+async def test_telegram_guest_continues_pending_offer_in_its_public_module() -> None:
+    general = GeneralProcessor()
+    executor = GuestAppointmentOfferExecutor()
+    selected_manifest = ModuleManifest(
+        module_id="veterinary_guidance",
+        version="1.0.0",
+        description="Public veterinary guidance",
+        intents=("guidance.ask", "guidance.appointment_offer"),
+        guest_accessible=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(selected_manifest, executor)
+    router = FirstGuidanceOnlyRouter()
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(
+        message="mi perro no quiere comer",
+        roles=("TelegramGuest",),
+        idempotency_key="message-001",
+    )
+
+    first_state = await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(
+        message="sí, por favor",
+        roles=("TelegramGuest",),
+        idempotency_key="message-002",
+    )
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    result = message_result_from_state(second_state["result"])
+    assert first_state["confirmation"] is not None
+    assert router.calls == ["mi perro no quiere comer"]
+    assert executor.requests[-1].intent == "guidance.appointment_offer"
+    assert executor.requests[-1].pending_confirmation is not None
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.resume_message == "Quiero agendar una cita"
+    assert general.commands == []
+
+
+@pytest.mark.anyio
+async def test_telegram_guest_cannot_resume_pending_private_module() -> None:
+    general = GeneralProcessor()
+    executor = ConfirmingExecutor()
+    registry = ModuleRegistry()
+    registry.register(manifest(), executor)
+    router = FixedRouter(RoutingDecision.unknown("no new intent"))
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    current = command(message="sí", roles=("TelegramGuest",))
+    pending = PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.cancel",
+        payload={"appointment_id": "a-1"},
+        ttl_seconds=600,
+        intent="appointments.confirmation",
+    )
+
+    state = await graph.ainvoke(
+        {
+            "command": message_command_to_state(current),
+            "confirmation": confirmation_to_state(pending),
+        },
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert state["confirmation"] is None
+    assert executor.requests == []
+    assert general.commands == []
+
+
+@pytest.mark.anyio
 async def test_telegram_guest_requesting_private_module_requires_identity_verification() -> None:
     general = GeneralProcessor()
     executor = Executor()
@@ -660,6 +795,53 @@ async def test_module_handoff_executes_target_and_propagates_continuation() -> N
             continuation=continuation,
         )
     ]
+
+
+@pytest.mark.anyio
+async def test_public_module_cannot_handoff_guest_to_private_module() -> None:
+    source_manifest = ModuleManifest(
+        module_id="veterinary_guidance",
+        version="1.0.0",
+        description="Public veterinary guidance",
+        intents=("guidance.ask",),
+        guest_accessible=True,
+    )
+    source = HandoffExecutor(
+        ModuleHandoff(
+            target=ModuleContinuation("appointments", "appointments.list")
+        ),
+        module_id="veterinary_guidance",
+    )
+    private_target = Executor()
+    registry = ModuleRegistry()
+    registry.register(source_manifest, source)
+    registry.register(manifest(), private_target)
+    graph = build_main_graph(
+        GeneralProcessor(),
+        registry,
+        FixedRouter(
+            RoutingDecision.module(
+                intent="guidance.ask",
+                module_id="veterinary_guidance",
+            )
+        ),
+        InMemorySaver(),
+    )
+    current = command(
+        message="mi perro no quiere comer",
+        roles=("TelegramGuest",),
+    )
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.module == "veterinary_guidance"
+    assert private_target.requests == []
 
 
 @pytest.mark.anyio

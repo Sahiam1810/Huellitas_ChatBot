@@ -37,6 +37,11 @@ class MessageResponse(BaseModel):
         default=AccessRequirement.NONE,
         alias="accessRequirement",
     )
+    resume_message: str | None = Field(
+        default=None,
+        alias="resumeMessage",
+        max_length=500,
+    )
     provider: ModelProvider | None
     model: str | None
     usage: TokenUsageResponse | None

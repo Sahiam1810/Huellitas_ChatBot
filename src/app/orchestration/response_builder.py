@@ -40,6 +40,8 @@ def normalize_module_result(
         conversation_id=command.conversation_id,
         correlation_id=command.correlation_id,
         response_type=module_result.response_type,
+        access_requirement=module_result.access_requirement,
+        resume_message=module_result.resume_message,
         provider=module_result.provider,
         model=module_result.model,
         input_tokens=module_result.input_tokens,

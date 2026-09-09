@@ -23,7 +23,9 @@ from app.orchestration.module_executor import (
 )
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.guidance_knowledge_gateway import GuidanceKnowledgeGateway, GuidanceKnowledgeResult
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
+
+_APPOINTMENT_RESUME_MESSAGE = "Quiero agendar una cita"
 
 
 class VeterinaryGuidanceModuleExecutor:
@@ -79,15 +81,13 @@ class VeterinaryGuidanceModuleExecutor:
             RagStatus.DEGRADED,
             RagStatus.DISABLED,
         }:
-            if is_guest(request.command.roles):
-                response += "\n\nSi deseas agendar, escribe: quiero agendar una cita."
-            else:
-                response += (
-                    "\n\nSi deseas, puedo ayudarte a agendar una cita. Responde sí o no."
-                )
-                next_pending = create_appointment_offer(
-                    self._appointment_offer_ttl_seconds
-                )
+            response += (
+                "\n\nSi deseas, puedo ayudarte a agendar una cita. "
+                "Puedes responder de forma natural."
+            )
+            next_pending = create_appointment_offer(
+                self._appointment_offer_ttl_seconds
+            )
         return {
             "result": self._message(
                 response,
@@ -106,10 +106,6 @@ class VeterinaryGuidanceModuleExecutor:
             return VeterinaryGuidanceModuleExecutor._offer_result(
                 "La oferta para agendar una cita venció. Indica nuevamente qué necesitas."
             )
-        if is_guest(request.command.roles):
-            return VeterinaryGuidanceModuleExecutor._offer_result(
-                "Para agendar de forma segura, escribe: quiero agendar una cita."
-            )
         choice = appointment_offer_choice(request.command.message)
         if choice is False:
             return VeterinaryGuidanceModuleExecutor._offer_result(
@@ -119,6 +115,12 @@ class VeterinaryGuidanceModuleExecutor:
             return VeterinaryGuidanceModuleExecutor._offer_result(
                 "Para saber si deseas agendar una cita, responde sí o no.",
                 pending=pending,
+            )
+        if is_guest(request.command.roles):
+            return VeterinaryGuidanceModuleExecutor._offer_result(
+                "Perfecto. Primero necesito verificar tu identidad para agendar la cita.",
+                access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+                resume_message=_APPOINTMENT_RESUME_MESSAGE,
             )
         return VeterinaryGuidanceModuleExecutor._offer_result(
             "Perfecto. Vamos a iniciar el agendamiento.",
@@ -133,11 +135,15 @@ class VeterinaryGuidanceModuleExecutor:
         *,
         pending: PendingConfirmation | None = None,
         handoff: ModuleHandoff | None = None,
+        access_requirement: AccessRequirement = AccessRequirement.NONE,
+        resume_message: str | None = None,
     ) -> ModuleResult:
         return ModuleResult(
             module_id="veterinary_guidance",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
+            access_requirement=access_requirement,
+            resume_message=resume_message,
             rag=RagMessageResult.skipped(),
             pending_confirmation=pending,
             handoff=handoff,
