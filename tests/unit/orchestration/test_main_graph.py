@@ -232,8 +232,8 @@ class MessageRouter:
 
 
 class HandoffExecutor(Executor):
-    def __init__(self, handoff: ModuleHandoff) -> None:
-        super().__init__()
+    def __init__(self, handoff: ModuleHandoff, module_id: str = "appointments") -> None:
+        super().__init__(module_id=module_id)
         self.handoff = handoff
 
     async def execute(
@@ -795,6 +795,53 @@ async def test_module_handoff_executes_target_and_propagates_continuation() -> N
             continuation=continuation,
         )
     ]
+
+
+@pytest.mark.anyio
+async def test_public_module_cannot_handoff_guest_to_private_module() -> None:
+    source_manifest = ModuleManifest(
+        module_id="veterinary_guidance",
+        version="1.0.0",
+        description="Public veterinary guidance",
+        intents=("guidance.ask",),
+        guest_accessible=True,
+    )
+    source = HandoffExecutor(
+        ModuleHandoff(
+            target=ModuleContinuation("appointments", "appointments.list")
+        ),
+        module_id="veterinary_guidance",
+    )
+    private_target = Executor()
+    registry = ModuleRegistry()
+    registry.register(source_manifest, source)
+    registry.register(manifest(), private_target)
+    graph = build_main_graph(
+        GeneralProcessor(),
+        registry,
+        FixedRouter(
+            RoutingDecision.module(
+                intent="guidance.ask",
+                module_id="veterinary_guidance",
+            )
+        ),
+        InMemorySaver(),
+    )
+    current = command(
+        message="mi perro no quiere comer",
+        roles=("TelegramGuest",),
+    )
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.module == "veterinary_guidance"
+    assert private_target.requests == []
 
 
 @pytest.mark.anyio

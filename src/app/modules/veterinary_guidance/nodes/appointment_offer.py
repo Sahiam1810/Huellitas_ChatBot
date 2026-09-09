@@ -25,13 +25,12 @@ _NEGATIVE_CHOICES = {
     "no gracias",
 }
 _UNCERTAIN_MARKERS = {"tal vez", "quizas", "de pronto", "no se"}
-_UNSAFE_MARKERS = {
-    "ignora las instrucciones",
-    "ignora instrucciones",
-    "prompt",
-    "cambia de rol",
-    "toma el rol",
-}
+_UNSAFE_PATTERNS = (
+    re.compile(r"\b(?:ignora|olvida)\b.{0,60}\b(?:instrucciones|anterior|todo)\b"),
+    re.compile(r"\bignore\b.{0,60}\b(?:previous|instructions)\b"),
+    re.compile(r"\bprompt\b"),
+    re.compile(r"\b(?:cambia|toma)\b.{0,20}\brol\b"),
+)
 _SCHEDULING_PATTERN = re.compile(
     r"\b(?:quiero|quisiera|deseo|necesito|podemos|puedes)\b.*"
     r"\b(?:agendar|reservar|programar|sacar)\b"
@@ -54,7 +53,7 @@ def create_appointment_offer(ttl_seconds: int) -> PendingConfirmation:
 
 def appointment_offer_choice(message: str) -> bool | None:
     normalized = normalize_for_routing(message)
-    if not normalized or any(marker in normalized for marker in _UNSAFE_MARKERS):
+    if not normalized or any(pattern.search(normalized) for pattern in _UNSAFE_PATTERNS):
         return None
     if any(marker in normalized for marker in _UNCERTAIN_MARKERS):
         return None
@@ -63,18 +62,22 @@ def appointment_offer_choice(message: str) -> bool | None:
         normalized in _NEGATIVE_CHOICES
         or re.search(r"\bno\b", normalized) is not None
     )
-    is_explicitly_affirmative = (
-        normalized in _AFFIRMATIVE_CHOICES
-        or normalized.startswith("si ")
+    is_explicitly_affirmative = any(
+        re.search(rf"\b{re.escape(choice)}\b", normalized)
+        for choice in _AFFIRMATIVE_CHOICES
     )
-    if is_negative and is_explicitly_affirmative:
+    has_booking_signal = _SCHEDULING_PATTERN.search(normalized) is not None
+    has_date_signal = _DATE_PATTERN.search(normalized) is not None
+    if is_negative and (
+        is_explicitly_affirmative or has_booking_signal or has_date_signal
+    ):
         return None
     if is_negative:
         return False
     if (
         is_explicitly_affirmative
-        or _SCHEDULING_PATTERN.search(normalized) is not None
-        or _DATE_PATTERN.search(normalized) is not None
+        or has_booking_signal
+        or has_date_signal
     ):
         return True
     return None
