@@ -3,8 +3,9 @@ from uuid import UUID
 
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
-from app.orchestration.guest_access import GUEST_SYSTEM_PROMPT, is_guest
+from app.orchestration.conversation_safety import ConversationSafetyGuard
 from app.orchestration.general_response_policy import GENERAL_RESPONSE_SYSTEM_PROMPT
+from app.orchestration.guest_access import GUEST_SYSTEM_PROMPT, is_guest
 from app.orchestration.rag_contracts import (
     RagMessageResult,
     RagStatus,
@@ -21,6 +22,15 @@ from app.ports.chat_model import (
 )
 from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import ModelConfigurationError
+
+_OUT_OF_SCOPE_MESSAGE = (
+    "Solo puedo ayudarte con servicios de Huellitas, tus mascotas, citas y "
+    "orientación veterinaria general. ¿Qué necesitas consultar?"
+)
+_INPUT_TOO_LONG_MESSAGE = (
+    "Tu mensaje es demasiado largo. Resume tu consulta sobre Huellitas o veterinaria "
+    "e inténtalo nuevamente."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,12 +73,14 @@ class MessageProcessor:
         rag_enabled: bool = False,
         context_retriever: ContextRetriever | None = None,
         memory_writer: ConversationMemoryWriter | None = None,
+        safety_guard: ConversationSafetyGuard | None = None,
     ) -> None:
         self._chat_model = chat_model
         self._max_output_tokens = max_output_tokens
         self._rag_enabled = rag_enabled
         self._context_retriever = context_retriever
         self._memory_writer = memory_writer
+        self._safety_guard = safety_guard
 
     async def process(self, command: MessageCommand) -> MessageResult:
         if command.is_escalated:
@@ -79,6 +91,21 @@ class MessageProcessor:
                 response_type=MessageResponseType.HUMAN_CONTROLLED,
                 rag=RagMessageResult.skipped(),
             )
+
+        if self._safety_guard is not None:
+            safety = await self._safety_guard.evaluate(command.message)
+            if not safety.allowed:
+                return MessageResult(
+                    message=(
+                        _INPUT_TOO_LONG_MESSAGE
+                        if safety.reason == "input_too_long"
+                        else _OUT_OF_SCOPE_MESSAGE
+                    ),
+                    conversation_id=command.conversation_id,
+                    correlation_id=command.correlation_id,
+                    response_type=MessageResponseType.RETRIEVED,
+                    rag=RagMessageResult.skipped(),
+                )
 
         retrieved = await self._retrieve_context(command)
         guest = is_guest(command.roles)

@@ -1,0 +1,30 @@
+import pytest
+
+from app.modules.veterinary_guidance.nodes.appointment_offer import (
+    appointment_offer_choice,
+    create_appointment_offer,
+)
+
+
+def test_create_appointment_offer_builds_resumable_guidance_state() -> None:
+    pending = create_appointment_offer(600)
+
+    assert pending.module_id == "veterinary_guidance"
+    assert pending.action == "guidance.offer_appointment"
+    assert pending.intent == "guidance.appointment_offer"
+    assert pending.payload == {}
+    assert pending.is_expired() is False
+
+
+@pytest.mark.parametrize("message", ("sí", "Si", "de acuerdo", "adelante"))
+def test_appointment_offer_accepts_explicit_affirmation(message: str) -> None:
+    assert appointment_offer_choice(message) is True
+
+
+@pytest.mark.parametrize("message", ("no", "cancelar", "ahora no"))
+def test_appointment_offer_accepts_explicit_rejection(message: str) -> None:
+    assert appointment_offer_choice(message) is False
+
+
+def test_appointment_offer_keeps_ambiguous_answer_unresolved() -> None:
+    assert appointment_offer_choice("tal vez mañana") is None

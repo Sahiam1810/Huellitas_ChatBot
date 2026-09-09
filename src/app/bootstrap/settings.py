@@ -64,6 +64,16 @@ class ActiveIntentAdjudicatorConfiguration(BaseModel):
     timeout_seconds: float
 
 
+class ActiveConversationSafetyConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    max_input_characters: int
+    max_general_output_tokens: int
+    max_classifier_tokens: int
+    classifier_timeout_seconds: float
+    minimum_confidence: float
+
+
 class ActiveIdempotencyConfiguration(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -195,6 +205,13 @@ class Settings(BaseSettings):
     chat_enabled: bool = False
     chat_provider: ModelProvider = ModelProvider.OPENROUTER
     chat_max_output_tokens: int = Field(default=1024, ge=1, le=32768)
+
+    safety_enabled: bool = True
+    safety_max_input_characters: int = Field(default=2000, ge=100, le=20000)
+    safety_max_general_output_tokens: int = Field(default=512, ge=64, le=2048)
+    safety_max_classifier_tokens: int = Field(default=48, ge=16, le=128)
+    safety_classifier_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    safety_minimum_confidence: float = Field(default=0.75, ge=0, le=1)
 
     idempotency_enabled: bool = True
     idempotency_ttl_seconds: float = Field(default=86400, ge=1, le=604800)
@@ -422,6 +439,19 @@ class Settings(BaseSettings):
             minimum_confidence=self.intent_adjudicator_min_confidence,
             max_output_tokens=self.intent_adjudicator_max_output_tokens,
             timeout_seconds=self.intent_adjudicator_timeout_seconds,
+        )
+
+    def active_conversation_safety_configuration(
+        self,
+    ) -> ActiveConversationSafetyConfiguration | None:
+        if not self.safety_enabled:
+            return None
+        return ActiveConversationSafetyConfiguration(
+            max_input_characters=self.safety_max_input_characters,
+            max_general_output_tokens=self.safety_max_general_output_tokens,
+            max_classifier_tokens=self.safety_max_classifier_tokens,
+            classifier_timeout_seconds=self.safety_classifier_timeout_seconds,
+            minimum_confidence=self.safety_minimum_confidence,
         )
 
     def active_idempotency_configuration(

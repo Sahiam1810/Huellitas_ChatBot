@@ -1,3 +1,7 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.bootstrap.application import create_application
@@ -8,7 +12,11 @@ from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.preventive_care.manifest import PREVENTIVE_CARE_MANIFEST
 from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
+from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.message_processor import MessageCommand
+from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.module_registry import ModuleRegistry
+from app.ports.token_validator import AuthenticatedPrincipal
 
 
 class PetGateway:
@@ -134,6 +142,57 @@ def test_backend_gateway_registers_guest_accessible_guidance_module() -> None:
     assert registration.manifest == VETERINARY_GUIDANCE_MANIFEST
     assert registration.manifest.guest_accessible is True
     assert registration.executor is not None
+
+
+@pytest.mark.anyio
+async def test_registry_aligns_guidance_offer_ttl_with_appointment_booking() -> None:
+    registry = build_module_registry(
+        PetGateway(),  # type: ignore[arg-type]
+        appointment_booking_ttl_seconds=900,
+    )
+    registration = registry.get_registration("veterinary_guidance")
+    assert registration.executor is not None
+    command = MessageCommand(
+        message="mi perro no quiere comer",
+        conversation_id=UUID("10000000-0000-0000-0000-000000000001"),
+        user_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        pet_id=None,
+        channel="telegram",
+        language="es-CO",
+        roles=("Cliente",),
+        is_escalated=False,
+        correlation_id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        idempotency_key="guidance-ttl",
+    )
+    context = ExecutionContext(
+        bearer_token="token",
+        principal=AuthenticatedPrincipal(
+            account_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            person_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            role_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            role="Cliente",
+            username="cliente",
+            email="cliente@example.com",
+            token_id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        ),
+        execution_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        correlation_id=command.correlation_id,
+    )
+
+    result = await registration.executor.execute(
+        ModuleExecutionRequest(
+            command=command,
+            intent="guidance.ask",
+            manifest=registration.manifest,
+        ),
+        context,
+    )
+
+    assert result.pending_confirmation is not None
+    remaining_seconds = (
+        result.pending_confirmation.expires_at - datetime.now(UTC)
+    ).total_seconds()
+    assert 895 <= remaining_seconds <= 900
 
 
 def test_backend_gateway_registers_private_appointments_module() -> None:

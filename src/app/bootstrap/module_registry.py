@@ -68,7 +68,10 @@ def build_module_registry(
     ):
         registry.register(
             VETERINARY_GUIDANCE_MANIFEST,
-            VeterinaryGuidanceModuleExecutor(knowledge_gateway=guidance_knowledge_gateway),
+            VeterinaryGuidanceModuleExecutor(
+                knowledge_gateway=guidance_knowledge_gateway,
+                appointment_offer_ttl_seconds=appointment_booking_ttl_seconds,
+            ),
         )
     if pet_profile_gateway is not None and vaccinations_gateway is not None:
         registry.register(

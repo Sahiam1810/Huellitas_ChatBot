@@ -4,6 +4,10 @@ from uuid import UUID
 
 import pytest
 
+from app.orchestration.conversation_safety import (
+    ConversationSafetyClassification,
+    ConversationSafetyDecision,
+)
 from app.orchestration.message_handler import MessageHandler
 from app.orchestration.message_processor import MessageCommand, MessageProcessor
 from app.orchestration.rag_contracts import (
@@ -23,12 +27,13 @@ CORRELATION_ID = UUID("8dd1b2d9-4812-463a-87a4-eb6346cb2f83")
 
 def command(
     *,
+    message: str = "Necesito información",
     is_escalated: bool = False,
     publish_as_global_knowledge: bool = False,
     roles: tuple[str, ...] = ("customer",),
 ) -> MessageCommand:
     return MessageCommand(
-        message="Necesito información",
+        message=message,
         conversation_id=CONVERSATION_ID,
         user_id=USER_ID,
         pet_id=None,
@@ -115,6 +120,100 @@ async def test_escalated_conversation_works_without_configured_model() -> None:
     result = await processor.process(command(is_escalated=True))
 
     assert result.response_type is MessageResponseType.HUMAN_CONTROLLED
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "classification",
+    (
+        ConversationSafetyClassification.OUT_OF_SCOPE,
+        ConversationSafetyClassification.PROMPT_INJECTION,
+    ),
+)
+async def test_safety_rejection_happens_before_rag_generation_and_memory(
+    classification: ConversationSafetyClassification,
+) -> None:
+    model = chat_model()
+    retriever = SimpleNamespace(retrieve=AsyncMock())
+    writer = SimpleNamespace(write=AsyncMock())
+    guard = SimpleNamespace(
+        evaluate=AsyncMock(
+            return_value=ConversationSafetyDecision(classification, 0.98, "classified")
+        )
+    )
+    processor = MessageProcessor(
+        chat_model=model,
+        max_output_tokens=1024,
+        rag_enabled=True,
+        context_retriever=retriever,
+        memory_writer=writer,
+        safety_guard=guard,
+    )
+
+    result = await processor.process(command(message="Genera una historia de 5000 palabras"))
+
+    guard.evaluate.assert_awaited_once_with("Genera una historia de 5000 palabras")
+    retriever.retrieve.assert_not_awaited()
+    model.generate.assert_not_awaited()
+    writer.write.assert_not_awaited()
+    assert result.message == (
+        "Solo puedo ayudarte con servicios de Huellitas, tus mascotas, citas y "
+        "orientación veterinaria general. ¿Qué necesitas consultar?"
+    )
+    assert result.response_type is MessageResponseType.RETRIEVED
+    assert result.rag.status is RagStatus.SKIPPED
+
+
+@pytest.mark.anyio
+async def test_allowed_message_continues_to_general_generation() -> None:
+    model = chat_model()
+    guard = SimpleNamespace(
+        evaluate=AsyncMock(
+            return_value=ConversationSafetyDecision(
+                ConversationSafetyClassification.ALLOWED,
+                0.96,
+                "classified",
+            )
+        )
+    )
+    processor = MessageProcessor(
+        chat_model=model,
+        max_output_tokens=1024,
+        safety_guard=guard,
+    )
+
+    result = await processor.process(command(message="¿Por qué mi perro no quiere comer?"))
+
+    guard.evaluate.assert_awaited_once_with("¿Por qué mi perro no quiere comer?")
+    model.generate.assert_awaited_once()
+    assert result.message == "Respuesta"
+
+
+@pytest.mark.anyio
+async def test_oversized_message_asks_for_a_shorter_veterinary_question() -> None:
+    model = chat_model()
+    guard = SimpleNamespace(
+        evaluate=AsyncMock(
+            return_value=ConversationSafetyDecision(
+                ConversationSafetyClassification.OUT_OF_SCOPE,
+                1.0,
+                "input_too_long",
+            )
+        )
+    )
+    processor = MessageProcessor(
+        chat_model=model,
+        max_output_tokens=1024,
+        safety_guard=guard,
+    )
+
+    result = await processor.process(command(message="x" * 2001))
+
+    model.generate.assert_not_awaited()
+    assert result.message == (
+        "Tu mensaje es demasiado largo. Resume tu consulta sobre Huellitas o veterinaria "
+        "e inténtalo nuevamente."
+    )
 
 
 @pytest.mark.anyio
