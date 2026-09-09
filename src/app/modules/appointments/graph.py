@@ -154,7 +154,7 @@ class AppointmentsModuleExecutor:
         if booking_cancelled(request.command.message):
             return self._message("Cancelé el agendamiento; no se creó ninguna cita.")
         if pending.action == COLLECTION_ACTION:
-            message, next_pending = await advance_booking(
+            message, next_pending, handoff = await advance_booking(
                 self._gateway,
                 context.bearer_token,
                 pending,
@@ -165,7 +165,7 @@ class AppointmentsModuleExecutor:
                 self._availability_max_dates,
                 self._booking_ttl_seconds,
             )
-            return self._message(message, pending=next_pending)
+            return self._message(message, pending=next_pending, handoff=handoff)
 
         choice = confirmation_choice(request.command.message)
         if choice is False:

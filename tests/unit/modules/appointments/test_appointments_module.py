@@ -633,6 +633,56 @@ async def test_booking_without_pets_hands_off_to_registration_and_preserves_book
 
 
 @pytest.mark.anyio
+async def test_booking_prompt_includes_new_pet_option() -> None:
+    result = await AppointmentsModuleExecutor(Gateway(), "America/Bogota").execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+
+    assert "1. Luna" in (result.message or "")
+    assert "2. Registrar otra mascota" in (result.message or "")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("selection", ("otra", "2"))
+async def test_booking_another_pet_hands_off_to_registration(selection: str) -> None:
+    gateway = Gateway()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+
+    result = await executor.execute(
+        request(selection, "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert result.pending_confirmation is None
+    assert result.handoff is not None
+    assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
+    assert result.handoff.continuation == ModuleContinuation(
+        "appointments", "appointments.book"
+    )
+    assert "registrar otra mascota" in (result.message or "").casefold()
+    assert gateway.created == []
+
+
+@pytest.mark.anyio
+async def test_booking_another_schedule_does_not_select_new_pet_option() -> None:
+    executor = AppointmentsModuleExecutor(Gateway(), "America/Bogota")
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+
+    result = await executor.execute(
+        request("otro horario", "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert result.handoff is None
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "pet"
+    assert "2. Registrar otra mascota" in (result.message or "")
+
+
+@pytest.mark.anyio
 async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
     gateway = Gateway()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
