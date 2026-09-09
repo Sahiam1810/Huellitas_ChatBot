@@ -12,12 +12,17 @@ Cuando `veterinary_guidance` recibe un resultado vacío, degradado o deshabilita
 una urgencia:
 
 1. Mantiene el mensaje seguro correspondiente y no inventa recomendaciones clínicas.
-2. Añade: `Si deseas, puedo ayudarte a agendar una cita. Responde sí o no.`
+2. Para una identidad verificada, añade: `Si deseas, puedo ayudarte a agendar una cita.
+   Responde sí o no.`
 3. Devuelve un `PendingConfirmation` propio del módulo con expiración acotada.
-4. Una respuesta afirmativa genera un `ModuleHandoff` a `appointments.book`.
+4. Una respuesta afirmativa de una identidad verificada genera un `ModuleHandoff` a
+   `appointments.book`.
 5. Una respuesta negativa cierra la oferta sin ejecutar el módulo de citas.
 6. Una respuesta ambigua conserva la confirmación y solicita responder `sí` o `no`.
 7. Una confirmación vencida informa la expiración y no agenda nada.
+8. Para un invitado, no crea un estado pendiente ni un handoff. Indica que escriba
+   `quiero agendar una cita`, de modo que el enrutamiento normal active cédula y OTP antes de
+   entrar al módulo privado.
 
 El módulo de citas conserva toda su lógica actual, incluida la verificación de identidad, el
 registro previo de mascotas cuando sea necesario y la selección de servicio, veterinario, fecha
@@ -30,6 +35,7 @@ y horario.
 - Las preguntas externas continúan siendo rechazadas por la frontera general de seguridad.
 - La oferta no crea ni confirma una cita por sí sola.
 - El handoff solo apunta a un módulo e intención registrados.
+- Un invitado nunca llega a `appointments` mediante handoff y no puede omitir la verificación.
 
 ## Estado y expiración
 
@@ -46,5 +52,6 @@ Las pruebas enfocadas cubrirán:
 - rechazo sin handoff;
 - respuesta ambigua que conserva el estado;
 - expiración segura;
+- invitado sin estado pendiente ni handoff;
 - urgencia sin oferta de cita;
 - conservación de las respuestas respaldadas por conocimiento autorizado.
