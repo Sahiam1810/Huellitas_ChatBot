@@ -2,6 +2,9 @@ import pytest
 
 from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
 from app.modules.appointments.semantic_routing import APPOINTMENTS_SEMANTIC_INTENTS
+from app.modules.appointments.services.availability_discovery import (
+    is_availability_discovery_request,
+)
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.pet_profile.semantic_routing import PET_PROFILE_SEMANTIC_INTENTS
 from app.modules.preventive_care.manifest import PREVENTIVE_CARE_MANIFEST
@@ -44,3 +47,17 @@ def test_semantic_intent_pairs_are_unique_across_modules() -> None:
     pairs = tuple((definition.module_id, definition.intent) for definition in definitions)
 
     assert len(pairs) == len(set(pairs))
+
+
+def test_appointment_booking_semantics_cover_availability_discovery() -> None:
+    booking = next(
+        definition
+        for definition in APPOINTMENTS_SEMANTIC_INTENTS
+        if definition.intent == "appointments.book"
+    )
+
+    availability_examples = tuple(
+        example for example in booking.examples if is_availability_discovery_request(example)
+    )
+
+    assert len(availability_examples) >= 2
