@@ -85,11 +85,12 @@ def resolve_appointment_date(text: str, reference_date: date) -> DateResolution:
         if candidate is not None:
             candidates.append(candidate)
 
-    without_day_after_tomorrow = normalized
-    if re.search(r"\bpasado\s+manana\b", normalized):
+    date_marker_text = re.sub(r"\bde\s+la\s+manana\b", " ", normalized)
+    without_day_after_tomorrow = date_marker_text
+    if re.search(r"\bpasado\s+manana\b", date_marker_text):
         candidates.append(reference_date + timedelta(days=2))
         without_day_after_tomorrow = re.sub(
-            r"\bpasado\s+manana\b", " ", normalized
+            r"\bpasado\s+manana\b", " ", date_marker_text
         )
     if re.search(r"\bmanana\b", without_day_after_tomorrow):
         candidates.append(reference_date + timedelta(days=1))

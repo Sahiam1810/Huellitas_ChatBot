@@ -1,6 +1,6 @@
 import re
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -22,13 +22,18 @@ from app.modules.appointments.services.date_resolver import (
     date_resolution_error_message,
     resolve_appointment_date,
 )
+from app.modules.appointments.services.time_resolver import resolve_appointment_time
 from app.orchestration.module_executor import (
     ModuleContinuation,
     ModuleHandoff,
     PendingConfirmation,
 )
 from app.orchestration.rule_based_intent_router import normalize_for_routing
-from app.ports.appointments_gateway import AppointmentBookingOptions, AppointmentsGateway
+from app.ports.appointments_gateway import (
+    AppointmentBookingOptions,
+    AppointmentBookingSlot,
+    AppointmentsGateway,
+)
 
 COLLECTION_ACTION = "appointments.book.collect"
 CONFIRMATION_ACTION = "appointments.book"
@@ -150,6 +155,31 @@ async def advance_booking(
             advertised_slot_starts_utc=advertised_starts,
             step="slot",
         )
+        requested_time = resolve_appointment_time(message)
+        if requested_time is not None:
+            selected = next(
+                (
+                    slot
+                    for slot in slots
+                    if slot.scheduled_start_utc.astimezone(zone).time() == requested_time
+                ),
+                None,
+            )
+            if selected is not None:
+                return _accept_slot(
+                    draft,
+                    selected,
+                    options.requires_requester_phone_number,
+                    pending,
+                    ttl_seconds,
+                    zone,
+                )
+            return (
+                f"{_format_time(requested_time)} no está disponible ese día. "
+                "Elige uno de los horarios vigentes:\n"
+                + format_slots(slots, zone),
+                _replace_pending(pending, draft, ttl_seconds),
+            )
         return (
             "Elige un horario respondiendo con su número:\n" + format_slots(slots, zone),
             _replace_pending(pending, draft, ttl_seconds),
@@ -186,19 +216,14 @@ async def advance_booking(
                 "Ese horario ya no está disponible. Indica otra fecha para consultar horarios.",
                 _replace_pending(pending, draft, ttl_seconds),
             )
-        step = "phone" if options.requires_requester_phone_number else "confirmation"
-        draft = replace(
+        return _accept_slot(
             draft,
-            scheduled_start_utc=selected.scheduled_start_utc.astimezone(UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
-            step=step,
+            selected,
+            options.requires_requester_phone_number,
+            pending,
+            ttl_seconds,
+            zone,
         )
-        action = CONFIRMATION_ACTION if step == "confirmation" else COLLECTION_ACTION
-        next_pending = _replace_pending(pending, draft, ttl_seconds, action=action)
-        if step == "phone":
-            return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending
-        return booking_summary(draft, zone), next_pending
     if draft.step == "phone":
         phone = re.sub(r"\D", "", message)
         if not 7 <= len(phone) <= 20:
@@ -261,6 +286,40 @@ def _refresh_pending(pending: PendingConfirmation, ttl_seconds: int) -> PendingC
         pending,
         expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
     )
+
+
+def _accept_slot(
+    draft: AppointmentBookingDraft,
+    selected: AppointmentBookingSlot,
+    requires_phone: bool,
+    pending: PendingConfirmation,
+    ttl_seconds: int,
+    zone: ZoneInfo,
+) -> tuple[str, PendingConfirmation]:
+    step = "phone" if requires_phone else "confirmation"
+    selected_draft = replace(
+        draft,
+        scheduled_start_utc=selected.scheduled_start_utc.astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        step=step,
+    )
+    action = CONFIRMATION_ACTION if step == "confirmation" else COLLECTION_ACTION
+    next_pending = _replace_pending(
+        pending,
+        selected_draft,
+        ttl_seconds,
+        action=action,
+    )
+    if step == "phone":
+        return "Indica un teléfono de contacto entre 7 y 20 dígitos.", next_pending
+    return booking_summary(selected_draft, zone), next_pending
+
+
+def _format_time(value: time) -> str:
+    hour = value.hour % 12 or 12
+    marker = "a. m." if value.hour < 12 else "p. m."
+    return f"{hour}:{value.minute:02d} {marker}"
 
 
 def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:

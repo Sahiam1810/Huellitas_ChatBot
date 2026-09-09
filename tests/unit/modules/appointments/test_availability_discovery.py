@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -16,11 +16,12 @@ SERVICE_ID = UUID("44444444-4444-4444-4444-444444444444")
 START_DATE = date(2026, 9, 8)
 
 
-def slot(day: int, hour: int = 14) -> AppointmentBookingSlot:
+def slot(day: int, hour: int = 14, minute: int = 0) -> AppointmentBookingSlot:
+    start = datetime(2026, 9, day, hour, minute, tzinfo=UTC)
     return AppointmentBookingSlot(
         availability_id=UUID(f"77777777-7777-7777-7777-{day:012d}"),
-        scheduled_start_utc=datetime(2026, 9, day, hour, tzinfo=UTC),
-        scheduled_end_utc=datetime(2026, 9, day, hour, 30, tzinfo=UTC),
+        scheduled_start_utc=start,
+        scheduled_end_utc=start + timedelta(minutes=30),
     )
 
 
@@ -116,7 +117,9 @@ async def test_discovery_checks_exactly_the_configured_window_when_empty() -> No
 
 @pytest.mark.anyio
 async def test_formats_real_available_dates_in_local_time() -> None:
-    gateway = RecordingSlotsGateway({date(2026, 9, 9): (slot(9), slot(9, 16))})
+    gateway = RecordingSlotsGateway(
+        {date(2026, 9, 9): (slot(9), slot(9, 14, 30), slot(9, 15))}
+    )
     dates = await discover_available_dates(
         gateway,
         VETERINARIAN_ID,
@@ -134,11 +137,11 @@ async def test_formats_real_available_dates_in_local_time() -> None:
         search_days=14,
     )
 
-    assert "JohIver Pardo tiene disponibilidad" in message
+    assert "Disponibilidad con JohIver Pardo" in message
     assert "miércoles 9 de septiembre" in message
-    assert "9:00 a. m." in message
-    assert "11:00 a. m." in message
-    assert "Indica la fecha que prefieres" in message
+    assert "9:00 a. m. a 10:30 a. m. (3 horarios)" in message
+    assert "9:30 a. m." not in message
+    assert "viernes a las 10 de la mañana" in message
 
 
 def test_formats_empty_discovery_without_inventing_slots() -> None:
