@@ -104,7 +104,15 @@ class SemanticIntentRouter:
                 best_score,
             )
             return RoutingDecision.unknown("semantic intent score is below threshold")
-        competing_score = next(
+        intent_competing_score = next(
+            (
+                score
+                for score, candidate in reversed(scores[:-1])
+                if (candidate.module_id, candidate.intent) != (best.module_id, best.intent)
+            ),
+            None,
+        )
+        module_competing_score = next(
             (
                 score
                 for score, candidate in reversed(scores[:-1])
@@ -112,9 +120,9 @@ class SemanticIntentRouter:
             ),
             None,
         )
-        if competing_score is not None:
-            margin = best_score - competing_score
-            if self._adjudicator is not None and margin < self._adjudication_margin:
+        if intent_competing_score is not None:
+            intent_margin = best_score - intent_competing_score
+            if self._adjudicator is not None and intent_margin < self._adjudication_margin:
                 candidates = tuple(
                     IntentCandidate(
                         module_id=definition.module_id,
@@ -135,6 +143,8 @@ class SemanticIntentRouter:
                             "intent adjudicator selected an unavailable candidate"
                         )
                 return decision
+        if module_competing_score is not None:
+            margin = best_score - module_competing_score
             if margin < self._minimum_margin:
                 logger.info(
                     "semantic_intent_ambiguous module=%s intent=%s top_score=%.6f margin=%.6f",

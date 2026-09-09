@@ -295,6 +295,49 @@ async def test_close_cross_module_scores_use_one_adjudication() -> None:
 
 
 @pytest.mark.anyio
+async def test_close_same_module_intents_use_one_adjudication() -> None:
+    message = "Okey pero quiero sacar es una cita"
+    adjudicator = Adjudicator(
+        RoutingDecision.module(module_id="appointments", intent="appointments.book")
+    )
+    router = SemanticIntentRouter(
+        ControlledEmbeddings(
+            {
+                "reservar una cita nueva": vector_for_score(0.72),
+                "cancelar una cita existente": vector_for_score(0.76),
+                message: (1.0, 0.0),
+            }
+        ),
+        (
+            SemanticIntentDefinition(
+                "appointments", "appointments.book", ("reservar una cita nueva",)
+            ),
+            SemanticIntentDefinition(
+                "appointments", "appointments.cancel", ("cancelar una cita existente",)
+            ),
+        ),
+        minimum_score=0.45,
+        minimum_margin=0.03,
+        adjudicator=adjudicator,
+        adjudication_margin=0.10,
+    )
+
+    decision = await router.route(
+        command(message),
+        (manifest("appointments", "appointments.book", "appointments.cancel"),),
+    )
+
+    assert decision == RoutingDecision.module(
+        module_id="appointments", intent="appointments.book"
+    )
+    assert adjudicator.calls == 1
+    assert {candidate.intent for candidate in adjudicator.received_candidates} == {
+        "appointments.book",
+        "appointments.cancel",
+    }
+
+
+@pytest.mark.anyio
 async def test_adjudicator_cannot_select_a_candidate_outside_active_manifests() -> None:
     message = "solicitud ambigua"
     adjudicator = Adjudicator(
