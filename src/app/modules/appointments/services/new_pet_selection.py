@@ -21,6 +21,11 @@ _NEW_PET_PATTERNS = (
     ),
 )
 
+_NEGATED_REGISTRATION = re.compile(
+    r"\bno\s+(?:quiero|deseo|necesito|voy\s+a)\s+"
+    r"(?:registrar|agregar|anadir)\b"
+)
+
 
 def wants_to_register_another_pet(message: str, existing_pet_count: int) -> bool:
     if existing_pet_count < 0:
@@ -29,6 +34,8 @@ def wants_to_register_another_pet(message: str, existing_pet_count: int) -> bool
     normalized = normalize_for_routing(message)
     if normalized.isdigit():
         return int(normalized) == existing_pet_count + 1
+    if _NEGATED_REGISTRATION.search(normalized):
+        return False
     if normalized in _DIRECT_SELECTIONS:
         return True
     return any(pattern.search(normalized) for pattern in _NEW_PET_PATTERNS)

@@ -80,6 +80,12 @@ async def advance_booking(
     draft = AppointmentBookingDraft.from_payload(pending.payload)
     options = await gateway.get_booking_options(bearer_token)
     if draft.step == "pet":
+        selected = choose_option(
+            message, tuple((str(item.id), item.name) for item in options.pets)
+        )
+        if selected is not None:
+            draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
+            return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds), None
         if wants_to_register_another_pet(message, len(options.pets)):
             return (
                 "Vamos a registrar otra mascota antes de continuar con la cita.",
@@ -91,11 +97,7 @@ async def advance_booking(
                     ),
                 ),
             )
-        selected = choose_option(message, tuple((str(item.id), item.name) for item in options.pets))
-        if selected is None:
-            return "No identifiqué la mascota. " + _pet_prompt(options), pending, None
-        draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
-        return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds), None
+        return "No identifiqué la mascota. " + _pet_prompt(options), pending, None
     if draft.step == "service":
         selected = choose_option(
             message, tuple((str(item.id), item.name) for item in options.services)

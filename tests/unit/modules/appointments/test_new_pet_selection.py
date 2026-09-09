@@ -29,6 +29,7 @@ def test_recognizes_new_pet_selection(message: str, count: int) -> None:
         ("1", 1),
         ("Milou", 1),
         ("otro horario", 1),
+        ("No quiero registrar otra mascota", 1),
         ("", 1),
         ("3", 1),
     ),

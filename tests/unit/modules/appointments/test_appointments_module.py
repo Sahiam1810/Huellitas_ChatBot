@@ -683,6 +683,28 @@ async def test_booking_another_schedule_does_not_select_new_pet_option() -> None
 
 
 @pytest.mark.anyio
+async def test_booking_explicit_existing_pet_wins_over_negated_new_pet_request() -> None:
+    executor = AppointmentsModuleExecutor(Gateway(), "America/Bogota")
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+
+    result = await executor.execute(
+        request(
+            "No quiero registrar otra mascota, es para Luna",
+            "appointments.booking",
+            started.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert result.handoff is None
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "service"
+    assert result.pending_confirmation.payload["pet_name"] == "Luna"
+
+
+@pytest.mark.anyio
 async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
     gateway = Gateway()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
