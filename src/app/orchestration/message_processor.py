@@ -59,6 +59,7 @@ class MessageResult:
     correlation_id: UUID
     response_type: MessageResponseType
     access_requirement: AccessRequirement = AccessRequirement.NONE
+    resume_message: str | None = None
     provider: ModelProvider | None = None
     model: str | None = None
     input_tokens: int | None = None

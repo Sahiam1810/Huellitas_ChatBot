@@ -7,7 +7,7 @@ from app.orchestration.message_processor import MessageCommand
 from app.orchestration.module_manifest import ModuleManifest
 from app.orchestration.rag_contracts import RagMessageResult
 from app.ports.chat_model import ModelProvider
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +73,8 @@ class ModuleResult:
     module_id: str
     message: str | None
     response_type: MessageResponseType
+    access_requirement: AccessRequirement = AccessRequirement.NONE
+    resume_message: str | None = None
     provider: ModelProvider | None = None
     model: str | None = None
     input_tokens: int | None = None

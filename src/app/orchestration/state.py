@@ -44,6 +44,7 @@ class MessageResultState(TypedDict):
     correlation_id: str
     response_type: str
     access_requirement: str
+    resume_message: str | None
     provider: str | None
     model: str | None
     input_tokens: int | None
@@ -64,6 +65,8 @@ class ModuleResultState(TypedDict):
     module_id: str
     message: str | None
     response_type: str
+    access_requirement: str
+    resume_message: str | None
     provider: str | None
     model: str | None
     input_tokens: int | None
@@ -148,6 +151,7 @@ def message_result_to_state(result: MessageResult) -> MessageResultState:
         "correlation_id": str(result.correlation_id),
         "response_type": result.response_type.value,
         "access_requirement": result.access_requirement.value,
+        "resume_message": result.resume_message,
         "provider": result.provider.value if result.provider is not None else None,
         "model": result.model,
         "input_tokens": result.input_tokens,
@@ -166,6 +170,7 @@ def message_result_from_state(state: MessageResultState) -> MessageResult:
         correlation_id=UUID(state["correlation_id"]),
         response_type=MessageResponseType(state["response_type"]),
         access_requirement=AccessRequirement(state["access_requirement"]),
+        resume_message=state.get("resume_message"),
         provider=ModelProvider(provider) if provider is not None else None,
         model=state["model"],
         input_tokens=state["input_tokens"],
@@ -199,6 +204,8 @@ def module_result_to_state(result: ModuleResult) -> ModuleResultState:
         "module_id": result.module_id,
         "message": result.message,
         "response_type": result.response_type.value,
+        "access_requirement": result.access_requirement.value,
+        "resume_message": result.resume_message,
         "provider": result.provider.value if result.provider is not None else None,
         "model": result.model,
         "input_tokens": result.input_tokens,
@@ -214,6 +221,10 @@ def module_result_from_state(state: ModuleResultState) -> ModuleResult:
         module_id=state["module_id"],
         message=state["message"],
         response_type=MessageResponseType(state["response_type"]),
+        access_requirement=AccessRequirement(
+            state.get("access_requirement", AccessRequirement.NONE.value)
+        ),
+        resume_message=state.get("resume_message"),
         provider=ModelProvider(provider) if provider is not None else None,
         model=state["model"],
         input_tokens=state["input_tokens"],

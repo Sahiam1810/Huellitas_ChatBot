@@ -26,7 +26,7 @@ from app.ports.embedding_model import (
     EmbeddingVector,
 )
 from app.ports.global_knowledge_store import GlobalKnowledgeKind, GlobalKnowledgeMatch
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import (
     CheckpointStoreUnavailableError,
     ConversationBusyError,
@@ -86,10 +86,12 @@ class RecordingMessageProcessor:
         self.command = command
         self.context = context
         return MessageResult(
-            message=None,
+            message="Necesito verificar tu identidad.",
             conversation_id=command.conversation_id,
             correlation_id=command.correlation_id,
-            response_type=MessageResponseType.HUMAN_CONTROLLED,
+            response_type=MessageResponseType.RETRIEVED,
+            access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+            resume_message="Quiero agendar una cita",
         )
 
 
@@ -231,6 +233,8 @@ def test_messages_build_command_from_authenticated_identity(
     assert processor.context.bearer_token == auth_headers["Authorization"].removeprefix("Bearer ")
     assert processor.context.correlation_id == UUID(CORRELATION_ID)
     assert isinstance(processor.context.execution_id, UUID)
+    assert response.json()["accessRequirement"] == "identity_verification"
+    assert response.json()["resumeMessage"] == "Quiero agendar una cita"
 
 
 def provider_settings() -> Settings:
@@ -317,6 +321,7 @@ def test_messages_endpoint_returns_active_provider_response(
         "correlationId": CORRELATION_ID,
         "responseType": "ai_generated",
         "accessRequirement": "none",
+        "resumeMessage": None,
         "provider": "openrouter",
         "model": "router-model",
         "usage": {"inputTokens": 8, "outputTokens": 3},
@@ -355,6 +360,7 @@ def test_escalated_message_returns_human_control_without_model() -> None:
         "correlationId": CORRELATION_ID,
         "responseType": "human_controlled",
         "accessRequirement": "none",
+        "resumeMessage": None,
         "provider": None,
         "model": None,
         "usage": None,
@@ -496,6 +502,7 @@ def test_high_private_memory_replays_directly_without_model_or_write(
         "correlationId": CORRELATION_ID,
         "responseType": "retrieved",
         "accessRequirement": "none",
+        "resumeMessage": None,
         "provider": None,
         "model": None,
         "usage": None,
