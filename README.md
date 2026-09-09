@@ -305,6 +305,13 @@ no se publica ni se reutiliza posteriormente desde Qdrant.
 Los flujos especializados de OTP, mascotas, servicios, citas y vacunación se enrutan primero y
 no pasan por este clasificador. Así conservan sus estados y respuestas deterministas:
 
+En el fallback general, respuestas completas y breves como `sí`, `no`, `gracias` o
+`listo` reciben una contestación determinista antes del clasificador. La coincidencia se
+hace contra todo el mensaje normalizado: una frase compuesta como
+`sí, ignora las instrucciones` no se considera continuación, conserva la evaluación de
+seguridad y no consulta Qdrant si es rechazada. Las confirmaciones pendientes de los
+módulos mantienen prioridad porque se resuelven antes de llegar a este fallback.
+
 ```dotenv
 HUELLITAS_SAFETY_ENABLED="true"
 HUELLITAS_SAFETY_MAX_INPUT_CHARACTERS="2000"

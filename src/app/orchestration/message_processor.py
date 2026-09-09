@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.orchestration.context_retriever import ContextRetriever
+from app.orchestration.conversation_continuation import (
+    conversation_continuation_response,
+    detect_conversation_continuation,
+)
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
 from app.orchestration.conversation_safety import ConversationSafetyGuard
 from app.orchestration.general_response_policy import GENERAL_RESPONSE_SYSTEM_PROMPT
@@ -92,6 +96,16 @@ class MessageProcessor:
                 rag=RagMessageResult.skipped(),
             )
 
+        continuation = detect_conversation_continuation(command.message)
+        if continuation is not None:
+            return MessageResult(
+                message=conversation_continuation_response(continuation),
+                conversation_id=command.conversation_id,
+                correlation_id=command.correlation_id,
+                response_type=MessageResponseType.RETRIEVED,
+                rag=RagMessageResult.skipped(),
+            )
+
         if self._safety_guard is not None:
             safety = await self._safety_guard.evaluate(command.message)
             if not safety.allowed:
@@ -176,9 +190,7 @@ class MessageProcessor:
         return await self._context_retriever.retrieve(
             command.message,
             command.conversation_id,
-            allow_direct=(
-                not command.publish_as_global_knowledge and not is_guest(command.roles)
-            ),
+            allow_direct=(not command.publish_as_global_knowledge and not is_guest(command.roles)),
         )
 
     async def _store_exchange(

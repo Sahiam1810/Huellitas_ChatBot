@@ -165,6 +165,53 @@ async def test_safety_rejection_happens_before_rag_generation_and_memory(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("message", "expected_fragment"),
+    (
+        ("sí", "quiero agendar una cita"),
+        ("no", "no iniciaré ninguna acción"),
+        ("gracias", "con gusto"),
+        ("listo", "cuéntame qué necesitas"),
+    ),
+)
+async def test_safe_continuation_skips_safety_rag_generation_and_memory(
+    message: str,
+    expected_fragment: str,
+) -> None:
+    model = chat_model()
+    retriever = SimpleNamespace(retrieve=AsyncMock())
+    writer = SimpleNamespace(write=AsyncMock())
+    guard = SimpleNamespace(
+        evaluate=AsyncMock(
+            return_value=ConversationSafetyDecision(
+                ConversationSafetyClassification.OUT_OF_SCOPE,
+                0.99,
+                "classified",
+            )
+        )
+    )
+    processor = MessageProcessor(
+        chat_model=model,
+        max_output_tokens=1024,
+        rag_enabled=True,
+        context_retriever=retriever,
+        memory_writer=writer,
+        safety_guard=guard,
+    )
+
+    result = await processor.process(command(message=message))
+
+    guard.evaluate.assert_not_awaited()
+    retriever.retrieve.assert_not_awaited()
+    model.generate.assert_not_awaited()
+    writer.write.assert_not_awaited()
+    assert expected_fragment in (result.message or "").casefold()
+    assert result.response_type is MessageResponseType.RETRIEVED
+    assert result.rag.status is RagStatus.SKIPPED
+    assert result.rag.route is SemanticRoute.SKIPPED
+
+
+@pytest.mark.anyio
 async def test_allowed_message_continues_to_general_generation() -> None:
     model = chat_model()
     guard = SimpleNamespace(
