@@ -96,6 +96,8 @@ async def advance_cancel(
         intent=CANCEL_INTENT,
     )
     return (
-        "Seleccionaste esta cita:\n" + detail + "\n¿Confirmas que deseas cancelarla? Responde sí o no.",
+        "Seleccionaste esta cita:\n"
+        + detail
+        + "\n¿Confirmas que deseas cancelarla? Responde sí o no.",
         new_pending,
     )
