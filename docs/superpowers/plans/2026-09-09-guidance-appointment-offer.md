@@ -30,7 +30,7 @@
 - Consumes: `PendingConfirmation.create(...)` y `normalize_for_routing(message: str) -> str`.
 - Produces: `APPOINTMENT_OFFER_ACTION`, `APPOINTMENT_OFFER_INTENT`, `create_appointment_offer(ttl_seconds: int) -> PendingConfirmation` y `appointment_offer_choice(message: str) -> bool | None`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_create_appointment_offer_targets_guidance_continuation() -> None:
@@ -55,7 +55,7 @@ def test_appointment_offer_keeps_ambiguous_answer_unresolved() -> None:
     assert appointment_offer_choice("tal vez mañana") is None
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -65,7 +65,7 @@ Run:
 
 Expected: FAIL because `appointment_offer.py` does not exist.
 
-- [ ] **Step 3: Implement the minimal contract**
+- [x] **Step 3: Implement the minimal contract**
 
 Create constants and functions using the existing normalized confirmation vocabulary:
 
@@ -96,7 +96,7 @@ def appointment_offer_choice(message: str) -> bool | None:
 Add `guidance.appointment_offer` to `VETERINARY_GUIDANCE_MANIFEST.intents` and
 `guidance.offer_appointment` to `confirmable_actions`.
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/unit/modules/veterinary_guidance/test_appointment_offer.py -q --tb=short
@@ -105,7 +105,7 @@ Add `guidance.appointment_offer` to `VETERINARY_GUIDANCE_MANIFEST.intents` and
 
 Expected: all focused tests pass and Ruff reports no errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/app/modules/veterinary_guidance/nodes/appointment_offer.py src/app/modules/veterinary_guidance/manifest.py tests/unit/modules/veterinary_guidance/test_appointment_offer.py
