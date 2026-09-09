@@ -257,4 +257,3 @@ Expected: menos de 100 pruebas enfocadas, Ruff limpio, diff válido y solo commi
 git add tests/integration/modules/test_appointment_pet_registration_handoff.py README.md
 git commit -m "test: verify another pet booking continuation"
 ```
-

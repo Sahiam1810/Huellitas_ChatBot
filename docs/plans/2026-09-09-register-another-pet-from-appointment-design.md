@@ -52,4 +52,3 @@ El paso de selección de mascota tendrá una alternativa determinista para regis
   comprobar que el agendamiento se reanuda con ambas mascotas disponibles.
 - Regresión para una respuesta desconocida: debe repetir el prompt incluyendo
   `Registrar otra mascota`.
-
