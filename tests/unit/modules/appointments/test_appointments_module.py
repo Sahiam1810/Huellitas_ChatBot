@@ -877,6 +877,38 @@ async def test_reschedule_start_with_no_appointments_returns_no_appointments_mes
 
 
 @pytest.mark.anyio
+async def test_natural_reschedule_with_multiple_appointments_keeps_selection_pending() -> None:
+    second = replace(
+        appointment(pet="Milou"),
+        id=UUID("11111111-1111-1111-1111-111111111112"),
+        availability_id=UUID("66666666-6666-6666-6666-666666666667"),
+    )
+    gateway = GatewayWithReschedule((appointment(pet="Pacho"), second))
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    message = "necesito reagendar una de mis citas para mi cachorro"
+    command = request(message, "appointments.reschedule").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+
+    started = await executor.execute(request(message, decision.intent), context())
+
+    assert "varias citas agendadas" in (started.message or "").casefold()
+    assert "Pacho" in (started.message or "")
+    assert "Milou" in (started.message or "")
+    assert started.pending_confirmation is not None
+    assert started.pending_confirmation.payload["_selecting"] is True
+
+    selected = await executor.execute(
+        request("1", "appointments.rescheduling", started.pending_confirmation), context()
+    )
+
+    assert selected.message == "¿Para qué fecha deseas reprogramar la cita?"
+    assert selected.pending_confirmation is not None
+    assert selected.pending_confirmation.payload["step"] == "date"
+
+
+@pytest.mark.anyio
 async def test_reschedule_accepts_legacy_selection_draft_without_veterinarian_name() -> None:
     from app.orchestration.module_executor import PendingConfirmation
 
@@ -1263,7 +1295,11 @@ async def test_reschedule_intent_is_routed_by_rule_based_router() -> None:
         "necesito mover una cita",
         "deseo reagendar una cita",
         "reagendar una cita",
+        "necesito reagendar una de mis citas para mi cachorro",
         "quiero reprogramar la cita",
+        "quiero reprogramar una de mis citas",
+        "necesito mover una de mis citas",
+        "quiero cambiar una de mis citas",
         "cambiar el horario de la cita",
         "quiero cambiar el horario de mi cita",
         "cambiar la fecha de una cita",
