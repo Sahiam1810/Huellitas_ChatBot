@@ -14,6 +14,7 @@ from app.ports.appointments_gateway import (
     AppointmentBookingVeterinarian,
     AppointmentItem,
     AppointmentNotFoundError,
+    AppointmentRescheduleRequest,
     AppointmentsAuthenticationError,
     AppointmentsConflictError,
     AppointmentScope,
@@ -154,6 +155,25 @@ class DotNetAppointmentsGateway:
             bearer_token,
             method="PATCH",
             json_body={"comment": comment},
+        )
+
+    async def reschedule_owned(
+        self,
+        appointment_id: UUID,
+        request: AppointmentRescheduleRequest,
+        bearer_token: str,
+    ) -> None:
+        await self._request(
+            f"/api/bot/appointments/{appointment_id}/reschedule",
+            bearer_token,
+            method="PATCH",
+            json_body={
+                "availabilityId": str(request.availability_id),
+                "scheduledStart": self._utc_iso(request.scheduled_start_utc),
+                "scheduledEnd": self._utc_iso(request.scheduled_end_utc),
+                "requesterPhoneNumber": request.requester_phone_number,
+                "notes": request.notes,
+            },
         )
 
     async def request_reschedule_code(

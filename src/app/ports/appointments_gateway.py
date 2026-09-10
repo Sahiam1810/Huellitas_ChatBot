@@ -105,6 +105,15 @@ class AppointmentBookingRequest:
     requester_phone_number: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class AppointmentRescheduleRequest:
+    availability_id: UUID
+    scheduled_start_utc: datetime
+    scheduled_end_utc: datetime
+    requester_phone_number: str
+    notes: str | None = None
+
+
 @runtime_checkable
 class AppointmentsGateway(Protocol):
     async def list_owned(
@@ -132,6 +141,13 @@ class AppointmentsGateway(Protocol):
 
     async def cancel_owned(
         self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    ) -> None: ...
+
+    async def reschedule_owned(
+        self,
+        appointment_id: UUID,
+        request: AppointmentRescheduleRequest,
+        bearer_token: str,
     ) -> None: ...
 
     async def request_reschedule_code(
