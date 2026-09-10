@@ -1252,3 +1252,37 @@ async def test_reschedule_intent_is_routed_by_rule_based_router() -> None:
     )
     assert decision.module_id == "appointments"
     assert decision.intent == "appointments.reschedule"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "message",
+    (
+        "necesito cambiar una cita es que se me presentó un inconveniente",
+        "quiero cambiar la cita",
+        "necesito mover una cita",
+        "deseo reagendar una cita",
+        "quiero reprogramar la cita",
+        "cambiar el horario de la cita",
+        "cambiar la fecha de una cita",
+    ),
+)
+async def test_natural_reschedule_requests_route_without_llm(message: str) -> None:
+    command = request(message, "appointments.reschedule").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+
+    assert decision.module_id == "appointments"
+    assert decision.intent == "appointments.reschedule"
+
+
+@pytest.mark.anyio
+async def test_unrelated_change_request_does_not_route_to_reschedule() -> None:
+    command = request("quiero cambiar de tema", "appointments.reschedule").command
+    decision = await RuleBasedIntentRouter(APPOINTMENTS_ROUTING_RULES).route(
+        command, (APPOINTMENTS_MANIFEST,)
+    )
+
+    assert decision.module_id is None
+    assert decision.intent is None
