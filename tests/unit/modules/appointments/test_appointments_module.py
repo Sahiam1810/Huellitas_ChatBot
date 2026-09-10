@@ -21,8 +21,11 @@ from app.ports.appointments_gateway import (
     AppointmentBookingSlot,
     AppointmentBookingVeterinarian,
     AppointmentItem,
+    AppointmentRescheduleRequest,
+    AppointmentsConflictError,
     AppointmentScope,
     AppointmentsGateway,
+    AppointmentsGatewayError,
     AppointmentsUnavailableError,
 )
 from app.ports.token_validator import AuthenticatedPrincipal
@@ -816,6 +819,10 @@ class GatewayWithReschedule(Gateway):
         super().__init__(items)
         self.reschedule_code_calls: list[tuple] = []
         self.reschedule_confirm_calls: list[tuple] = []
+        self.reschedule_calls: list[
+            tuple[UUID, AppointmentRescheduleRequest, str]
+        ] = []
+        self.reschedule_error: AppointmentsGatewayError | None = None
         self._fixed_otp_id = UUID("aaaabbbb-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
     async def cancel_owned(
@@ -852,6 +859,16 @@ class GatewayWithReschedule(Gateway):
         bearer_token: str,
     ) -> None:
         self.reschedule_confirm_calls.append((appointment_id, phone, code, bearer_token))
+
+    async def reschedule_owned(
+        self,
+        appointment_id: UUID,
+        reschedule: AppointmentRescheduleRequest,
+        bearer_token: str,
+    ) -> None:
+        if self.reschedule_error is not None:
+            raise self.reschedule_error
+        self.reschedule_calls.append((appointment_id, reschedule, bearer_token))
 
 
 @pytest.mark.anyio
@@ -1206,7 +1223,7 @@ async def test_reschedule_slot_step_asks_for_phone() -> None:
 
 
 @pytest.mark.anyio
-async def test_reschedule_phone_step_sends_otp_and_awaits_code() -> None:
+async def test_reschedule_phone_step_asks_for_confirmation_without_sending_otp() -> None:
     from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
     from app.orchestration.module_executor import PendingConfirmation
 
@@ -1234,15 +1251,18 @@ async def test_reschedule_phone_step_sends_otp_and_awaits_code() -> None:
     result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
         request("3001234567", "appointments.rescheduling", pending), context()
     )
-    assert "código" in (result.message or "").lower()
+    assert "confirma" in (result.message or "").lower()
+    assert "código" not in (result.message or "").lower()
+    assert "3001234567" in (result.message or "")
     assert result.pending_confirmation is not None
-    assert result.pending_confirmation.action == "appointments.reschedule.otp"
-    assert len(gateway.reschedule_code_calls) == 1
-    assert gateway.reschedule_code_calls[0][2] == SLOT_AVAILABILITY_ID
+    assert result.pending_confirmation.action == "appointments.reschedule.confirm"
+    assert result.pending_confirmation.payload["step"] == "confirmation"
+    assert gateway.reschedule_code_calls == []
+    assert gateway.reschedule_calls == []
 
 
 @pytest.mark.anyio
-async def test_reschedule_otp_step_confirms_and_reports_success() -> None:
+async def test_reschedule_confirmation_yes_executes_authenticated_mutation() -> None:
     from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
     from app.orchestration.module_executor import PendingConfirmation
 
@@ -1251,29 +1271,122 @@ async def test_reschedule_otp_step_confirms_and_reports_success() -> None:
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",
-        step="otp_sent",
+        step="confirmation",
         service_id="44444444-4444-4444-4444-444444444444",
         veterinarian_id="33333333-3333-3333-3333-333333333333",
         booking_date="2026-09-10",
+        new_availability_id=str(SLOT_AVAILABILITY_ID),
         new_scheduled_start_utc="2026-09-10T15:00:00+00:00",
         new_scheduled_end_utc="2026-09-10T15:30:00+00:00",
         requester_phone="3001234567",
     )
     pending = PendingConfirmation.create(
         module_id="appointments",
-        action="appointments.reschedule.otp",
+        action="appointments.reschedule.confirm",
         payload=draft.to_payload(),
         ttl_seconds=600,
         intent="appointments.rescheduling",
     )
     gateway = GatewayWithReschedule()
     result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("123456", "appointments.rescheduling", pending), context()
+        request("sí", "appointments.rescheduling", pending), context()
     )
     assert "reprogramada correctamente" in (result.message or "")
     assert result.pending_confirmation is None
-    assert len(gateway.reschedule_confirm_calls) == 1
-    assert gateway.reschedule_confirm_calls[0][2] == "123456"
+    assert gateway.reschedule_confirm_calls == []
+    assert len(gateway.reschedule_calls) == 1
+    appointment_id, reschedule, bearer_token = gateway.reschedule_calls[0]
+    assert appointment_id == UUID("11111111-1111-1111-1111-111111111111")
+    assert reschedule.availability_id == SLOT_AVAILABILITY_ID
+    assert reschedule.requester_phone_number == "3001234567"
+    assert bearer_token == "token"
+
+
+@pytest.mark.anyio
+async def test_reschedule_confirmation_no_finishes_without_mutation() -> None:
+    pending = reschedule_confirmation_pending()
+    gateway = GatewayWithReschedule()
+
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("no", "appointments.rescheduling", pending), context()
+    )
+
+    assert "no se realizaron cambios" in (result.message or "").casefold()
+    assert result.pending_confirmation is None
+    assert gateway.reschedule_calls == []
+
+
+@pytest.mark.anyio
+async def test_reschedule_confirmation_requires_an_explicit_choice() -> None:
+    pending = reschedule_confirmation_pending()
+    gateway = GatewayWithReschedule()
+
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("tal vez", "appointments.rescheduling", pending), context()
+    )
+
+    assert "responde sí o no" in (result.message or "").casefold()
+    assert result.pending_confirmation == pending
+    assert gateway.reschedule_calls == []
+
+
+@pytest.mark.anyio
+async def test_reschedule_conflict_returns_to_date_and_keeps_pending() -> None:
+    pending = reschedule_confirmation_pending()
+    gateway = GatewayWithReschedule()
+    gateway.reschedule_error = AppointmentsConflictError("occupied")
+
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("sí", "appointments.rescheduling", pending), context()
+    )
+
+    assert "horario" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "date"
+    assert "new_availability_id" not in result.pending_confirmation.payload
+    assert "new_scheduled_start_utc" not in result.pending_confirmation.payload
+
+
+@pytest.mark.anyio
+async def test_reschedule_transient_error_keeps_confirmation_for_retry() -> None:
+    pending = reschedule_confirmation_pending()
+    gateway = GatewayWithReschedule()
+    gateway.reschedule_error = AppointmentsUnavailableError("offline")
+
+    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+        request("sí", "appointments.rescheduling", pending), context()
+    )
+
+    assert result.pending_confirmation == pending
+    assert gateway.reschedule_calls == []
+
+
+def reschedule_confirmation_pending():
+    from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+    from app.orchestration.module_executor import PendingConfirmation
+
+    draft = AppointmentRescheduleDraft(
+        account_id=str(DEFAULT_ACCOUNT_ID),
+        appointment_id="11111111-1111-1111-1111-111111111111",
+        availability_id="66666666-6666-6666-6666-666666666666",
+        appointment_summary="Luna — Consulta general",
+        step="confirmation",
+        service_id="44444444-4444-4444-4444-444444444444",
+        veterinarian_id="33333333-3333-3333-3333-333333333333",
+        veterinarian_name="Dra. Ana",
+        booking_date="2026-09-10",
+        new_availability_id=str(SLOT_AVAILABILITY_ID),
+        new_scheduled_start_utc="2026-09-10T15:00:00+00:00",
+        new_scheduled_end_utc="2026-09-10T15:30:00+00:00",
+        requester_phone="3001234567",
+    )
+    return PendingConfirmation.create(
+        module_id="appointments",
+        action="appointments.reschedule.confirm",
+        payload=draft.to_payload(),
+        ttl_seconds=600,
+        intent="appointments.rescheduling",
+    )
 
 
 @pytest.mark.anyio
