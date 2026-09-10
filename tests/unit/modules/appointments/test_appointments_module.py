@@ -1262,9 +1262,12 @@ async def test_reschedule_intent_is_routed_by_rule_based_router() -> None:
         "quiero cambiar la cita",
         "necesito mover una cita",
         "deseo reagendar una cita",
+        "reagendar una cita",
         "quiero reprogramar la cita",
         "cambiar el horario de la cita",
+        "quiero cambiar el horario de mi cita",
         "cambiar la fecha de una cita",
+        "quiero cambiar la fecha de mi cita",
     ),
 )
 async def test_natural_reschedule_requests_route_without_llm(message: str) -> None:
