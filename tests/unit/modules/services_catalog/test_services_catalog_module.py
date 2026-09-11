@@ -127,6 +127,11 @@ def request(
     )
 
 
+def test_catalog_rejects_non_positive_appointment_offer_ttl() -> None:
+    with pytest.raises(ValueError, match="TTL must be positive"):
+        ServicesCatalogModuleExecutor(CatalogGateway(), appointment_offer_ttl_seconds=0)
+
+
 @pytest.mark.anyio
 async def test_list_returns_official_catalog_values() -> None:
     result = await ServicesCatalogModuleExecutor(CatalogGateway()).execute(

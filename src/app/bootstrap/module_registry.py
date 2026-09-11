@@ -48,6 +48,7 @@ def build_module_registry(
             ServicesCatalogModuleExecutor(
                 services_catalog_gateway,
                 knowledge_gateway=service_knowledge_gateway,
+                appointment_offer_ttl_seconds=appointment_booking_ttl_seconds,
             ),
         )
     if appointments_gateway is not None:
