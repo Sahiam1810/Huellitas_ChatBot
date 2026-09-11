@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace as dataclass_replace
 from datetime import date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -6,7 +7,10 @@ from zoneinfo import ZoneInfo
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 
-from app.modules.appointments.contracts_booking import AppointmentBookingDraft
+from app.modules.appointments.contracts_booking import (
+    AppointmentBookingDraft,
+    AppointmentRescheduleDraft,
+)
 from app.modules.appointments.nodes.collect_appointment_data import (
     COLLECTION_ACTION,
     CONFIRMATION_ACTION,
@@ -25,7 +29,7 @@ from app.modules.appointments.nodes.collect_cancel_data import (
 )
 from app.modules.appointments.nodes.collect_reschedule_data import (
     RESCHEDULE_COLLECTION_ACTION,
-    RESCHEDULE_OTP_SENT_ACTION,
+    RESCHEDULE_CONFIRMATION_ACTION,
     advance_reschedule,
     reschedule_abandoned,
     reschedule_expired,
@@ -41,6 +45,7 @@ from app.modules.appointments.nodes.identify_request import (
 )
 from app.modules.appointments.nodes.list_appointments import appointment_query_response
 from app.modules.appointments.nodes.request_confirmation import confirmation_choice
+from app.modules.appointments.services.date_resolver import RESCHEDULE_DATE_PROMPT
 from app.modules.appointments.services.response_formatter import format_detail
 from app.modules.appointments.state import AppointmentsGraphState
 from app.orchestration.execution_context import ExecutionContext
@@ -51,7 +56,11 @@ from app.orchestration.module_executor import (
     PendingConfirmation,
 )
 from app.orchestration.rag_contracts import RagMessageResult
-from app.ports.appointments_gateway import AppointmentsGateway, AppointmentsGatewayError
+from app.ports.appointments_gateway import (
+    AppointmentsConflictError,
+    AppointmentsGateway,
+    AppointmentsGatewayError,
+)
 from app.shared.enums import MessageResponseType
 
 
@@ -231,7 +240,7 @@ class AppointmentsModuleExecutor:
         pending = request.pending_confirmation
         if pending is None or pending.action not in {
             RESCHEDULE_COLLECTION_ACTION,
-            RESCHEDULE_OTP_SENT_ACTION,
+            RESCHEDULE_CONFIRMATION_ACTION,
         }:
             return self._message(
                 "No hay una reprogramación pendiente. Escribe reprogramar mi cita."
@@ -259,21 +268,33 @@ class AppointmentsModuleExecutor:
                 self._availability_max_dates,
             )
             return self._message(message, pending=next_pending)
-        # OTP sent — confirm
-        code = request.command.message.strip()
-        from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
-
         draft = AppointmentRescheduleDraft.from_payload(pending.payload)
+        choice = confirmation_choice(request.command.message)
+        if choice is False:
+            return self._message("Cancelé la operación; no se realizaron cambios.")
+        if choice is None:
+            return self._message(
+                "Necesito una confirmación explícita. Responde sí o no.",
+                pending=pending,
+            )
         try:
             result_msg = await execute_reschedule(
                 self._gateway,
-                UUID(draft.appointment_id),
-                draft.requester_phone or "",
-                code,
+                draft,
                 context.bearer_token,
             )
+        except AppointmentsConflictError:
+            retry_pending = _reset_reschedule_to_date(pending, draft)
+            return self._message(
+                "Ese horario acaba de dejar de estar disponible. "
+                + RESCHEDULE_DATE_PROMPT,
+                pending=retry_pending,
+            )
         except AppointmentsGatewayError as error:
-            result_msg = safe_appointments_error(error)
+            return self._message(
+                safe_appointments_error(error),
+                pending=pending,
+            )
         return self._message(result_msg)
 
     @staticmethod
@@ -306,4 +327,27 @@ def _invalid_pending_flow_message(intent: str) -> str:
         )
     return (
         "No pude continuar el agendamiento guardado. Escribe agendar cita para comenzar de nuevo."
+    )
+
+
+def _reset_reschedule_to_date(
+    pending: PendingConfirmation,
+    draft: AppointmentRescheduleDraft,
+) -> PendingConfirmation:
+    retry_draft = dataclass_replace(
+        draft,
+        step="date",
+        booking_date=None,
+        new_availability_id=None,
+        new_scheduled_start_utc=None,
+        new_scheduled_end_utc=None,
+        requester_phone=None,
+        advertised_slot_starts_utc=(),
+    )
+    payload = retry_draft.to_payload()
+    payload.pop("advertised_slot_ends_utc", None)
+    return dataclass_replace(
+        pending,
+        action=RESCHEDULE_COLLECTION_ACTION,
+        payload=payload,
     )

@@ -9,6 +9,7 @@ from app.adapters.dotnet.appointments import DotNetAppointmentsGateway
 from app.ports.appointments_gateway import (
     AppointmentBookingRequest,
     AppointmentNotFoundError,
+    AppointmentRescheduleRequest,
     AppointmentsAuthenticationError,
     AppointmentsConflictError,
     AppointmentScope,
@@ -346,4 +347,88 @@ async def test_confirm_reschedule_code_raises_unauthorized_on_401() -> None:
     with pytest.raises(AppointmentsAuthenticationError):
         await gateway.confirm_reschedule_code(
             UUID("11111111-1111-1111-1111-111111111111"), "3001234567", "000000", "token"
+        )
+
+
+@pytest.mark.anyio
+async def test_reschedule_owned_sends_authenticated_patch_without_otp() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == (
+            "/api/bot/appointments/"
+            "11111111-1111-1111-1111-111111111111/reschedule"
+        )
+        assert request.headers["Authorization"] == "Bearer delegated-token"
+        assert json.loads(request.content) == {
+            "availabilityId": "66666666-6666-6666-6666-666666666666",
+            "scheduledStart": "2026-09-11T13:00:00Z",
+            "scheduledEnd": "2026-09-11T13:30:00Z",
+            "requesterPhoneNumber": "3158940150",
+            "notes": None,
+        }
+        return httpx.Response(204)
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test",
+        2,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await gateway.reschedule_owned(
+        UUID("11111111-1111-1111-1111-111111111111"),
+        AppointmentRescheduleRequest(
+            availability_id=UUID("66666666-6666-6666-6666-666666666666"),
+            scheduled_start_utc=datetime(2026, 9, 11, 13, 0, tzinfo=UTC),
+            scheduled_end_utc=datetime(2026, 9, 11, 13, 30, tzinfo=UTC),
+            requester_phone_number="3158940150",
+        ),
+        "delegated-token",
+    )
+
+
+@pytest.mark.anyio
+async def test_reschedule_owned_raises_conflict_when_slot_is_taken() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409)
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test",
+        2,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(AppointmentsConflictError):
+        await gateway.reschedule_owned(
+            UUID("11111111-1111-1111-1111-111111111111"),
+            AppointmentRescheduleRequest(
+                UUID("66666666-6666-6666-6666-666666666666"),
+                datetime(2026, 9, 11, 13, 0, tzinfo=UTC),
+                datetime(2026, 9, 11, 13, 30, tzinfo=UTC),
+                "3158940150",
+            ),
+            "delegated-token",
+        )
+
+
+@pytest.mark.anyio
+async def test_reschedule_owned_raises_unavailable_on_backend_failure() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test",
+        2,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(AppointmentsUnavailableError):
+        await gateway.reschedule_owned(
+            UUID("11111111-1111-1111-1111-111111111111"),
+            AppointmentRescheduleRequest(
+                UUID("66666666-6666-6666-6666-666666666666"),
+                datetime(2026, 9, 11, 13, 0, tzinfo=UTC),
+                datetime(2026, 9, 11, 13, 30, tzinfo=UTC),
+                "3158940150",
+            ),
+            "delegated-token",
         )

@@ -21,13 +21,16 @@ from app.modules.appointments.services.date_resolver import (
     date_resolution_error_message,
     resolve_appointment_date,
 )
-from app.modules.appointments.services.response_formatter import format_detail
+from app.modules.appointments.services.response_formatter import (
+    format_detail,
+    format_local_datetime,
+)
 from app.orchestration.module_executor import PendingConfirmation
 from app.orchestration.rule_based_intent_router import normalize_for_routing
 from app.ports.appointments_gateway import AppointmentScope, AppointmentsGateway
 
 RESCHEDULE_COLLECTION_ACTION = "appointments.reschedule.collect"
-RESCHEDULE_OTP_SENT_ACTION = "appointments.reschedule.otp"
+RESCHEDULE_CONFIRMATION_ACTION = "appointments.reschedule.confirm"
 RESCHEDULE_INTENT = "appointments.rescheduling"
 
 
@@ -268,20 +271,22 @@ async def advance_reschedule(
                 "Escribe reprogramar mi cita para comenzar de nuevo.",
                 None,
             )
-        # Call request_reschedule_code
-        await gateway.request_reschedule_code(
-            appointment_id=UUID(draft.appointment_id),
-            phone=digits,
-            availability_id=UUID(draft.new_availability_id),
-            scheduled_start_utc=datetime.fromisoformat(draft.new_scheduled_start_utc),  # type: ignore[arg-type]
-            scheduled_end_utc=datetime.fromisoformat(draft.new_scheduled_end_utc),  # type: ignore[arg-type]
-            bearer_token=bearer_token,
-        )
-        new_draft = _replace(draft, step="otp_sent", requester_phone=digits)
+        scheduled_start = datetime.fromisoformat(draft.new_scheduled_start_utc or "")
+        new_draft = _replace(draft, step="confirmation", requester_phone=digits)
         new_payload = new_draft.to_payload()
-        new_pending = _replace(pending, action=RESCHEDULE_OTP_SENT_ACTION, payload=new_payload)
+        new_pending = _replace(
+            pending,
+            action=RESCHEDULE_CONFIRMATION_ACTION,
+            payload=new_payload,
+        )
+        veterinarian = draft.veterinarian_name or "Veterinario seleccionado"
         return (
-            "Te enviamos un código de verificación. Ingrésalo para confirmar la reprogramación.",
+            "Confirma los datos de la reprogramación:\n"
+            f"Cita: {draft.appointment_summary}\n"
+            f"Veterinario: {veterinarian}\n"
+            f"Fecha: {format_local_datetime(scheduled_start, time_zone)}\n"
+            f"Teléfono de contacto: {digits}\n"
+            "¿Confirmas? Responde sí o no.",
             new_pending,
         )
 

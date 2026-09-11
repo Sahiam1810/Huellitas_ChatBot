@@ -199,6 +199,10 @@ disponibilidad. Una identidad invitada debe verificar primero su identidad media
 .NET deriva el cliente del JWT, comprueba la propiedad y vuelve a validar disponibilidad,
 solapamientos e idempotencia dentro de la transacción Oracle.
 
+El reagendamiento también se inicia de forma determinista con expresiones naturales como
+`necesito cambiar una cita`, `mover la cita` o `reagendar una cita`; estas solicitudes reutilizan
+el mismo flujo seguro de selección, disponibilidad, teléfono y OTP.
+
 Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas`, `¿Cuándo es la cita de Luna?` y
 `Quiero agendar una cita`. Configura:
 

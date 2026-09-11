@@ -1,14 +1,33 @@
+from datetime import datetime
 from uuid import UUID
 
-from app.ports.appointments_gateway import AppointmentsGateway
+from app.modules.appointments.contracts_booking import AppointmentRescheduleDraft
+from app.ports.appointments_gateway import (
+    AppointmentRescheduleRequest,
+    AppointmentsGateway,
+)
 
 
 async def execute_reschedule(
     gateway: AppointmentsGateway,
-    appointment_id: UUID,
-    phone: str,
-    code: str,
+    draft: AppointmentRescheduleDraft,
     bearer_token: str,
 ) -> str:
-    await gateway.confirm_reschedule_code(appointment_id, phone, code, bearer_token)
+    request = AppointmentRescheduleRequest(
+        availability_id=UUID(_required(draft.new_availability_id)),
+        scheduled_start_utc=datetime.fromisoformat(
+            _required(draft.new_scheduled_start_utc)
+        ),
+        scheduled_end_utc=datetime.fromisoformat(
+            _required(draft.new_scheduled_end_utc)
+        ),
+        requester_phone_number=_required(draft.requester_phone),
+    )
+    await gateway.reschedule_owned(UUID(draft.appointment_id), request, bearer_token)
     return "Tu cita fue reprogramada correctamente."
+
+
+def _required(value: str | None) -> str:
+    if value is None or not value.strip():
+        raise ValueError("incomplete reschedule draft")
+    return value
