@@ -25,9 +25,13 @@ from app.modules.services_catalog.services.service_selection import (
     choose_catalog_service,
 )
 from app.modules.services_catalog.state import ServicesCatalogGraphState
+from app.orchestration.appointment_offer import appointment_offer_choice
 from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.guest_access import is_guest
 from app.orchestration.module_executor import (
+    ModuleContinuation,
     ModuleExecutionRequest,
+    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -40,7 +44,7 @@ from app.ports.services_catalog_gateway import (
     ServicesCatalogGateway,
     ServicesCatalogGatewayError,
 )
-from app.shared.enums import MessageResponseType
+from app.shared.enums import AccessRequirement, MessageResponseType
 
 
 class ServicesCatalogModuleExecutor:
@@ -88,6 +92,8 @@ class ServicesCatalogModuleExecutor:
                 return {
                     "result": self._continue_catalog_selection(request, pending, catalog)
                 }
+            if pending is not None and pending.action == SERVICE_OFFER_ACTION:
+                return {"result": self._continue_service_offer(request, pending, catalog)}
             selection = understand_service_query(request.command.message, catalog)
             message = prepare_service_response(
                 intent=request.intent,
@@ -191,17 +197,79 @@ class ServicesCatalogModuleExecutor:
             intent=CATALOG_SELECTION_INTENT,
         )
 
+    def _continue_service_offer(
+        self,
+        request: ModuleExecutionRequest,
+        pending: PendingConfirmation,
+        catalog: tuple[ServiceCatalogItem, ...],
+    ) -> ModuleResult:
+        if pending.is_expired():
+            return self._message(
+                "La oferta para agendar venció. Consulta nuevamente los servicios disponibles."
+            )
+        service_id = pending.payload.get("service_id")
+        service_name = pending.payload.get("service_name")
+        if not isinstance(service_id, str) or not isinstance(service_name, str):
+            return self._message(
+                "No pude recuperar el servicio seleccionado. Consulta nuevamente el catálogo."
+            )
+        selected = next(
+            (
+                service
+                for service in catalog
+                if str(service.id) == service_id and service.name == service_name
+            ),
+            None,
+        )
+        if selected is None:
+            return self._message(
+                "El servicio seleccionado ya no está disponible. "
+                "Consulta nuevamente los servicios activos."
+            )
+        choice = appointment_offer_choice(request.command.message)
+        if choice is False:
+            return self._message("Entendido. No iniciaré el agendamiento.")
+        if choice is None:
+            return self._message(
+                "Para saber si deseas agendar este servicio, responde sí o no.",
+                pending=pending,
+            )
+        resume_message = f"Quiero agendar una cita para {selected.name}"
+        if is_guest(request.command.roles):
+            return self._message(
+                "Perfecto. Primero necesito verificar tu identidad para agendar la cita.",
+                access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+                resume_message=resume_message,
+            )
+        return self._message(
+            "Perfecto. Continuemos con los datos de la cita.",
+            handoff=ModuleHandoff(
+                target=ModuleContinuation("appointments", "appointments.book"),
+                continuation=ModuleContinuation(
+                    "appointments",
+                    "appointments.book",
+                    {"service_id": service_id, "service_name": service_name},
+                ),
+            ),
+        )
+
     @staticmethod
     def _message(
         message: str,
         *,
         rag: RagMessageResult | None = None,
         pending: PendingConfirmation | None = None,
+        handoff: ModuleHandoff | None = None,
+        access_requirement: AccessRequirement = AccessRequirement.NONE,
+        resume_message: str | None = None,
     ) -> ModuleResult:
         return ModuleResult(
             module_id="services_catalog",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
+            access_requirement=access_requirement,
+            resume_message=resume_message,
             rag=rag or RagMessageResult.disabled(),
             pending_confirmation=pending,
+            handoff=handoff,
         )

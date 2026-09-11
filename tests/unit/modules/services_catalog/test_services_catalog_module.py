@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -11,7 +13,11 @@ from app.modules.services_catalog.services.service_selection import (
 )
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
-from app.orchestration.module_executor import ModuleExecutionRequest, PendingConfirmation
+from app.orchestration.module_executor import (
+    ModuleContinuation,
+    ModuleExecutionRequest,
+    PendingConfirmation,
+)
 from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.ports.service_knowledge_gateway import ServiceKnowledgeResult
 from app.ports.services_catalog_gateway import (
@@ -78,14 +84,14 @@ class KnowledgeGateway:
         return self.result
 
 
-def context() -> ExecutionContext:
+def context(role: str = "TelegramGuest") -> ExecutionContext:
     return ExecutionContext(
         bearer_token="secret-token",
         principal=AuthenticatedPrincipal(
             account_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             person_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             role_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
-            role="TelegramGuest",
+            role=role,
             username="telegram_guest",
             email="guest@telegram.invalid",
             token_id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
@@ -99,6 +105,7 @@ def request(
     message: str,
     intent: str,
     pending: PendingConfirmation | None = None,
+    roles: tuple[str, ...] = ("TelegramGuest",),
 ) -> ModuleExecutionRequest:
     return ModuleExecutionRequest(
         command=MessageCommand(
@@ -108,7 +115,7 @@ def request(
             pet_id=None,
             channel="telegram",
             language="es-CO",
-            roles=("TelegramGuest",),
+            roles=roles,
             is_escalated=False,
             correlation_id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
             idempotency_key="services-message-001",
@@ -190,6 +197,90 @@ async def test_invalid_catalog_selection_keeps_the_current_numbered_options() ->
     assert "No identifiqué el servicio" in (result.message or "")
     assert "1. Consulta general" in (result.message or "")
     assert result.pending_confirmation == listed.pending_confirmation
+
+
+async def selected_offer(executor: ServicesCatalogModuleExecutor) -> PendingConfirmation:
+    listed = await executor.execute(request("servicios", "services.list"), context())
+    selected = await executor.execute(
+        request("3", "services.selecting", listed.pending_confirmation), context()
+    )
+    assert selected.pending_confirmation is not None
+    return selected.pending_confirmation
+
+
+@pytest.mark.anyio
+async def test_authenticated_offer_acceptance_hands_off_the_selected_service() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    offer = await selected_offer(executor)
+
+    result = await executor.execute(
+        request(
+            "quiero reservarlo",
+            "services.appointment_offer",
+            offer,
+            roles=("Cliente",),
+        ),
+        context("Cliente"),
+    )
+
+    assert result.handoff is not None
+    assert result.handoff.target == ModuleContinuation(
+        "appointments", "appointments.book"
+    )
+    assert result.handoff.continuation == ModuleContinuation(
+        "appointments",
+        "appointments.book",
+        {
+            "service_id": "33333333-3333-3333-3333-333333333333",
+            "service_name": "Medicina interna",
+        },
+    )
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_guest_offer_acceptance_requests_identity_and_preserves_service_name() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    offer = await selected_offer(executor)
+
+    result = await executor.execute(
+        request("sí", "services.appointment_offer", offer), context()
+    )
+
+    assert result.access_requirement.value == "identity_verification"
+    assert result.resume_message == "Quiero agendar una cita para Medicina interna"
+    assert result.handoff is None
+    assert result.pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_ambiguous_offer_answer_preserves_the_selected_service() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    offer = await selected_offer(executor)
+
+    result = await executor.execute(
+        request("tal vez", "services.appointment_offer", offer), context()
+    )
+
+    assert "responde sí o no" in (result.message or "").casefold()
+    assert result.pending_confirmation == offer
+
+
+@pytest.mark.anyio
+async def test_expired_service_offer_does_not_start_booking() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    offer = replace(
+        await selected_offer(executor),
+        expires_at=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+
+    result = await executor.execute(
+        request("sí", "services.appointment_offer", offer), context()
+    )
+
+    assert "venció" in (result.message or "").casefold()
+    assert result.handoff is None
+    assert result.pending_confirmation is None
 
 
 @pytest.mark.anyio

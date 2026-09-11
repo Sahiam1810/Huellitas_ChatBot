@@ -1,9 +1,9 @@
 import pytest
 
 from app.modules.veterinary_guidance.nodes.appointment_offer import (
-    appointment_offer_choice,
     create_appointment_offer,
 )
+from app.orchestration.appointment_offer import appointment_offer_choice
 
 
 def test_create_appointment_offer_builds_resumable_guidance_state() -> None:
