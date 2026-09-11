@@ -39,9 +39,9 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
 USER app:app
 
-EXPOSE 8000
+EXPOSE 8010
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).read()"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health/live', timeout=3).read()"]
 
 CMD ["python", "-m", "app"]

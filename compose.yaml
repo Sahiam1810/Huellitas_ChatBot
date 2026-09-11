@@ -10,7 +10,7 @@ services:
       - .env
     environment:
       HUELLITAS_HOST: "0.0.0.0"
-      HUELLITAS_PORT: "8000"
+      HUELLITAS_PORT: "8010"
       HUELLITAS_VECTOR_STORE_ENABLED: "true"
       HUELLITAS_QDRANT_URL: "http://qdrant:6333"
       HUELLITAS_REDIS_ENABLED: "true"
@@ -20,7 +20,7 @@ services:
       HUELLITAS_BACKEND_BASE_URL: "http://host.docker.internal:5233"
       PYTHONDONTWRITEBYTECODE: "1"
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8010:8010"
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
