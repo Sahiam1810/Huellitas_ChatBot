@@ -758,7 +758,14 @@ async def test_module_cannot_return_a_result_for_another_module() -> None:
 
 @pytest.mark.anyio
 async def test_module_handoff_executes_target_and_propagates_continuation() -> None:
-    continuation = ModuleContinuation("appointments", "appointments.list")
+    continuation = ModuleContinuation(
+        "appointments",
+        "appointments.list",
+        {
+            "service_id": "11111111-1111-1111-1111-111111111111",
+            "service_name": "Medicina interna",
+        },
+    )
     source = HandoffExecutor(
         ModuleHandoff(
             target=ModuleContinuation("pet_profile", "pets.register"),

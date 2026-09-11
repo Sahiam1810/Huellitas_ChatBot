@@ -14,6 +14,7 @@ from app.shared.enums import AccessRequirement, MessageResponseType
 class ModuleContinuation:
     module_id: str
     intent: str
+    payload: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

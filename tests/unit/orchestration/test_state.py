@@ -22,6 +22,10 @@ def test_pending_confirmation_round_trip_preserves_module_continuation() -> None
     continuation = continuation_type(
         module_id="appointments",
         intent="appointments.book",
+        payload={
+            "service_id": "11111111-1111-1111-1111-111111111111",
+            "service_name": "Medicina interna",
+        },
     )
     pending = module_executor.PendingConfirmation.create(
         module_id="pet_profile",
@@ -37,6 +41,10 @@ def test_pending_confirmation_round_trip_preserves_module_continuation() -> None
     assert restored == pending
     assert restored is not None
     assert restored.continuation == continuation
+    assert restored.continuation.payload == {
+        "service_id": "11111111-1111-1111-1111-111111111111",
+        "service_name": "Medicina interna",
+    }
 
 
 def test_pending_confirmation_accepts_legacy_state_without_continuation() -> None:
