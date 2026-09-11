@@ -104,11 +104,26 @@ class AppointmentsModuleExecutor:
         request = state["request"]
         try:
             if is_booking_start(request.intent):
+                continuation = request.continuation
+                payload = continuation.payload if continuation is not None else {}
+                selected_service_id = payload.get("service_id")
+                selected_service_name = payload.get("service_name")
                 message, pending, handoff = await start_booking(
                     self._gateway,
                     context.bearer_token,
                     self._booking_ttl_seconds,
                     context.principal.account_id,
+                    selected_service_id=(
+                        selected_service_id
+                        if isinstance(selected_service_id, str)
+                        else None
+                    ),
+                    selected_service_name=(
+                        selected_service_name
+                        if isinstance(selected_service_name, str)
+                        else None
+                    ),
+                    message=request.command.message,
                 )
                 return {"result": self._message(message, pending=pending, handoff=handoff)}
             if is_booking_continuation(request.intent):

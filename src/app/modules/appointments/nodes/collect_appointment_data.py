@@ -48,6 +48,10 @@ async def start_booking(
     bearer_token: str,
     ttl_seconds: int,
     account_id: UUID,
+    *,
+    selected_service_id: str | None = None,
+    selected_service_name: str | None = None,
+    message: str = "",
 ) -> tuple[str, PendingConfirmation | None, ModuleHandoff | None]:
     options = await gateway.get_booking_options(bearer_token)
     if not options.pets:
@@ -62,7 +66,17 @@ async def start_booking(
     unavailable = _unavailable_reason(options)
     if unavailable is not None:
         return unavailable, None, None
-    draft = AppointmentBookingDraft(account_id=str(account_id))
+    preselected = _preselected_service(
+        options,
+        selected_service_id,
+        selected_service_name,
+        message,
+    )
+    draft = AppointmentBookingDraft(
+        account_id=str(account_id),
+        service_id=preselected[0] if preselected is not None else None,
+        service_name=preselected[1] if preselected is not None else None,
+    )
     return _pet_prompt(options), _pending(draft, ttl_seconds), None
 
 
@@ -95,8 +109,19 @@ async def advance_booking(
             message, tuple((str(item.id), item.name) for item in options.pets)
         )
         if selected is not None:
-            draft = replace(draft, pet_id=selected[0], pet_name=selected[1], step="service")
-            return _service_prompt(options), _replace_pending(pending, draft, ttl_seconds), None
+            next_step = "veterinarian" if draft.service_id else "service"
+            draft = replace(
+                draft,
+                pet_id=selected[0],
+                pet_name=selected[1],
+                step=next_step,
+            )
+            prompt = (
+                _veterinarian_prompt(options)
+                if next_step == "veterinarian"
+                else _service_prompt(options)
+            )
+            return prompt, _replace_pending(pending, draft, ttl_seconds), None
         return "No identifiqué la mascota. " + _pet_prompt(options), pending, None
     if draft.step == "service":
         selected = choose_option(
@@ -348,6 +373,27 @@ def _format_time(value: time) -> str:
     hour = value.hour % 12 or 12
     marker = "a. m." if value.hour < 12 else "p. m."
     return f"{hour}:{value.minute:02d} {marker}"
+
+
+def _preselected_service(
+    options: AppointmentBookingOptions,
+    selected_service_id: str | None,
+    selected_service_name: str | None,
+    message: str,
+) -> tuple[str, str] | None:
+    services = tuple((str(item.id), item.name) for item in options.services)
+    if selected_service_id is not None or selected_service_name is not None:
+        if selected_service_id is None or selected_service_name is None:
+            return None
+        return next(
+            (
+                item
+                for item in services
+                if item[0] == selected_service_id and item[1] == selected_service_name
+            ),
+            None,
+        )
+    return choose_option(message, services)
 
 
 def _unavailable_reason(options: AppointmentBookingOptions) -> str | None:
