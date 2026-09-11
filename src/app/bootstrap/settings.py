@@ -184,7 +184,7 @@ class Settings(BaseSettings):
     log_level: LogLevel = LogLevel.INFO
     docs_enabled: bool = True
     host: str = Field(default="127.0.0.1", min_length=1)
-    port: int = Field(default=8000, ge=1, le=65535)
+    port: int = Field(default=8010, ge=1, le=65535)
     display_time_zone: str = "America/Bogota"
 
     jwt_public_key_pem_base64: SecretStr | None = None

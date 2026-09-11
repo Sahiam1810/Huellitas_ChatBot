@@ -163,7 +163,9 @@ def context(
     )
 
 
-def request(message: str, intent: str, pending=None) -> ModuleExecutionRequest:
+def request(
+    message: str, intent: str, pending=None, continuation=None
+) -> ModuleExecutionRequest:
     return ModuleExecutionRequest(
         command=MessageCommand(
             message=message,
@@ -181,6 +183,7 @@ def request(message: str, intent: str, pending=None) -> ModuleExecutionRequest:
         intent=intent,
         manifest=APPOINTMENTS_MANIFEST,
         pending_confirmation=pending,
+        continuation=continuation,
     )
 
 
@@ -267,6 +270,107 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
     assert gateway.created[0][0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
     assert gateway.created[0][1] == "appointment-1"
     assert result.pending_confirmation is None
+
+
+INTERNAL_MEDICINE_ID = UUID("33333333-3333-3333-3333-333333333333")
+
+
+class PreselectionGateway(Gateway):
+    async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
+        options = await super().get_booking_options(bearer_token)
+        return AppointmentBookingOptions(
+            pets=options.pets,
+            services=options.services
+            + (
+                AppointmentBookingService(
+                    INTERNAL_MEDICINE_ID,
+                    "Medicina interna",
+                    30,
+                ),
+            ),
+            veterinarians=options.veterinarians,
+            requires_requester_phone_number=options.requires_requester_phone_number,
+        )
+
+
+@pytest.mark.anyio
+async def test_valid_continuation_preselects_service_and_skips_service_step() -> None:
+    executor = AppointmentsModuleExecutor(PreselectionGateway(), "America/Bogota")
+    started = await executor.execute(
+        request(
+            "sí",
+            "appointments.book",
+            continuation=ModuleContinuation(
+                "appointments",
+                "appointments.book",
+                {
+                    "service_id": str(INTERNAL_MEDICINE_ID),
+                    "service_name": "Medicina interna",
+                },
+            ),
+        ),
+        context(),
+    )
+
+    assert started.pending_confirmation is not None
+    assert started.pending_confirmation.payload["step"] == "pet"
+    assert started.pending_confirmation.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
+    assert started.pending_confirmation.payload["service_name"] == "Medicina interna"
+
+    after_pet = await executor.execute(
+        request("1", "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert "veterinario" in (after_pet.message or "").casefold()
+    assert "elige el servicio" not in (after_pet.message or "").casefold()
+
+
+@pytest.mark.anyio
+async def test_resume_message_preselects_official_service_name() -> None:
+    executor = AppointmentsModuleExecutor(PreselectionGateway(), "America/Bogota")
+    started = await executor.execute(
+        request("Quiero agendar una cita para Medicina interna", "appointments.book"),
+        context(),
+    )
+
+    assert started.pending_confirmation is not None
+    assert started.pending_confirmation.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
+    assert started.pending_confirmation.payload["service_name"] == "Medicina interna"
+
+    after_pet = await executor.execute(
+        request("1", "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert "veterinario" in (after_pet.message or "").casefold()
+
+
+@pytest.mark.anyio
+async def test_unknown_service_preselection_is_not_trusted() -> None:
+    executor = AppointmentsModuleExecutor(PreselectionGateway(), "America/Bogota")
+    started = await executor.execute(
+        request(
+            "Quiero agendar una cita",
+            "appointments.book",
+            continuation=ModuleContinuation(
+                "appointments",
+                "appointments.book",
+                {
+                    "service_id": "99999999-9999-9999-9999-999999999999",
+                    "service_name": "Servicio inexistente",
+                },
+            ),
+        ),
+        context(),
+    )
+
+    assert started.pending_confirmation is not None
+    assert "service_id" not in started.pending_confirmation.payload
+
+    after_pet = await executor.execute(
+        request("1", "appointments.booking", started.pending_confirmation), context()
+    )
+
+    assert "elige el servicio" in (after_pet.message or "").casefold()
 
 
 @pytest.mark.anyio

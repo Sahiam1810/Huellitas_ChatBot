@@ -46,7 +46,7 @@ docker compose ps
 
 Servicios locales:
 
-- FastAPI y Swagger: `http://127.0.0.1:8000/docs`.
+- FastAPI y Swagger: `http://127.0.0.1:8010/docs`.
 - Qdrant REST: `http://127.0.0.1:6333`.
 - Qdrant dashboard: `http://127.0.0.1:6333/dashboard`.
 - Qdrant gRPC: `127.0.0.1:6334`.
@@ -67,8 +67,8 @@ Para comprobar la degradación y recuperación de Redis sin reiniciar el agente:
 ```powershell
 docker compose logs redis agent-api
 docker compose stop redis
-Invoke-RestMethod http://127.0.0.1:8000/health/live
-Invoke-WebRequest http://127.0.0.1:8000/health/ready -SkipHttpErrorCheck
+Invoke-RestMethod http://127.0.0.1:8010/health/live
+Invoke-WebRequest http://127.0.0.1:8010/health/ready -SkipHttpErrorCheck
 docker compose start redis
 docker compose ps
 ```
@@ -477,14 +477,14 @@ $body = @{
 
 $first = Invoke-WebRequest `
     -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -Uri "http://127.0.0.1:8010/api/v1/messages" `
     -Headers $authorization `
     -ContentType "application/json" `
     -Body $body
 
 $replay = Invoke-WebRequest `
     -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -Uri "http://127.0.0.1:8010/api/v1/messages" `
     -Headers $authorization `
     -ContentType "application/json" `
     -Body $body
@@ -554,26 +554,26 @@ $document = @{
 } | ConvertTo-Json
 
 $created = Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents" `
     -Headers $authorization `
     -ContentType "application/json" -Body $document
 
 Invoke-RestMethod -Method Get `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents?active=true&tags=vacunación" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents?active=true&tags=vacunación" `
     -Headers $authorization
 
 $inactive = @{ active = $false } | ConvertTo-Json
 Invoke-RestMethod -Method Patch `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)/status" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents/$($created.documentId)/status" `
     -Headers $authorization `
     -ContentType "application/json" -Body $inactive
 
 Invoke-RestMethod -Method Delete `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents/$($created.documentId)" `
     -Headers $authorization
 
 Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents/$($created.documentId)/restore" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents/$($created.documentId)/restore" `
     -Headers $authorization
 ```
 

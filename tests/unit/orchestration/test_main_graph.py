@@ -177,6 +177,37 @@ class ConfirmingExecutor(Executor):
         )
 
 
+class CatalogSelectionExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(module_id="services_catalog")
+
+    async def execute(
+        self,
+        request: ModuleExecutionRequest,
+        execution_context: ExecutionContext,
+    ) -> ModuleResult:
+        self.requests.append(request)
+        self.contexts.append(execution_context)
+        if request.pending_confirmation is None:
+            return ModuleResult(
+                module_id="services_catalog",
+                message="1. Consulta general\n3. Medicina interna",
+                response_type=MessageResponseType.RETRIEVED,
+                pending_confirmation=PendingConfirmation.create(
+                    module_id="services_catalog",
+                    action="services.select",
+                    payload={"service_ids": ["1", "2", "3"]},
+                    ttl_seconds=600,
+                    intent="services.selecting",
+                ),
+            )
+        return ModuleResult(
+            module_id="services_catalog",
+            message="Medicina interna — Procedimiento — 30 minutos",
+            response_type=MessageResponseType.RETRIEVED,
+        )
+
+
 class ExpiredPetRegistrationExecutor(Executor):
     def __init__(self) -> None:
         super().__init__(module_id="pet_profile")
@@ -423,6 +454,52 @@ async def test_pending_confirmation_survives_and_returns_to_the_same_module() ->
     assert executor.requests[-1].pending_confirmation.payload == {"appointment_id": "a-1"}
     assert second_state["confirmation"] is None
     assert router.calls == 1
+
+
+@pytest.mark.anyio
+async def test_pending_catalog_selection_keeps_name_or_number_in_the_same_module() -> None:
+    general = GeneralProcessor()
+    executor = CatalogSelectionExecutor()
+    selected_manifest = ModuleManifest(
+        module_id="services_catalog",
+        version="1.0.0",
+        description="Public veterinary services",
+        intents=("services.list", "services.selecting"),
+        guest_accessible=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(selected_manifest, executor)
+    router = PublicModuleRouter(selected_manifest)
+    graph = build_main_graph(general, registry, router, InMemorySaver())
+    first = command(
+        message="Quiero saber que servicios tienen",
+        roles=("TelegramGuest",),
+        idempotency_key="message-001",
+    )
+
+    await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    second = command(
+        message="quiero medicina interna",
+        roles=("TelegramGuest",),
+        idempotency_key="message-002",
+    )
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+
+    result = message_result_from_state(second_state["result"])
+    assert result.module == "services_catalog"
+    assert "Medicina interna" in (result.message or "")
+    assert executor.requests[-1].intent == "services.selecting"
+    assert executor.requests[-1].pending_confirmation is not None
+    assert router.calls == 1
+    assert general.commands == []
 
 
 @pytest.mark.anyio
@@ -758,7 +835,14 @@ async def test_module_cannot_return_a_result_for_another_module() -> None:
 
 @pytest.mark.anyio
 async def test_module_handoff_executes_target_and_propagates_continuation() -> None:
-    continuation = ModuleContinuation("appointments", "appointments.list")
+    continuation = ModuleContinuation(
+        "appointments",
+        "appointments.list",
+        {
+            "service_id": "11111111-1111-1111-1111-111111111111",
+            "service_name": "Medicina interna",
+        },
+    )
     source = HandoffExecutor(
         ModuleHandoff(
             target=ModuleContinuation("pet_profile", "pets.register"),

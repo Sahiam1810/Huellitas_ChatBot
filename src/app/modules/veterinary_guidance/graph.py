@@ -3,7 +3,6 @@ from langgraph.runtime import Runtime
 
 from app.modules.veterinary_guidance.nodes.appointment_offer import (
     APPOINTMENT_OFFER_ACTION,
-    appointment_offer_choice,
     create_appointment_offer,
 )
 from app.modules.veterinary_guidance.nodes.detect_urgency import UrgencyAssessment, detect_urgency
@@ -12,6 +11,7 @@ from app.modules.veterinary_guidance.nodes.retrieve_authorized_guidance import (
     retrieve_authorized_guidance,
 )
 from app.modules.veterinary_guidance.state import VeterinaryGuidanceGraphState
+from app.orchestration.appointment_offer import appointment_offer_choice
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.guest_access import is_guest
 from app.orchestration.module_executor import (

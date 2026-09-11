@@ -19,5 +19,12 @@ def format_service_detail(service: ServiceCatalogItem) -> str:
     )
 
 
-def format_service_list(services: tuple[ServiceCatalogItem, ...]) -> str:
+def format_service_list(
+    services: tuple[ServiceCatalogItem, ...], *, numbered: bool = False
+) -> str:
+    if numbered:
+        return "\n".join(
+            f"{index}. {format_service_detail(service)}"
+            for index, service in enumerate(services, start=1)
+        )
     return "\n".join(f"• {format_service_detail(service)}" for service in services)

@@ -27,6 +27,8 @@ SERVICES_CATALOG_ROUTING_RULES = (
             "cuales servicios",
             "lista de servicios",
             "servicios disponibles",
+            "que servicios tienen",
+            "qué servicios tienen",
         ),
     ),
     IntentRule(

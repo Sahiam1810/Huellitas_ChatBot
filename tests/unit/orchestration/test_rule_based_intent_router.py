@@ -71,6 +71,7 @@ async def test_pet_profile_routes_registration_without_using_general_model() -> 
     ("message", "intent"),
     [
         ("¿Qué servicios ofrecen?", "services.list"),
+        ("Quiero saber que servicios tienen", "services.list"),
         ("¿Cuánto cuesta la consulta general?", "services.detail"),
         ("¿Tienen servicio de vacunación?", "services.search"),
         ("¿Ofrecen consulta general?", "services.search"),

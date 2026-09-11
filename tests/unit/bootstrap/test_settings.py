@@ -332,7 +332,7 @@ def test_settings_use_safe_development_defaults() -> None:
     assert settings.log_level is LogLevel.INFO
     assert settings.docs_enabled is True
     assert settings.host == "127.0.0.1"
-    assert settings.port == 8000
+    assert settings.port == 8010
 
 
 def test_active_jwt_configuration_reads_validated_environment() -> None:

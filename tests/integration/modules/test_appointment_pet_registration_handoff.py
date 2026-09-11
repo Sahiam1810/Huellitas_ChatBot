@@ -188,6 +188,7 @@ async def test_booking_without_pets_registers_one_and_resumes_booking() -> None:
     assert state["confirmation"]["continuation"] == {
         "module_id": "appointments",
         "intent": "appointments.book",
+        "payload": {},
     }
 
     state = await graph.ainvoke(

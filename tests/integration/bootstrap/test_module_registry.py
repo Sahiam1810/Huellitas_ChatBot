@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.bootstrap.application import create_application
 from app.bootstrap.module_registry import build_module_registry
@@ -11,12 +13,24 @@ from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
 from app.modules.pet_profile.manifest import PET_PROFILE_MANIFEST
 from app.modules.preventive_care.manifest import PREVENTIVE_CARE_MANIFEST
 from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
+from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
 from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
-from app.orchestration.message_processor import MessageCommand
+from app.orchestration.main_graph import build_main_graph
+from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
 from app.orchestration.module_registry import ModuleRegistry
+from app.orchestration.rule_based_intent_router import RuleBasedIntentRouter
+from app.orchestration.state import message_command_to_state, message_result_from_state
+from app.ports.appointments_gateway import (
+    AppointmentBookingOptions,
+    AppointmentBookingPet,
+    AppointmentBookingService,
+    AppointmentBookingVeterinarian,
+)
+from app.ports.services_catalog_gateway import ServiceCatalogItem
 from app.ports.token_validator import AuthenticatedPrincipal
+from app.shared.enums import AccessRequirement
 
 
 class PetGateway:
@@ -203,3 +217,265 @@ def test_backend_gateway_registers_private_appointments_module() -> None:
     assert registration.manifest == APPOINTMENTS_MANIFEST
     assert registration.manifest.guest_accessible is False
     assert registration.executor is not None
+
+
+INTERNAL_MEDICINE_ID = UUID("33333333-3333-3333-3333-333333333333")
+CONVERSATION_ID = UUID("10000000-0000-0000-0000-000000000001")
+
+
+class FlowCatalogGateway:
+    async def list_available(self, bearer_token: str) -> tuple[ServiceCatalogItem, ...]:
+        return (
+            ServiceCatalogItem(
+                id=UUID("11111111-1111-1111-1111-111111111111"),
+                type_service_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                type_service_name="Consulta",
+                name="Consulta general",
+                duration_minutes=30,
+                price=Decimal("55000"),
+            ),
+            ServiceCatalogItem(
+                id=UUID("22222222-2222-2222-2222-222222222222"),
+                type_service_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                type_service_name="Consulta",
+                name="Consulta especializada",
+                duration_minutes=45,
+                price=Decimal("85000"),
+            ),
+            ServiceCatalogItem(
+                id=INTERNAL_MEDICINE_ID,
+                type_service_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                type_service_name="Procedimiento",
+                name="Medicina interna",
+                duration_minutes=30,
+                price=Decimal("45000"),
+            ),
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+class FlowAppointmentsGateway:
+    async def list_owned(self, scope: object, bearer_token: str) -> tuple[object, ...]:
+        return ()
+
+    async def get_owned(self, appointment_id: object, bearer_token: str) -> object:
+        raise AssertionError("not called")
+
+    async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
+        return AppointmentBookingOptions(
+            pets=(AppointmentBookingPet(UUID("22222222-2222-2222-2222-222222222222"), "Luna"),),
+            services=(
+                AppointmentBookingService(
+                    UUID("44444444-4444-4444-4444-444444444444"),
+                    "Consulta general",
+                    30,
+                ),
+                AppointmentBookingService(INTERNAL_MEDICINE_ID, "Medicina interna", 30),
+            ),
+            veterinarians=(
+                AppointmentBookingVeterinarian(
+                    UUID("55555555-5555-5555-5555-555555555555"),
+                    "Dra. Ana Pérez",
+                    "Medicina general",
+                ),
+            ),
+            requires_requester_phone_number=True,
+        )
+
+    async def list_booking_slots(self, *args: object, **kwargs: object) -> tuple[object, ...]:
+        raise AssertionError("not called")
+
+    async def create_owned(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("not called")
+
+    async def cancel_owned(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("not called")
+
+    async def reschedule_owned(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("not called")
+
+    async def request_reschedule_code(self, *args: object, **kwargs: object) -> UUID:
+        raise AssertionError("not called")
+
+    async def confirm_reschedule_code(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("not called")
+
+    async def close(self) -> None:
+        return None
+
+
+class NeverGeneral:
+    async def process(self, command: MessageCommand) -> MessageResult:
+        raise AssertionError(f"unexpected general fallback: {command.message}")
+
+
+def flow_command(message: str, *, roles: tuple[str, ...], key: str) -> MessageCommand:
+    return MessageCommand(
+        message=message,
+        conversation_id=CONVERSATION_ID,
+        user_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        pet_id=None,
+        channel="telegram",
+        language="es-CO",
+        roles=roles,
+        is_escalated=False,
+        correlation_id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        idempotency_key=key,
+        publish_as_global_knowledge=False,
+    )
+
+
+def flow_context(role: str) -> ExecutionContext:
+    return ExecutionContext(
+        bearer_token="token",
+        principal=AuthenticatedPrincipal(
+            account_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            person_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            role_id=UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            role=role,
+            username="user",
+            email="user@example.com",
+            token_id=UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        ),
+        execution_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        correlation_id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+    )
+
+
+def flow_graph(*, booking_ttl: int = 600):
+    registry = build_module_registry(
+        services_catalog_gateway=FlowCatalogGateway(),  # type: ignore[arg-type]
+        appointments_gateway=FlowAppointmentsGateway(),  # type: ignore[arg-type]
+        appointment_booking_ttl_seconds=booking_ttl,
+    )
+    return build_main_graph(
+        NeverGeneral(),
+        registry,
+        RuleBasedIntentRouter(SERVICES_CATALOG_ROUTING_RULES),
+        InMemorySaver(),
+    )
+
+
+@pytest.mark.anyio
+async def test_registry_aligns_catalog_selection_ttl_with_appointment_booking() -> None:
+    registry = build_module_registry(
+        services_catalog_gateway=FlowCatalogGateway(),  # type: ignore[arg-type]
+        appointment_booking_ttl_seconds=900,
+    )
+    registration = registry.get_registration("services_catalog")
+    assert registration.executor is not None
+    result = await registration.executor.execute(
+        ModuleExecutionRequest(
+            command=flow_command(
+                "qué servicios ofrecen",
+                roles=("TelegramGuest",),
+                key="catalog-ttl",
+            ),
+            intent="services.list",
+            manifest=registration.manifest,
+        ),
+        flow_context("TelegramGuest"),
+    )
+
+    assert result.pending_confirmation is not None
+    remaining_seconds = (
+        result.pending_confirmation.expires_at - datetime.now(UTC)
+    ).total_seconds()
+    assert 895 <= remaining_seconds <= 900
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("selection", ("3", "quiero medicina interna"))
+async def test_authenticated_catalog_selection_starts_booking_with_service(
+    selection: str,
+) -> None:
+    graph = flow_graph()
+    config = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
+    context = flow_context("Cliente")
+
+    listed = await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command(
+                    "qué servicios ofrecen",
+                    roles=("Cliente",),
+                    key="list",
+                )
+            )
+        },
+        config=config,
+        context=context,
+    )
+    listed_result = message_result_from_state(listed["result"])
+    assert "3. Medicina interna" in (listed_result.message or "")
+
+    selected = await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command(selection, roles=("Cliente",), key="select")
+            )
+        },
+        config=config,
+        context=context,
+    )
+    selected_result = message_result_from_state(selected["result"])
+    assert "Medicina interna" in (selected_result.message or "")
+    assert "deseas agendar" in (selected_result.message or "").casefold()
+
+    booked = await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command("sí", roles=("Cliente",), key="accept")
+            )
+        },
+        config=config,
+        context=context,
+    )
+    booked_result = message_result_from_state(booked["result"])
+    assert booked_result.module == "appointments"
+    assert "mascota" in (booked_result.message or "").casefold()
+    assert booked["confirmation"]["payload"]["service_name"] == "Medicina interna"
+    assert booked["confirmation"]["payload"]["service_id"] == str(INTERNAL_MEDICINE_ID)
+    assert booked["confirmation"]["payload"]["step"] == "pet"
+
+
+@pytest.mark.anyio
+async def test_guest_catalog_selection_requests_identity_and_keeps_service_name() -> None:
+    graph = flow_graph()
+    config = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
+    context = flow_context("TelegramGuest")
+    roles = ("TelegramGuest",)
+
+    await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command("qué servicios ofrecen", roles=roles, key="list")
+            )
+        },
+        config=config,
+        context=context,
+    )
+    await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command("3", roles=roles, key="select")
+            )
+        },
+        config=config,
+        context=context,
+    )
+    accepted = await graph.ainvoke(
+        {
+            "command": message_command_to_state(
+                flow_command("sí", roles=roles, key="accept")
+            )
+        },
+        config=config,
+        context=context,
+    )
+    result = message_result_from_state(accepted["result"])
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.resume_message == "Quiero agendar una cita para Medicina interna"
+    assert result.module == "services_catalog"

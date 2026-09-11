@@ -250,6 +250,7 @@ def confirmation_to_state(
             {
                 "module_id": continuation.module_id,
                 "intent": continuation.intent,
+                "payload": dict(continuation.payload),
             }
             if continuation is not None
             else None
@@ -266,9 +267,13 @@ def confirmation_from_state(state: dict[str, object] | None) -> PendingConfirmat
     continuation_state = state.get("continuation")
     continuation = None
     if isinstance(continuation_state, dict):
+        continuation_payload = continuation_state.get("payload", {})
+        if not isinstance(continuation_payload, dict):
+            raise ValueError("continuation payload must be an object")
         continuation = ModuleContinuation(
             module_id=str(continuation_state["module_id"]),
             intent=str(continuation_state["intent"]),
+            payload=dict(continuation_payload),
         )
     return PendingConfirmation(
         module_id=str(state["module_id"]),

@@ -103,7 +103,7 @@ persisten como usuarios o conversaciones canónicas.
 
 ## Probar desde Swagger
 
-Abre `http://127.0.0.1:8000/docs`, pulsa **Authorize** y pega únicamente el valor de
+Abre `http://127.0.0.1:8010/docs`, pulsa **Authorize** y pega únicamente el valor de
 `accessToken`. Swagger agrega el prefijo `Bearer` automáticamente.
 
 - Health e info funcionan sin autenticación.
@@ -138,7 +138,7 @@ $messageBody = @{
 
 Invoke-RestMethod `
     -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/messages" `
+    -Uri "http://127.0.0.1:8010/api/v1/messages" `
     -Headers $authorization `
     -ContentType "application/json" `
     -Body $messageBody
@@ -147,7 +147,7 @@ Invoke-RestMethod `
 Ejemplo equivalente con curl:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/messages \
+curl -X POST http://127.0.0.1:8010/api/v1/messages \
   -H "Authorization: Bearer ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"message":"Hola","conversationId":"bda5a441-e907-4781-bca6-44c25a73255a","userId":"PERSON_ID","petId":null,"channel":"web","language":"es-CO","roles":["Cliente"],"isEscalated":false,"correlationId":"8dd1b2d9-4812-463a-87a4-eb6346cb2f83","idempotencyKey":"curl-message-001"}'
@@ -169,7 +169,7 @@ $document = @{
 
 Invoke-RestMethod `
     -Method Post `
-    -Uri "http://127.0.0.1:8000/api/v1/knowledge/documents" `
+    -Uri "http://127.0.0.1:8010/api/v1/knowledge/documents" `
     -Headers $authorization `
     -ContentType "application/json" `
     -Body $document
