@@ -13,12 +13,28 @@ from app.modules.services_catalog.nodes.retrieve_service_knowledge import (
 from app.modules.services_catalog.nodes.understand_service_query import (
     understand_service_query,
 )
+from app.modules.services_catalog.services.response_formatter import (
+    format_service_detail,
+    format_service_list,
+)
+from app.modules.services_catalog.services.service_selection import (
+    CATALOG_SELECTION_ACTION,
+    CATALOG_SELECTION_INTENT,
+    SERVICE_OFFER_ACTION,
+    SERVICE_OFFER_INTENT,
+    choose_catalog_service,
+)
 from app.modules.services_catalog.state import ServicesCatalogGraphState
 from app.orchestration.execution_context import ExecutionContext
-from app.orchestration.module_executor import ModuleExecutionRequest, ModuleResult
+from app.orchestration.module_executor import (
+    ModuleExecutionRequest,
+    ModuleResult,
+    PendingConfirmation,
+)
 from app.orchestration.rag_contracts import RagMessageResult, RagStatus, SemanticRoute
 from app.ports.service_knowledge_gateway import ServiceKnowledgeGateway
 from app.ports.services_catalog_gateway import (
+    ServiceCatalogItem,
     ServicesCatalogAuthenticationError,
     ServicesCatalogForbiddenError,
     ServicesCatalogGateway,
@@ -33,9 +49,13 @@ class ServicesCatalogModuleExecutor:
         gateway: ServicesCatalogGateway,
         *,
         knowledge_gateway: ServiceKnowledgeGateway | None = None,
+        appointment_offer_ttl_seconds: int = 600,
     ) -> None:
+        if appointment_offer_ttl_seconds <= 0:
+            raise ValueError("Appointment offer TTL must be positive")
         self._gateway = gateway
         self._knowledge_gateway = knowledge_gateway
+        self._appointment_offer_ttl_seconds = appointment_offer_ttl_seconds
         builder = StateGraph(ServicesCatalogGraphState, context_schema=ExecutionContext)
         builder.add_node("execute_services_catalog", self._execute_node)
         builder.add_edge(START, "execute_services_catalog")
@@ -60,14 +80,27 @@ class ServicesCatalogModuleExecutor:
             return {"result": self._message("No pude verificar tu identidad.")}
         request = state["request"]
         rag = RagMessageResult.disabled()
+        next_pending = None
         try:
             catalog = await fetch_available_services(self._gateway, context.bearer_token)
+            pending = request.pending_confirmation
+            if pending is not None and pending.action == CATALOG_SELECTION_ACTION:
+                return {
+                    "result": self._continue_catalog_selection(request, pending, catalog)
+                }
             selection = understand_service_query(request.command.message, catalog)
             message = prepare_service_response(
                 intent=request.intent,
                 catalog=catalog,
                 selection=selection,
             )
+            if request.intent == "services.list" and catalog:
+                message = (
+                    "Estos son los servicios veterinarios disponibles:\n"
+                    + format_service_list(catalog, numbered=True)
+                    + "\n\nPuedes elegir uno respondiendo con el número o con su nombre."
+                )
+                next_pending = self._selection_pending(catalog)
             if request.intent != "services.list" and len(selection.services) == 1:
                 knowledge = await retrieve_service_knowledge(
                     self._knowledge_gateway,
@@ -99,17 +132,76 @@ class ServicesCatalogModuleExecutor:
                 "No pude consultar el sistema veterinario en este momento. "
                 "Inténtalo nuevamente más tarde."
             )
-        return {"result": self._message(message, rag=rag)}
+        return {"result": self._message(message, rag=rag, pending=next_pending)}
+
+    def _continue_catalog_selection(
+        self,
+        request: ModuleExecutionRequest,
+        pending: PendingConfirmation,
+        catalog: tuple[ServiceCatalogItem, ...],
+    ) -> ModuleResult:
+        if pending.is_expired():
+            return self._message(
+                "La lista anterior venció. Pídeme nuevamente los servicios disponibles."
+            )
+        stored_ids = pending.payload.get("service_ids")
+        if not isinstance(stored_ids, list) or not all(
+            isinstance(service_id, str) for service_id in stored_ids
+        ):
+            return self._message(
+                "No pude recuperar la lista anterior. Pídeme nuevamente los servicios."
+            )
+        selected = choose_catalog_service(request.command.message, stored_ids, catalog)
+        if selected is None:
+            current_ids = [str(service.id) for service in catalog]
+            current_pending = (
+                pending
+                if current_ids == stored_ids
+                else self._selection_pending(catalog)
+            )
+            listing = format_service_list(catalog, numbered=True)
+            return self._message(
+                "No identifiqué el servicio. Elige por número o nombre:\n" + listing,
+                pending=current_pending,
+            )
+        offer = PendingConfirmation.create(
+            module_id="services_catalog",
+            action=SERVICE_OFFER_ACTION,
+            payload={
+                "service_id": str(selected.id),
+                "service_name": selected.name,
+            },
+            ttl_seconds=self._appointment_offer_ttl_seconds,
+            intent=SERVICE_OFFER_INTENT,
+        )
+        return self._message(
+            format_service_detail(selected)
+            + "\n\n¿Deseas agendar una cita para este servicio? Puedes responder de forma natural.",
+            pending=offer,
+        )
+
+    def _selection_pending(
+        self, catalog: tuple[ServiceCatalogItem, ...]
+    ) -> PendingConfirmation:
+        return PendingConfirmation.create(
+            module_id="services_catalog",
+            action=CATALOG_SELECTION_ACTION,
+            payload={"service_ids": [str(service.id) for service in catalog]},
+            ttl_seconds=self._appointment_offer_ttl_seconds,
+            intent=CATALOG_SELECTION_INTENT,
+        )
 
     @staticmethod
     def _message(
         message: str,
         *,
         rag: RagMessageResult | None = None,
+        pending: PendingConfirmation | None = None,
     ) -> ModuleResult:
         return ModuleResult(
             module_id="services_catalog",
             message=message,
             response_type=MessageResponseType.RETRIEVED,
             rag=rag or RagMessageResult.disabled(),
+            pending_confirmation=pending,
         )

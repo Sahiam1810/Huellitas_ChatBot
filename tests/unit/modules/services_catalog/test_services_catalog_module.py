@@ -5,9 +5,13 @@ import pytest
 
 from app.modules.services_catalog.graph import ServicesCatalogModuleExecutor
 from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
+from app.modules.services_catalog.services.service_selection import (
+    CATALOG_SELECTION_ACTION,
+    SERVICE_OFFER_ACTION,
+)
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.message_processor import MessageCommand
-from app.orchestration.module_executor import ModuleExecutionRequest
+from app.orchestration.module_executor import ModuleExecutionRequest, PendingConfirmation
 from app.orchestration.rag_contracts import RagStatus, SemanticRoute
 from app.ports.service_knowledge_gateway import ServiceKnowledgeResult
 from app.ports.services_catalog_gateway import (
@@ -38,6 +42,14 @@ def catalog() -> tuple[ServiceCatalogItem, ...]:
             name="Consulta especializada",
             duration_minutes=45,
             price=Decimal("85000"),
+        ),
+        ServiceCatalogItem(
+            id=UUID("33333333-3333-3333-3333-333333333333"),
+            type_service_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            type_service_name="Procedimiento",
+            name="Medicina interna",
+            duration_minutes=30,
+            price=Decimal("45000"),
         ),
     )
 
@@ -83,7 +95,11 @@ def context() -> ExecutionContext:
     )
 
 
-def request(message: str, intent: str) -> ModuleExecutionRequest:
+def request(
+    message: str,
+    intent: str,
+    pending: PendingConfirmation | None = None,
+) -> ModuleExecutionRequest:
     return ModuleExecutionRequest(
         command=MessageCommand(
             message=message,
@@ -100,6 +116,7 @@ def request(message: str, intent: str) -> ModuleExecutionRequest:
         ),
         intent=intent,
         manifest=SERVICES_CATALOG_MANIFEST,
+        pending_confirmation=pending,
     )
 
 
@@ -115,6 +132,64 @@ async def test_list_returns_official_catalog_values() -> None:
     assert "Consulta especializada — Consulta — 45 minutos — $85.000 COP" in (
         result.message or ""
     )
+
+
+@pytest.mark.anyio
+async def test_list_numbers_official_services_and_preserves_the_advertised_order() -> None:
+    result = await ServicesCatalogModuleExecutor(CatalogGateway()).execute(
+        request("¿Qué servicios ofrecen?", "services.list"), context()
+    )
+
+    assert "1. Consulta general" in (result.message or "")
+    assert "3. Medicina interna" in (result.message or "")
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == CATALOG_SELECTION_ACTION
+    assert result.pending_confirmation.intent == "services.selecting"
+    assert result.pending_confirmation.payload == {
+        "service_ids": [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+        ]
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("selection", ("3", "Medicina interna", "quiero medicina interna"))
+async def test_catalog_selection_shows_official_detail_and_offers_booking(
+    selection: str,
+) -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    listed = await executor.execute(request("servicios", "services.list"), context())
+
+    result = await executor.execute(
+        request(selection, "services.selecting", listed.pending_confirmation), context()
+    )
+
+    assert "Medicina interna — Procedimiento — 30 minutos — $45.000 COP" in (
+        result.message or ""
+    )
+    assert "deseas agendar" in (result.message or "").casefold()
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.action == SERVICE_OFFER_ACTION
+    assert result.pending_confirmation.payload == {
+        "service_id": "33333333-3333-3333-3333-333333333333",
+        "service_name": "Medicina interna",
+    }
+
+
+@pytest.mark.anyio
+async def test_invalid_catalog_selection_keeps_the_current_numbered_options() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    listed = await executor.execute(request("servicios", "services.list"), context())
+
+    result = await executor.execute(
+        request("9", "services.selecting", listed.pending_confirmation), context()
+    )
+
+    assert "No identifiqué el servicio" in (result.message or "")
+    assert "1. Consulta general" in (result.message or "")
+    assert result.pending_confirmation == listed.pending_confirmation
 
 
 @pytest.mark.anyio
