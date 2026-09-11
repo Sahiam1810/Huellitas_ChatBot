@@ -47,7 +47,7 @@ class AppointmentBookingDraft:
         return draft
 
 
-RescheduleStep = Literal["date", "slot", "phone", "otp_sent", "otp_confirm"]
+RescheduleStep = Literal["date", "slot", "phone", "confirmation"]
 
 
 @dataclass(frozen=True, slots=True)
