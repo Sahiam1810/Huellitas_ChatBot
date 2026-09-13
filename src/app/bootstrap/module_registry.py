@@ -29,7 +29,7 @@ def build_module_registry(
     appointments_gateway: AppointmentsGateway | None = None,
     display_time_zone: str = "America/Bogota",
     confirmation_ttl_seconds: int = 600,
-    appointment_booking_ttl_seconds: int = 300,
+    appointment_booking_ttl_seconds: int = 600,
     appointment_availability_search_days: int = 14,
     appointment_availability_max_dates: int = 3,
 ) -> ModuleRegistry:

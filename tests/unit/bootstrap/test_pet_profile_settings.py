@@ -8,7 +8,7 @@ def test_backend_configuration_is_optional_by_default() -> None:
     settings = Settings(environment="test", _env_file=None)
 
     assert settings.active_backend_configuration() is None
-    assert settings.appointment_booking_ttl_seconds == 300
+    assert settings.appointment_booking_ttl_seconds == 600
     assert settings.appointment_availability_search_days == 14
     assert settings.appointment_availability_max_dates == 3
 

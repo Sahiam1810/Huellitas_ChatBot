@@ -114,7 +114,7 @@ async def test_guidance_ask_without_knowledge_returns_empty_message() -> None:
 
 
 @pytest.mark.anyio
-async def test_guest_natural_acceptance_hands_off_to_booking() -> None:
+async def test_guest_natural_acceptance_requests_identity_and_defers_booking() -> None:
     executor = VeterinaryGuidanceModuleExecutor(
         knowledge_gateway=KnowledgeGateway(GuidanceKnowledgeResult(status=RagStatus.EMPTY))
     )
@@ -132,10 +132,9 @@ async def test_guest_natural_acceptance_hands_off_to_booking() -> None:
         execution_context(),
     )
 
-    assert result.access_requirement is AccessRequirement.NONE
-    assert result.resume_message is None
-    assert result.handoff is not None
-    assert result.handoff.target.module_id == "appointments"
+    assert result.access_requirement is AccessRequirement.IDENTITY_VERIFICATION
+    assert result.resume_message == "Quiero agendar una cita"
+    assert result.handoff is None
     assert result.pending_confirmation is None
 
 

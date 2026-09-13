@@ -43,10 +43,6 @@ class AppointmentsConflictError(AppointmentsGatewayError):
     pass
 
 
-class OwnerNotFoundError(AppointmentsGatewayError):
-    """Raised when ops-by-cédula find no registered person (do not auto-create)."""
-
-
 @dataclass(frozen=True, slots=True)
 class AppointmentItem:
     id: UUID
@@ -118,43 +114,6 @@ class AppointmentRescheduleRequest:
     notes: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class OwnerContactRequest:
-    """Find-or-create owner by unique cédula with contact fields."""
-
-    identification_number: str
-    full_name: str
-    email: str
-    phone_number: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class OwnerContactResult:
-    client_id: UUID
-    identification_number: str
-    created: bool
-    access_token: str
-    user_id: UUID | None = None
-    user_account_id: UUID | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class InlinePetRegistration:
-    name: str
-    age: int
-    gender: str
-    weight: float
-    observations: str | None
-    species_id: UUID
-    race_id: UUID
-
-
-@dataclass(frozen=True, slots=True)
-class BookingCatalogItem:
-    id: UUID
-    name: str
-
-
 @runtime_checkable
 class AppointmentsGateway(Protocol):
     async def list_owned(
@@ -208,61 +167,5 @@ class AppointmentsGateway(Protocol):
         code: str,
         bearer_token: str,
     ) -> None: ...
-
-    # --- Identification-scoped bot APIs (no Cliente JWT) ---
-
-    async def find_or_create_owner(
-        self, contact: OwnerContactRequest, bearer_token: str
-    ) -> OwnerContactResult: ...
-
-    async def get_booking_options_by_identification(
-        self, identification_number: str, bearer_token: str
-    ) -> AppointmentBookingOptions: ...
-
-    async def list_by_identification(
-        self, identification_number: str, scope: AppointmentScope, bearer_token: str
-    ) -> tuple[AppointmentItem, ...]: ...
-
-    async def get_by_identification(
-        self, appointment_id: UUID, identification_number: str, bearer_token: str
-    ) -> AppointmentItem: ...
-
-    async def create_by_identification(
-        self,
-        identification_number: str,
-        booking: AppointmentBookingRequest,
-        idempotency_key: str,
-        bearer_token: str,
-    ) -> AppointmentItem: ...
-
-    async def cancel_by_identification(
-        self,
-        appointment_id: UUID,
-        identification_number: str,
-        bearer_token: str,
-        *,
-        comment: str | None = None,
-    ) -> None: ...
-
-    async def reschedule_by_identification(
-        self,
-        appointment_id: UUID,
-        identification_number: str,
-        request: AppointmentRescheduleRequest,
-        bearer_token: str,
-    ) -> None: ...
-
-    async def create_pet_by_identification(
-        self,
-        identification_number: str,
-        registration: InlinePetRegistration,
-        bearer_token: str,
-    ) -> AppointmentBookingPet: ...
-
-    async def list_pet_species(self, bearer_token: str) -> tuple[BookingCatalogItem, ...]: ...
-
-    async def list_pet_races(
-        self, species_id: UUID, bearer_token: str
-    ) -> tuple[BookingCatalogItem, ...]: ...
 
     async def close(self) -> None: ...

@@ -209,13 +209,13 @@ async def test_registry_aligns_guidance_offer_ttl_with_appointment_booking() -> 
     assert 895 <= remaining_seconds <= 900
 
 
-def test_backend_gateway_registers_guest_accessible_appointments_module() -> None:
+def test_backend_gateway_registers_private_appointments_module() -> None:
     registry = build_module_registry(
         appointments_gateway=AppointmentsGateway(),  # type: ignore[arg-type]
     )
     registration = registry.get_registration("appointments")
     assert registration.manifest == APPOINTMENTS_MANIFEST
-    assert registration.manifest.guest_accessible is True
+    assert registration.manifest.guest_accessible is False
     assert registration.executor is not None
 
 
@@ -264,11 +264,6 @@ class FlowAppointmentsGateway:
         raise AssertionError("not called")
 
     async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
-        return await self.get_booking_options_by_identification("ignored", bearer_token)
-
-    async def get_booking_options_by_identification(
-        self, identification_number: str, bearer_token: str
-    ) -> AppointmentBookingOptions:
         return AppointmentBookingOptions(
             pets=(AppointmentBookingPet(UUID("22222222-2222-2222-2222-222222222222"), "Luna"),),
             services=(
@@ -288,40 +283,6 @@ class FlowAppointmentsGateway:
             ),
             requires_requester_phone_number=True,
         )
-
-    async def find_or_create_owner(self, contact, bearer_token: str):
-        from app.ports.appointments_gateway import OwnerContactResult
-
-        return OwnerContactResult(
-            client_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-            identification_number=contact.identification_number,
-            created=False,
-            access_token="delegated-agent-token",
-        )
-
-    async def list_by_identification(self, *args: object, **kwargs: object) -> tuple[object, ...]:
-        return ()
-
-    async def get_by_identification(self, *args: object, **kwargs: object) -> object:
-        raise AssertionError("not called")
-
-    async def create_by_identification(self, *args: object, **kwargs: object) -> object:
-        raise AssertionError("not called")
-
-    async def cancel_by_identification(self, *args: object, **kwargs: object) -> None:
-        raise AssertionError("not called")
-
-    async def reschedule_by_identification(self, *args: object, **kwargs: object) -> None:
-        raise AssertionError("not called")
-
-    async def create_pet_by_identification(self, *args: object, **kwargs: object) -> object:
-        raise AssertionError("not called")
-
-    async def list_pet_species(self, bearer_token: str) -> tuple[object, ...]:
-        return ()
-
-    async def list_pet_races(self, species_id: object, bearer_token: str) -> tuple[object, ...]:
-        return ()
 
     async def list_booking_slots(self, *args: object, **kwargs: object) -> tuple[object, ...]:
         raise AssertionError("not called")

@@ -445,10 +445,9 @@ async def test_guest_uses_policy_prompt_and_cannot_publish_global_knowledge() ->
     request = model.generate.await_args.args[0]
     assert request.messages[0].role is ChatRole.SYSTEM
     guest_prompt = request.messages[1].content
-    assert "/vincular" not in guest_prompt
-    assert "asesor" not in guest_prompt.casefold()
+    assert "/vincular" in guest_prompt
     assert "do not append" in guest_prompt.lower()
-    assert "Esa función está en desarrollo." in guest_prompt
+    assert "create an account securely in the application" in guest_prompt.lower()
     writer.write.assert_awaited_once_with(
         conversation_id=CONVERSATION_ID,
         question=current.message,

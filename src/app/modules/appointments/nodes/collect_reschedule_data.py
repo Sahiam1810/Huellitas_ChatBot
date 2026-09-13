@@ -21,23 +21,13 @@ from app.modules.appointments.services.date_resolver import (
     date_resolution_error_message,
     resolve_appointment_date,
 )
-from app.modules.appointments.nodes.collect_identification import (
-    RESCHEDULE_IDENTIFICATION_ACTION,
-    resolve_identification,
-    start_identification_pending,
-)
-from app.modules.appointments.services.owner_contact import OWNER_NOT_FOUND
 from app.modules.appointments.services.response_formatter import (
     format_detail,
     format_local_datetime,
 )
 from app.orchestration.module_executor import PendingConfirmation
 from app.orchestration.rule_based_intent_router import normalize_for_routing
-from app.ports.appointments_gateway import (
-    AppointmentScope,
-    AppointmentsGateway,
-    OwnerNotFoundError,
-)
+from app.ports.appointments_gateway import AppointmentScope, AppointmentsGateway
 
 RESCHEDULE_COLLECTION_ACTION = "appointments.reschedule.collect"
 RESCHEDULE_CONFIRMATION_ACTION = "appointments.reschedule.confirm"
@@ -53,45 +43,13 @@ def reschedule_expired(pending: PendingConfirmation) -> bool:
 
 
 async def start_reschedule(
-    ttl_seconds: int,
-) -> tuple[str, PendingConfirmation | None]:
-    return start_identification_pending(
-        module_id="appointments",
-        action=RESCHEDULE_IDENTIFICATION_ACTION,
-        intent=RESCHEDULE_INTENT,
-        ttl_seconds=ttl_seconds,
-    )
-
-
-async def advance_reschedule_identification(
     gateway: AppointmentsGateway,
     bearer_token: str,
-    pending: PendingConfirmation,
-    message: str,
-    time_zone: ZoneInfo,
     ttl_seconds: int,
-) -> tuple[str, PendingConfirmation | None]:
-    identification, error = resolve_identification(message)
-    if identification is None:
-        return error or "Indica una cédula válida.", pending
-    try:
-        return await _list_reschedulable(
-            gateway, bearer_token, identification, time_zone, ttl_seconds
-        )
-    except OwnerNotFoundError:
-        return OWNER_NOT_FOUND, None
-
-
-async def _list_reschedulable(
-    gateway: AppointmentsGateway,
-    bearer_token: str,
-    identification: str,
+    account_id: UUID,
     time_zone: ZoneInfo,
-    ttl_seconds: int,
 ) -> tuple[str, PendingConfirmation | None]:
-    items = await gateway.list_by_identification(
-        identification, AppointmentScope.UPCOMING, bearer_token
-    )
+    items = await gateway.list_owned(AppointmentScope.UPCOMING, bearer_token)
     reschedulable = tuple(it for it in items if it.status_name.upper() == "AGENDADA")
     if not reschedulable:
         return "No tienes citas para reprogramar.", None
@@ -99,7 +57,7 @@ async def _list_reschedulable(
     if len(reschedulable) == 1:
         cita = reschedulable[0]
         draft = AppointmentRescheduleDraft(
-            identification_number=identification,
+            account_id=str(account_id),
             appointment_id=str(cita.id),
             availability_id=str(cita.availability_id),
             appointment_summary=f"{cita.pet_name} — {cita.service_name}",
@@ -120,7 +78,9 @@ async def _list_reschedulable(
         )
         return message, pending
 
+    # Multiple appointments — ask user to choose
     options = tuple((str(it.id), f"{it.pet_name} — {it.service_name}") for it in reschedulable)
+    # Use a sentinel draft to store account info + options list
     message = (
         "Tienes varias citas agendadas. ¿Cuál deseas reprogramar? Responde con el número:\n"
         + numbered_options(options)
@@ -129,7 +89,7 @@ async def _list_reschedulable(
         module_id="appointments",
         action=RESCHEDULE_COLLECTION_ACTION,
         payload={
-            "identification_number": identification,
+            "account_id": str(account_id),
             "_selecting": True,
             "options": [
                 {
@@ -171,7 +131,7 @@ async def advance_reschedule(
         appt_id = selected[0]
         opt_data = next(o for o in options_raw if o["id"] == appt_id)  # type: ignore[index]
         draft = AppointmentRescheduleDraft(
-            identification_number=str(payload["identification_number"]),
+            account_id=str(payload["account_id"]),
             appointment_id=appt_id,
             availability_id=opt_data["avail_id"],
             appointment_summary=opt_data["label"],

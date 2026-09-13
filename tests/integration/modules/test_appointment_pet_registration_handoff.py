@@ -1,4 +1,5 @@
-from datetime import UTC
+from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -15,10 +16,12 @@ from app.ports.appointments_gateway import (
     AppointmentBookingPet,
     AppointmentBookingService,
     AppointmentBookingVeterinarian,
-    BookingCatalogItem,
-    InlinePetRegistration,
-    OwnerContactRequest,
-    OwnerContactResult,
+)
+from app.ports.pet_profile_gateway import (
+    CatalogItem,
+    PetProfile,
+    PetProfilePatch,
+    PetRegistration,
 )
 from app.ports.token_validator import AuthenticatedPrincipal
 
@@ -44,19 +47,58 @@ class InitialBookingRouter:
         )
 
 
-class AppointmentsGateway:
+class PetGateway:
     def __init__(self) -> None:
-        self.pets: list[AppointmentBookingPet] = []
-        self.registrations: list[InlinePetRegistration] = []
+        self.profiles: tuple[PetProfile, ...] = ()
+        self.registrations: list[PetRegistration] = []
+
+    async def list_owned(self, bearer_token: str) -> tuple[PetProfile, ...]:
+        return self.profiles
+
+    async def create_owned(self, bearer_token: str, registration: PetRegistration) -> PetProfile:
+        self.registrations.append(registration)
+        profile = PetProfile(
+            id=PET_ID,
+            name=registration.name,
+            age=registration.age,
+            gender=registration.gender,
+            weight=registration.weight,
+            observations=registration.observations,
+            species_id=registration.species_id,
+            species_name="Canino",
+            race_id=registration.race_id,
+            race_name="Mestizo",
+            updated_at=datetime.now(UTC),
+        )
+        self.profiles = (*self.profiles, profile)
+        return profile
+
+    async def update_owned(
+        self, bearer_token: str, pet_id: UUID, patch: PetProfilePatch
+    ) -> PetProfile:
+        assert self.profiles
+        return replace(self.profiles[0], name=patch.name or self.profiles[0].name)
+
+    async def list_species(self, bearer_token: str) -> tuple[CatalogItem, ...]:
+        return (CatalogItem(SPECIES_ID, "Canino"),)
+
+    async def list_races(
+        self, species_id: UUID, bearer_token: str
+    ) -> tuple[CatalogItem, ...]:
+        assert species_id == SPECIES_ID
+        return (CatalogItem(RACE_ID, "Mestizo"),)
+
+    async def close(self) -> None:
+        return None
+
+
+class AppointmentsGateway:
+    def __init__(self, pets: PetGateway) -> None:
+        self._pets = pets
 
     async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
-        return await self.get_booking_options_by_identification("ignored", bearer_token)
-
-    async def get_booking_options_by_identification(
-        self, identification_number: str, bearer_token: str
-    ) -> AppointmentBookingOptions:
         return AppointmentBookingOptions(
-            pets=tuple(self.pets),
+            pets=tuple(AppointmentBookingPet(item.id, item.name) for item in self._pets.profiles),
             services=(
                 AppointmentBookingService(
                     UUID("70000000-0000-0000-0000-000000000007"),
@@ -74,36 +116,6 @@ class AppointmentsGateway:
             requires_requester_phone_number=False,
         )
 
-    async def find_or_create_owner(
-        self, contact: OwnerContactRequest, bearer_token: str
-    ) -> OwnerContactResult:
-        return OwnerContactResult(
-            client_id=ACCOUNT_ID,
-            identification_number=contact.identification_number,
-            created=True,
-            access_token="delegated-agent-token",
-        )
-
-    async def create_pet_by_identification(
-        self,
-        identification_number: str,
-        registration: InlinePetRegistration,
-        bearer_token: str,
-    ) -> AppointmentBookingPet:
-        self.registrations.append(registration)
-        pet = AppointmentBookingPet(PET_ID if not self.pets else UUID(int=PET_ID.int + 1), registration.name)
-        self.pets.append(pet)
-        return pet
-
-    async def list_pet_species(self, bearer_token: str) -> tuple[BookingCatalogItem, ...]:
-        return (BookingCatalogItem(SPECIES_ID, "Canino"),)
-
-    async def list_pet_races(
-        self, species_id: UUID, bearer_token: str
-    ) -> tuple[BookingCatalogItem, ...]:
-        assert species_id == SPECIES_ID
-        return (BookingCatalogItem(RACE_ID, "Mestizo"),)
-
     async def close(self) -> None:
         return None
 
@@ -116,7 +128,7 @@ def command(message: str, sequence: int) -> MessageCommand:
         pet_id=None,
         channel="telegram",
         language="es-CO",
-        roles=("TelegramGuest",),
+        roles=("Cliente",),
         is_escalated=False,
         correlation_id=UUID("90000000-0000-0000-0000-000000000009"),
         idempotency_key=f"telegram-update-{sequence}",
@@ -131,9 +143,9 @@ def context() -> ExecutionContext:
             account_id=ACCOUNT_ID,
             person_id=PERSON_ID,
             role_id=UUID("a0000000-0000-0000-0000-00000000000a"),
-            role="TelegramGuest",
-            username="guest",
-            email="guest@example.test",
+            role="Cliente",
+            username="cliente",
+            email="cliente@example.test",
             token_id=UUID("b0000000-0000-0000-0000-00000000000b"),
         ),
         execution_id=UUID("c0000000-0000-0000-0000-00000000000c"),
@@ -142,28 +154,27 @@ def context() -> ExecutionContext:
 
 
 @pytest.mark.anyio
-async def test_booking_without_pets_registers_inline_and_continues() -> None:
-    appointments = AppointmentsGateway()
+async def test_booking_without_pets_registers_one_and_resumes_booking() -> None:
+    pets = PetGateway()
     graph = build_main_graph(
         NeverGeneral(),
-        build_module_registry(appointments_gateway=appointments),
+        build_module_registry(
+            pets,
+            appointments_gateway=AppointmentsGateway(pets),
+        ),
         InitialBookingRouter(),
         InMemorySaver(),
     )
     configuration = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
     messages = (
         "Quiero agendar una consulta para mi cachorro",
-        "1234567890",
-        "Ana Pérez",
-        "ana@example.com",
-        "Milou",
+        "Okey, mi mascota se llama Milou",
         "Canino",
         "Mestizo",
         "2",
         "macho",
         "8 kg",
         "ninguna",
-        "sí",
     )
 
     for sequence, text in enumerate(messages, start=1):
@@ -173,30 +184,58 @@ async def test_booking_without_pets_registers_inline_and_continues() -> None:
             context=context(),
         )
 
+    assert state["confirmation"]["module_id"] == "pet_profile"
+    assert state["confirmation"]["continuation"] == {
+        "module_id": "appointments",
+        "intent": "appointments.book",
+        "payload": {},
+    }
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(command("sí", len(messages) + 1))},
+        config=configuration,
+        context=context(),
+    )
+
     result = message_result_from_state(state["result"])
-    assert len(appointments.registrations) == 1
-    assert appointments.registrations[0].name == "Milou"
+    assert len(pets.registrations) == 1
+    assert pets.registrations[0].name == "Milou"
     assert result.module == "appointments"
     assert "Milou fue registrada" in (result.message or "")
+    assert "¿Para cuál mascota" in (result.message or "")
     assert state["confirmation"]["module_id"] == "appointments"
 
 
 @pytest.mark.anyio
-async def test_booking_registers_another_pet_inline() -> None:
-    appointments = AppointmentsGateway()
-    appointments.pets = [AppointmentBookingPet(EXISTING_PET_ID, "Luna")]
+async def test_booking_registers_another_pet_and_resumes_with_updated_options() -> None:
+    pets = PetGateway()
+    pets.profiles = (
+        PetProfile(
+            id=EXISTING_PET_ID,
+            name="Luna",
+            age=4,
+            gender="hembra",
+            weight=12,
+            observations=None,
+            species_id=SPECIES_ID,
+            species_name="Canino",
+            race_id=RACE_ID,
+            race_name="Mestizo",
+            updated_at=datetime.now(UTC),
+        ),
+    )
     graph = build_main_graph(
         NeverGeneral(),
-        build_module_registry(appointments_gateway=appointments),
+        build_module_registry(
+            pets,
+            appointments_gateway=AppointmentsGateway(pets),
+        ),
         InitialBookingRouter(),
         InMemorySaver(),
     )
     configuration = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
     messages = (
         "Quiero agendar una consulta para otra mascota",
-        "1234567890",
-        "Ana Pérez",
-        "ana@example.com",
         "otra",
         "Milou",
         "Canino",
@@ -216,10 +255,9 @@ async def test_booking_registers_another_pet_inline() -> None:
         )
 
     result = message_result_from_state(state["result"])
-    assert [registration.name for registration in appointments.registrations] == ["Milou"]
+    assert [registration.name for registration in pets.registrations] == ["Milou"]
     assert result.module == "appointments"
     assert state["confirmation"]["module_id"] == "appointments"
-    assert "Luna" in (result.message or "") or "Milou" in (result.message or "")
-    assert "Registrar otra mascota" in (result.message or "") or "servicio" in (
-        result.message or ""
-    ).casefold() or "veterinario" in (result.message or "").casefold()
+    assert "Luna" in (result.message or "")
+    assert "Milou" in (result.message or "")
+    assert "Registrar otra mascota" in (result.message or "")
