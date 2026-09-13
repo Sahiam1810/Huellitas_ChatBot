@@ -36,7 +36,9 @@ El host y el puerto se leen desde `HUELLITAS_HOST` y `HUELLITAS_PORT`.
 
 ## Ejecución con Docker
 
-Docker Compose ejecuta FastAPI, Qdrant y una instancia local persistente de Redis:
+**Producción:** el stack completo (frontend, backend, chatbot, redis, qdrant, oracle) se define en `../veterinarian-backend/deploy/docker-compose.prod.yml`. Guía: `../veterinarian-backend/deploy/DEPLOY.md`. En producción el chatbot **no** publica puertos al host; DNS interno `chatbot:8010` y backend `http://backend:8080`.
+
+**Local (este repo):** Docker Compose ejecuta FastAPI, Qdrant y Redis con publicación solo en loopback:
 
 ```powershell
 Copy-Item .env.example .env
@@ -44,7 +46,7 @@ docker compose up --detach --build --wait
 docker compose ps
 ```
 
-Servicios locales:
+Servicios locales (perfil DX; solo `127.0.0.1`):
 
 - FastAPI y Swagger: `http://127.0.0.1:8010/docs`.
 - Qdrant REST: `http://127.0.0.1:6333`.
@@ -60,12 +62,12 @@ docker compose down
 
 Los volúmenes `huellitas-chatbot_qdrant_storage` y `huellitas-chatbot_redis_storage` conservan los datos. No uses `docker compose down --volumes` salvo que quieras eliminar deliberadamente ambos almacenamientos locales.
 
-Compose habilita las conexiones del agente mediante `http://qdrant:6333` y `redis://redis:6379`, y selecciona `HUELLITAS_CHECKPOINT_PROVIDER=redis`. Redis usa AOF con sincronización cada segundo y persiste en `/data`, por lo que el último estado técnico de cada hilo sobrevive al reinicio del contenedor del agente. Si Qdrant o Redis dejan de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que todas las dependencias habilitadas se recuperen. RAG y embeddings siguen deshabilitados por defecto, por lo que Compose no crea colecciones salvo que se activen explícitamente en `.env`. El Compose es para desarrollo local; no expongas esta configuración como un despliegue productivo.
+Compose habilita las conexiones del agente mediante `http://qdrant:6333` y `redis://redis:6379`, selecciona `HUELLITAS_CHECKPOINT_PROVIDER=redis` y apunta el backend a `http://backend:8080`. Redis usa AOF con sincronización cada segundo y persiste en `/data`. Si Qdrant o Redis dejan de responder, `/health/live` continúa disponible y `/health/ready` devuelve `503` hasta que todas las dependencias habilitadas se recuperen. Este `compose.yaml` es solo desarrollo local; el despliegue productivo usa el Compose padre sin publicar 8010/6333/6334/6379.
 
 Para comprobar la degradación y recuperación de Redis sin reiniciar el agente:
 
 ```powershell
-docker compose logs redis agent-api
+docker compose logs redis chatbot
 docker compose stop redis
 Invoke-RestMethod http://127.0.0.1:8010/health/live
 Invoke-WebRequest http://127.0.0.1:8010/health/ready -SkipHttpErrorCheck
