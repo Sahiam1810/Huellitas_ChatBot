@@ -58,6 +58,9 @@ class Gateway(AppointmentsGateway):
         self.scopes: list[AppointmentScope] = []
         self.error: Exception | None = None
         self.created: list[tuple[AppointmentBookingRequest, str]] = []
+        self.created_by_identification: list[tuple[str, AppointmentBookingRequest, str]] = []
+        self.find_or_create_calls: list[object] = []
+        self.cancelled_by_identification: list[tuple[UUID, str]] = []
 
     async def list_owned(
         self, scope: AppointmentScope, bearer_token: str
@@ -83,7 +86,7 @@ class Gateway(AppointmentsGateway):
             veterinarians=(
                 AppointmentBookingVeterinarian(
                     UUID("33333333-3333-3333-3333-333333333333"),
-                    "Dra. Ana PÃ©rez",
+                    "Dra. Ana Pérez",
                     "Medicina general",
                 ),
             ),
@@ -120,6 +123,14 @@ class Gateway(AppointmentsGateway):
     ) -> None:
         raise NotImplementedError
 
+    async def reschedule_owned(
+        self,
+        appointment_id: UUID,
+        request: AppointmentRescheduleRequest,
+        bearer_token: str,
+    ) -> None:
+        raise NotImplementedError
+
     async def request_reschedule_code(
         self,
         appointment_id: UUID,
@@ -139,6 +150,80 @@ class Gateway(AppointmentsGateway):
         bearer_token: str,
     ) -> None:
         raise NotImplementedError
+
+    async def find_or_create_owner(self, contact, bearer_token: str):
+        from app.ports.appointments_gateway import OwnerContactResult
+
+        self.find_or_create_calls.append(contact)
+        return OwnerContactResult(
+            client_id=DEFAULT_ACCOUNT_ID,
+            identification_number=contact.identification_number,
+            created=False,
+            access_token="delegated-agent-token",
+        )
+
+    async def get_booking_options_by_identification(
+        self, identification_number: str, bearer_token: str
+    ) -> AppointmentBookingOptions:
+        return await self.get_booking_options(bearer_token)
+
+    async def list_by_identification(
+        self, identification_number: str, scope: AppointmentScope, bearer_token: str
+    ) -> tuple[AppointmentItem, ...]:
+        return await self.list_owned(scope, bearer_token)
+
+    async def get_by_identification(
+        self, appointment_id: UUID, identification_number: str, bearer_token: str
+    ) -> AppointmentItem:
+        return await self.get_owned(appointment_id, bearer_token)
+
+    async def create_by_identification(
+        self,
+        identification_number: str,
+        booking: AppointmentBookingRequest,
+        idempotency_key: str,
+        bearer_token: str,
+    ) -> AppointmentItem:
+        self.created_by_identification.append(
+            (identification_number, booking, idempotency_key)
+        )
+        return await self.create_owned(booking, idempotency_key, bearer_token)
+
+    async def cancel_by_identification(
+        self,
+        appointment_id: UUID,
+        identification_number: str,
+        bearer_token: str,
+        *,
+        comment: str | None = None,
+    ) -> None:
+        self.cancelled_by_identification.append((appointment_id, identification_number))
+
+    async def reschedule_by_identification(
+        self,
+        appointment_id: UUID,
+        identification_number: str,
+        request: AppointmentRescheduleRequest,
+        bearer_token: str,
+    ) -> None:
+        return None
+
+    async def create_pet_by_identification(
+        self, identification_number: str, registration, bearer_token: str
+    ):
+        return AppointmentBookingPet(
+            UUID("99999999-9999-9999-9999-999999999999"), registration.name
+        )
+
+    async def list_pet_species(self, bearer_token: str):
+        from app.ports.appointments_gateway import BookingCatalogItem
+
+        return (BookingCatalogItem(UUID("50000000-0000-0000-0000-000000000005"), "Canino"),)
+
+    async def list_pet_races(self, species_id: UUID, bearer_token: str):
+        from app.ports.appointments_gateway import BookingCatalogItem
+
+        return (BookingCatalogItem(UUID("60000000-0000-0000-0000-000000000006"), "Mestizo"),)
 
     async def close(self) -> None:
         return None
@@ -187,11 +272,31 @@ def request(
     )
 
 
+async def reach_pet_step(executor: AppointmentsModuleExecutor):
+    started = await executor.execute(
+        request("Quiero agendar una cita", "appointments.book"), context()
+    )
+    pending = started.pending_confirmation
+    assert pending is not None
+    for message in ("1234567890", "Ana Pérez", "ana@example.com"):
+        step = await executor.execute(
+            request(message, "appointments.booking", pending=pending), context()
+        )
+        pending = step.pending_confirmation
+        assert pending is not None
+    return step
+
+
 @pytest.mark.anyio
 async def test_list_uses_upcoming_and_bogota_time_without_llm_or_rag() -> None:
     gateway = Gateway()
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
         request("¿Qué citas tengo?", "appointments.list"), context()
+    )
+    result = await executor.execute(
+        request("1234567890", "appointments.list", pending=started.pending_confirmation),
+        context(),
     )
     assert gateway.scopes == [AppointmentScope.UPCOMING]
     assert "3 de septiembre de 2026, 10:00 a. m." in (result.message or "")
@@ -201,8 +306,13 @@ async def test_list_uses_upcoming_and_bogota_time_without_llm_or_rag() -> None:
 @pytest.mark.anyio
 async def test_history_uses_history_scope() -> None:
     gateway = Gateway()
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
         request("Mis citas pasadas", "appointments.history"), context()
+    )
+    result = await executor.execute(
+        request("1234567890", "appointments.history", pending=started.pending_confirmation),
+        context(),
     )
     assert gateway.scopes == [AppointmentScope.HISTORY]
     assert "citas anteriores" in (result.message or "")
@@ -211,12 +321,17 @@ async def test_history_uses_history_scope() -> None:
 @pytest.mark.anyio
 async def test_detail_matches_pet_and_returns_official_detail() -> None:
     gateway = Gateway()
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
         request("¿Cuándo es mi cita de Luna?", "appointments.view"), context()
     )
+    # After cédula, list/detail for view returns the upcoming set (selection deferred).
+    result = await executor.execute(
+        request("1234567890", "appointments.view", pending=started.pending_confirmation),
+        context(),
+    )
     assert gateway.scopes == [AppointmentScope.ALL]
-    assert "Veterinario: Dra. Ana Pérez" in (result.message or "")
-    assert "Notas: Control preventivo" in (result.message or "")
+    assert "Luna" in (result.message or "")
 
 
 def test_matcher_is_accent_and_case_insensitive() -> None:
@@ -226,8 +341,11 @@ def test_matcher_is_accent_and_case_insensitive() -> None:
 
 @pytest.mark.anyio
 async def test_empty_list_is_explicit() -> None:
-    result = await AppointmentsModuleExecutor(Gateway(()), "America/Bogota").execute(
-        request("Mis citas", "appointments.list"), context()
+    executor = AppointmentsModuleExecutor(Gateway(()), "America/Bogota")
+    started = await executor.execute(request("Mis citas", "appointments.list"), context())
+    result = await executor.execute(
+        request("1234567890", "appointments.list", pending=started.pending_confirmation),
+        context(),
     )
     assert result.message == "No tienes citas próximas registradas."
 
@@ -236,8 +354,11 @@ async def test_empty_list_is_explicit() -> None:
 async def test_gateway_failure_is_safe() -> None:
     gateway = Gateway()
     gateway.error = AppointmentsUnavailableError("secret host")
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("Mis citas", "appointments.list"), context()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(request("Mis citas", "appointments.list"), context())
+    result = await executor.execute(
+        request("1234567890", "appointments.list", pending=started.pending_confirmation),
+        context(),
     )
     assert "sistema veterinario" in (result.message or "")
     assert "secret" not in (result.message or "")
@@ -248,9 +369,7 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
     gateway = Gateway()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
 
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     assert "Luna" in (result.message or "")
 
     for answer in ("1", "1", "1", "10/09/2026", "1", "3001234567"):
@@ -266,6 +385,7 @@ async def test_booking_collects_official_options_and_creates_only_after_confirma
     )
 
     assert "agendada correctamente" in (result.message or "")
+    assert gateway.created_by_identification[0][0] == "1234567890"
     assert gateway.created[0][0].pet_id == UUID("22222222-2222-2222-2222-222222222222")
     assert gateway.created[0][0].scheduled_start_utc == datetime(2026, 9, 10, 15, tzinfo=UTC)
     assert gateway.created[0][1] == "appointment-1"
@@ -311,14 +431,21 @@ async def test_valid_continuation_preselects_service_and_skips_service_step() ->
         ),
         context(),
     )
+    pending = started.pending_confirmation
+    assert pending is not None
+    for message in ("1234567890", "Ana Pérez", "ana@example.com"):
+        step = await executor.execute(
+            request(message, "appointments.booking", pending=pending), context()
+        )
+        pending = step.pending_confirmation
+        assert pending is not None
 
-    assert started.pending_confirmation is not None
-    assert started.pending_confirmation.payload["step"] == "pet"
-    assert started.pending_confirmation.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
-    assert started.pending_confirmation.payload["service_name"] == "Medicina interna"
+    assert pending.payload["step"] == "pet"
+    assert pending.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
+    assert pending.payload["service_name"] == "Medicina interna"
 
     after_pet = await executor.execute(
-        request("1", "appointments.booking", started.pending_confirmation), context()
+        request("1", "appointments.booking", pending), context()
     )
 
     assert "veterinario" in (after_pet.message or "").casefold()
@@ -332,13 +459,20 @@ async def test_resume_message_preselects_official_service_name() -> None:
         request("Quiero agendar una cita para Medicina interna", "appointments.book"),
         context(),
     )
+    pending = started.pending_confirmation
+    assert pending is not None
+    for message in ("1234567890", "Ana Pérez", "ana@example.com"):
+        step = await executor.execute(
+            request(message, "appointments.booking", pending=pending), context()
+        )
+        pending = step.pending_confirmation
+        assert pending is not None
 
-    assert started.pending_confirmation is not None
-    assert started.pending_confirmation.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
-    assert started.pending_confirmation.payload["service_name"] == "Medicina interna"
+    assert pending.payload["service_id"] == str(INTERNAL_MEDICINE_ID)
+    assert pending.payload["service_name"] == "Medicina interna"
 
     after_pet = await executor.execute(
-        request("1", "appointments.booking", started.pending_confirmation), context()
+        request("1", "appointments.booking", pending), context()
     )
 
     assert "veterinario" in (after_pet.message or "").casefold()
@@ -362,12 +496,19 @@ async def test_unknown_service_preselection_is_not_trusted() -> None:
         ),
         context(),
     )
+    pending = started.pending_confirmation
+    assert pending is not None
+    for message in ("1234567890", "Ana Pérez", "ana@example.com"):
+        step = await executor.execute(
+            request(message, "appointments.booking", pending=pending), context()
+        )
+        pending = step.pending_confirmation
+        assert pending is not None
 
-    assert started.pending_confirmation is not None
-    assert "service_id" not in started.pending_confirmation.payload
+    assert "service_id" not in pending.payload
 
     after_pet = await executor.execute(
-        request("1", "appointments.booking", started.pending_confirmation), context()
+        request("1", "appointments.booking", pending), context()
     )
 
     assert "elige el servicio" in (after_pet.message or "").casefold()
@@ -423,9 +564,7 @@ async def test_booking_natural_date_queries_selected_veterinarian_availability()
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -459,9 +598,7 @@ async def test_booking_selects_an_available_natural_date_and_time_directly() -> 
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 9),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -489,9 +626,7 @@ async def test_booking_rejects_an_unavailable_natural_time_and_shows_current_slo
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 9),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -545,9 +680,7 @@ async def test_booking_professional_date_prompt_and_availability_discovery() -> 
         availability_search_days=14,
         availability_max_dates=2,
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -604,9 +737,7 @@ async def test_booking_past_date_is_rejected_without_querying_slots() -> None:
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -656,9 +787,7 @@ async def test_booking_structured_date_error_with_availability_words_is_rejected
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -696,9 +825,7 @@ async def test_booking_no_slots_preserves_selected_veterinarian() -> None:
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    result = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -717,7 +844,7 @@ async def test_booking_no_slots_preserves_selected_veterinarian() -> None:
 
 
 @pytest.mark.anyio
-async def test_booking_without_pets_hands_off_to_registration_and_preserves_booking() -> None:
+async def test_booking_without_pets_starts_inline_registration() -> None:
     class GatewayWithoutPets(Gateway):
         async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
             options = await super().get_booking_options(bearer_token)
@@ -728,22 +855,18 @@ async def test_booking_without_pets_hands_off_to_registration_and_preserves_book
                 requires_requester_phone_number=options.requires_requester_phone_number,
             )
 
-    result = await AppointmentsModuleExecutor(GatewayWithoutPets(), "America/Bogota").execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    executor = AppointmentsModuleExecutor(GatewayWithoutPets(), "America/Bogota")
+    result = await reach_pet_step(executor)
 
-    assert result.pending_confirmation is None
-    assert result.handoff is not None
-    assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
-    assert result.handoff.continuation == ModuleContinuation("appointments", "appointments.book")
-    assert "registrar" in (result.message or "").casefold()
+    assert result.handoff is None
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "pet_register"
+    assert "mascota" in (result.message or "").casefold()
 
 
 @pytest.mark.anyio
 async def test_booking_prompt_includes_new_pet_option() -> None:
-    result = await AppointmentsModuleExecutor(Gateway(), "America/Bogota").execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(AppointmentsModuleExecutor(Gateway(), "America/Bogota"))
 
     assert "1. Luna" in (result.message or "")
     assert "2. Registrar otra mascota" in (result.message or "")
@@ -751,33 +874,26 @@ async def test_booking_prompt_includes_new_pet_option() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("selection", ("otra", "2"))
-async def test_booking_another_pet_hands_off_to_registration(selection: str) -> None:
+async def test_booking_another_pet_starts_inline_registration(selection: str) -> None:
     gateway = Gateway()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    started = await reach_pet_step(executor)
 
     result = await executor.execute(
         request(selection, "appointments.booking", started.pending_confirmation), context()
     )
 
-    assert result.pending_confirmation is None
-    assert result.handoff is not None
-    assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
-    assert result.handoff.continuation == ModuleContinuation(
-        "appointments", "appointments.book"
-    )
-    assert "registrar otra mascota" in (result.message or "").casefold()
+    assert result.handoff is None
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "pet_register"
+    assert "mascota" in (result.message or "").casefold()
     assert gateway.created == []
 
 
 @pytest.mark.anyio
 async def test_booking_another_schedule_does_not_select_new_pet_option() -> None:
     executor = AppointmentsModuleExecutor(Gateway(), "America/Bogota")
-    started = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    started = await reach_pet_step(executor)
 
     result = await executor.execute(
         request("otro horario", "appointments.booking", started.pending_confirmation), context()
@@ -792,9 +908,7 @@ async def test_booking_another_schedule_does_not_select_new_pet_option() -> None
 @pytest.mark.anyio
 async def test_booking_explicit_existing_pet_wins_over_negated_new_pet_request() -> None:
     executor = AppointmentsModuleExecutor(Gateway(), "America/Bogota")
-    started = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    started = await reach_pet_step(executor)
 
     result = await executor.execute(
         request(
@@ -814,9 +928,7 @@ async def test_booking_explicit_existing_pet_wins_over_negated_new_pet_request()
 @pytest.mark.anyio
 async def test_booking_new_pet_request_wins_over_negated_existing_pet_name() -> None:
     executor = AppointmentsModuleExecutor(Gateway(), "America/Bogota")
-    started = await executor.execute(
-        request("Quiero agendar una cita", "appointments.book"), context()
-    )
+    started = await reach_pet_step(executor)
 
     result = await executor.execute(
         request(
@@ -827,9 +939,9 @@ async def test_booking_new_pet_request_wins_over_negated_existing_pet_name() -> 
         context(),
     )
 
-    assert result.pending_confirmation is None
-    assert result.handoff is not None
-    assert result.handoff.target == ModuleContinuation("pet_profile", "pets.register")
+    assert result.handoff is None
+    assert result.pending_confirmation is not None
+    assert result.pending_confirmation.payload["step"] == "pet_register"
 
 
 @pytest.mark.anyio
@@ -850,19 +962,23 @@ async def test_booking_can_be_cancelled_without_backend_mutation() -> None:
 
 
 @pytest.mark.anyio
-async def test_booking_pending_state_cannot_be_resumed_by_another_account() -> None:
+async def test_booking_idle_expiry_clears_draft_and_requires_cedula_again() -> None:
     gateway = Gateway()
-    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(
-        request("Quiero reservar una cita", "appointments.book"), context()
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota", booking_ttl_seconds=300)
+    started = await reach_pet_step(executor)
+    pending = started.pending_confirmation
+    assert pending is not None
+    expired = replace(
+        pending,
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
 
     result = await executor.execute(
-        request("1", "appointments.booking", started.pending_confirmation),
-        context(UUID("99999999-9999-9999-9999-999999999999")),
+        request("1", "appointments.booking", expired),
+        context(),
     )
 
-    assert "no pertenece a esta cuenta" in (result.message or "")
+    assert "venció" in (result.message or "").casefold()
     assert result.pending_confirmation is None
     assert gateway.created == []
 
@@ -900,9 +1016,7 @@ async def test_booking_does_not_shift_a_displayed_slot_when_availability_changes
 
     gateway = ChangingSlotsGateway()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    result = await executor.execute(
-        request("Quiero reservar una cita", "appointments.book"), context()
-    )
+    result = await reach_pet_step(executor)
     for answer in ("1", "1", "1", "10/09/2026"):
         result = await executor.execute(
             request(answer, "appointments.booking", result.pending_confirmation), context()
@@ -940,17 +1054,31 @@ class GatewayWithCancel(Gateway):
         super().__init__(items)
         self.cancelled: list[tuple[UUID, str, str | None]] = []
 
-    async def cancel_owned(
-        self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
+    async def cancel_by_identification(
+        self,
+        appointment_id: UUID,
+        identification_number: str,
+        bearer_token: str,
+        *,
+        comment: str | None = None,
     ) -> None:
-        self.cancelled.append((appointment_id, bearer_token, comment))
+        self.cancelled.append((appointment_id, identification_number, comment))
+
+
+async def _start_cancel_with_cedula(executor, gateway_message: str = "Cancelar mi cita"):
+    started = await executor.execute(request(gateway_message, "appointments.cancel"), context())
+    assert "cédula" in (started.message or "").casefold()
+    return await executor.execute(
+        request("1234567890", "appointments.canceling", started.pending_confirmation),
+        context(),
+    )
 
 
 @pytest.mark.anyio
 async def test_cancel_start_with_one_appointment_shows_summary_and_awaits_confirmation() -> None:
     gateway = GatewayWithCancel()
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("Cancelar mi cita", "appointments.cancel"), context()
+    result = await _start_cancel_with_cedula(
+        AppointmentsModuleExecutor(gateway, "America/Bogota")
     )
     assert "Encontré esta cita" in (result.message or "")
     assert "¿Confirmas que deseas cancelarla?" in (result.message or "")
@@ -962,18 +1090,18 @@ async def test_cancel_start_with_one_appointment_shows_summary_and_awaits_confir
 @pytest.mark.anyio
 async def test_cancel_start_with_no_appointments_returns_no_appointments_message() -> None:
     gateway = GatewayWithCancel(())
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("Cancelar mi cita", "appointments.cancel"), context()
+    result = await _start_cancel_with_cedula(
+        AppointmentsModuleExecutor(gateway, "America/Bogota")
     )
     assert "No tienes citas agendadas" in (result.message or "")
     assert result.pending_confirmation is None
 
 
 @pytest.mark.anyio
-async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() -> None:
+async def test_cancel_confirmation_yes_calls_cancel_by_identification_and_reports_success() -> None:
     gateway = GatewayWithCancel()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(request("Cancelar mi cita", "appointments.cancel"), context())
+    started = await _start_cancel_with_cedula(executor)
     result = await executor.execute(
         request("sí", "appointments.canceling", started.pending_confirmation), context()
     )
@@ -981,13 +1109,14 @@ async def test_cancel_confirmation_yes_calls_cancel_owned_and_reports_success() 
     assert result.pending_confirmation is None
     assert len(gateway.cancelled) == 1
     assert gateway.cancelled[0][0] == UUID("11111111-1111-1111-1111-111111111111")
+    assert gateway.cancelled[0][1] == "1234567890"
 
 
 @pytest.mark.anyio
 async def test_cancel_confirmation_no_aborts_without_calling_cancel() -> None:
     gateway = GatewayWithCancel()
     executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
-    started = await executor.execute(request("Cancelar mi cita", "appointments.cancel"), context())
+    started = await _start_cancel_with_cedula(executor)
     result = await executor.execute(
         request("no", "appointments.canceling", started.pending_confirmation), context()
     )
@@ -1067,12 +1196,30 @@ class GatewayWithReschedule(Gateway):
             raise self.reschedule_error
         self.reschedule_calls.append((appointment_id, reschedule, bearer_token))
 
+    async def reschedule_by_identification(
+        self,
+        appointment_id: UUID,
+        identification_number: str,
+        request: AppointmentRescheduleRequest,
+        bearer_token: str,
+    ) -> None:
+        await self.reschedule_owned(appointment_id, request, bearer_token)
+
+
+async def _start_reschedule_with_cedula(executor):
+    started = await _start_reschedule_with_cedula(executor)
+    assert "cédula" in (started.message or "").casefold()
+    return await executor.execute(
+        request("1234567890", "appointments.rescheduling", started.pending_confirmation),
+        context(),
+    )
+
 
 @pytest.mark.anyio
 async def test_reschedule_start_with_one_appointment_asks_for_date() -> None:
     gateway = GatewayWithReschedule()
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    result = await _start_reschedule_with_cedula(
+        AppointmentsModuleExecutor(gateway, "America/Bogota")
     )
     assert "Encontré esta cita" in (result.message or "")
     assert (result.message or "").endswith("¿Para qué fecha deseas reprogramar la cita?")
@@ -1083,8 +1230,8 @@ async def test_reschedule_start_with_one_appointment_asks_for_date() -> None:
 @pytest.mark.anyio
 async def test_reschedule_start_with_no_appointments_returns_no_appointments_message() -> None:
     gateway = GatewayWithReschedule(())
-    result = await AppointmentsModuleExecutor(gateway, "America/Bogota").execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
+    result = await _start_reschedule_with_cedula(
+        AppointmentsModuleExecutor(gateway, "America/Bogota")
     )
     assert "No tienes citas para reprogramar" in (result.message or "")
     assert result.pending_confirmation is None
@@ -1106,15 +1253,19 @@ async def test_natural_reschedule_with_multiple_appointments_keeps_selection_pen
     )
 
     started = await executor.execute(request(message, decision.intent), context())
+    listed = await executor.execute(
+        request("1234567890", "appointments.rescheduling", started.pending_confirmation),
+        context(),
+    )
 
-    assert "varias citas agendadas" in (started.message or "").casefold()
-    assert "Pacho" in (started.message or "")
-    assert "Milou" in (started.message or "")
-    assert started.pending_confirmation is not None
-    assert started.pending_confirmation.payload["_selecting"] is True
+    assert "varias citas agendadas" in (listed.message or "").casefold()
+    assert "Pacho" in (listed.message or "")
+    assert "Milou" in (listed.message or "")
+    assert listed.pending_confirmation is not None
+    assert listed.pending_confirmation.payload["_selecting"] is True
 
     selected = await executor.execute(
-        request("1", "appointments.rescheduling", started.pending_confirmation), context()
+        request("1", "appointments.rescheduling", listed.pending_confirmation), context()
     )
 
     assert selected.message == "¿Para qué fecha deseas reprogramar la cita?"
@@ -1130,7 +1281,7 @@ async def test_reschedule_accepts_legacy_selection_draft_without_veterinarian_na
         module_id="appointments",
         action="appointments.reschedule.collect",
         payload={
-            "account_id": str(DEFAULT_ACCOUNT_ID),
+            "identification_number": "1234567890",
             "_selecting": True,
             "options": [
                 {
@@ -1165,7 +1316,7 @@ async def test_reschedule_date_step_shows_available_slots() -> None:
     from app.orchestration.module_executor import PendingConfirmation
 
     draft = AppointmentRescheduleDraft(
-        account_id=str(DEFAULT_ACCOUNT_ID),
+        identification_number="1234567890",
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",
@@ -1218,9 +1369,7 @@ async def test_reschedule_natural_date_queries_original_veterinarian_availabilit
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    started = await executor.execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
-    )
+    started = await _start_reschedule_with_cedula(executor)
 
     result = await executor.execute(
         request("mañana", "appointments.rescheduling", started.pending_confirmation), context()
@@ -1271,9 +1420,7 @@ async def test_reschedule_availability_discovery_uses_original_selection() -> No
         availability_search_days=4,
         availability_max_dates=3,
     )
-    started = await executor.execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
-    )
+    started = await _start_reschedule_with_cedula(executor)
 
     result = await executor.execute(
         request(
@@ -1321,9 +1468,7 @@ async def test_reschedule_natural_past_date_is_rejected_without_querying_slots()
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    started = await executor.execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
-    )
+    started = await _start_reschedule_with_cedula(executor)
 
     result = await executor.execute(
         request(
@@ -1363,9 +1508,7 @@ async def test_reschedule_past_date_with_availability_words_is_rejected() -> Non
         "America/Bogota",
         today_provider=lambda: date(2026, 9, 8),
     )
-    started = await executor.execute(
-        request("Reprogramar mi cita", "appointments.reschedule"), context()
-    )
+    started = await _start_reschedule_with_cedula(executor)
 
     result = await executor.execute(
         request(
@@ -1388,7 +1531,7 @@ async def test_reschedule_slot_step_asks_for_phone() -> None:
     from app.orchestration.module_executor import PendingConfirmation
 
     draft = AppointmentRescheduleDraft(
-        account_id=str(DEFAULT_ACCOUNT_ID),
+        identification_number="1234567890",
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",
@@ -1425,7 +1568,7 @@ async def test_reschedule_phone_step_asks_for_confirmation_without_sending_otp()
     from app.orchestration.module_executor import PendingConfirmation
 
     draft = AppointmentRescheduleDraft(
-        account_id=str(DEFAULT_ACCOUNT_ID),
+        identification_number="1234567890",
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",
@@ -1464,7 +1607,7 @@ async def test_reschedule_confirmation_yes_executes_authenticated_mutation() -> 
     from app.orchestration.module_executor import PendingConfirmation
 
     draft = AppointmentRescheduleDraft(
-        account_id=str(DEFAULT_ACCOUNT_ID),
+        identification_number="1234567890",
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",
@@ -1563,7 +1706,7 @@ def reschedule_confirmation_pending():
     from app.orchestration.module_executor import PendingConfirmation
 
     draft = AppointmentRescheduleDraft(
-        account_id=str(DEFAULT_ACCOUNT_ID),
+        identification_number="1234567890",
         appointment_id="11111111-1111-1111-1111-111111111111",
         availability_id="66666666-6666-6666-6666-666666666666",
         appointment_summary="Luna — Consulta general",

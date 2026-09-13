@@ -18,11 +18,11 @@ def build_human_controlled_result(command: MessageCommand) -> MessageResult:
 
 def build_guest_link_required_result(command: MessageCommand) -> MessageResult:
     return MessageResult(
-        message="Necesito verificar tu identidad para continuar con esta solicitud privada.",
+        message="Esa función está en desarrollo.",
         conversation_id=command.conversation_id,
         correlation_id=command.correlation_id,
         response_type=MessageResponseType.RETRIEVED,
-        access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+        access_requirement=AccessRequirement.NONE,
         rag=RagMessageResult.skipped(),
     )
 

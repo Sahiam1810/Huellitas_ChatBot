@@ -27,7 +27,6 @@ from app.modules.services_catalog.services.service_selection import (
 from app.modules.services_catalog.state import ServicesCatalogGraphState
 from app.orchestration.appointment_offer import appointment_offer_choice
 from app.orchestration.execution_context import ExecutionContext
-from app.orchestration.guest_access import is_guest
 from app.orchestration.module_executor import (
     ModuleContinuation,
     ModuleExecutionRequest,
@@ -233,13 +232,6 @@ class ServicesCatalogModuleExecutor:
             return self._message(
                 "Para saber si deseas agendar este servicio, responde sí o no.",
                 pending=pending,
-            )
-        resume_message = f"Quiero agendar una cita para {selected.name}"
-        if is_guest(request.command.roles):
-            return self._message(
-                "Perfecto. Primero necesito verificar tu identidad para agendar la cita.",
-                access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
-                resume_message=resume_message,
             )
         return self._message(
             "Perfecto. Continuemos con los datos de la cita.",

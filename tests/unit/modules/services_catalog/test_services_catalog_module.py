@@ -244,7 +244,7 @@ async def test_authenticated_offer_acceptance_hands_off_the_selected_service() -
 
 
 @pytest.mark.anyio
-async def test_guest_offer_acceptance_requests_identity_and_preserves_service_name() -> None:
+async def test_guest_offer_acceptance_hands_off_to_booking() -> None:
     executor = ServicesCatalogModuleExecutor(CatalogGateway())
     offer = await selected_offer(executor)
 
@@ -252,9 +252,10 @@ async def test_guest_offer_acceptance_requests_identity_and_preserves_service_na
         request("sí", "services.appointment_offer", offer), context()
     )
 
-    assert result.access_requirement.value == "identity_verification"
-    assert result.resume_message == "Quiero agendar una cita para Medicina interna"
-    assert result.handoff is None
+    assert result.access_requirement.value == "none"
+    assert result.resume_message is None
+    assert result.handoff is not None
+    assert result.handoff.target.module_id == "appointments"
     assert result.pending_confirmation is None
 
 

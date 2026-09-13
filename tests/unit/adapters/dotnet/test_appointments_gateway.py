@@ -411,6 +411,190 @@ async def test_reschedule_owned_raises_conflict_when_slot_is_taken() -> None:
 
 
 @pytest.mark.anyio
+async def test_find_or_create_owner_uses_clients_route_and_parses_access_token() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/bot/clients/find-or-create"
+        body = json.loads(request.content.decode())
+        assert body["identificationNumber"] == "1234567890"
+        assert body["fullName"] == "Ana Pérez"
+        assert body["email"] == "ana@example.com"
+        return httpx.Response(
+            200,
+            json={
+                "clientId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "userId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "userAccountId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "identificationNumber": "1234567890",
+                "created": True,
+                "accessToken": "delegated-jwt",
+            },
+        )
+
+    from app.ports.appointments_gateway import OwnerContactRequest
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    result = await gateway.find_or_create_owner(
+        OwnerContactRequest("1234567890", "Ana Pérez", "ana@example.com"),
+        "guest-token",
+    )
+    assert result.created is True
+    assert result.access_token == "delegated-jwt"
+    assert result.client_id == UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+
+@pytest.mark.anyio
+async def test_list_by_identification_uses_path_param_not_query() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/bot/appointments/by-identification/1234567890"
+        assert request.url.params["scope"] == "upcoming"
+        assert "identificationNumber" not in request.url.params
+        return httpx.Response(200, json=[payload()])
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    items = await gateway.list_by_identification(
+        "1234567890", AppointmentScope.UPCOMING, "guest-token"
+    )
+    assert items[0].pet_name == "Luna"
+
+
+@pytest.mark.anyio
+async def test_booking_options_by_identification_path() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert (
+            request.url.path
+            == "/api/bot/appointments/booking/options/by-identification/1234567890"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "pets": [{"id": "22222222-2222-2222-2222-222222222222", "name": "Luna"}],
+                "services": [
+                    {
+                        "id": "44444444-4444-4444-4444-444444444444",
+                        "name": "Consulta general",
+                        "durationMinutes": 30,
+                    }
+                ],
+                "veterinarians": [
+                    {
+                        "id": "33333333-3333-3333-3333-333333333333",
+                        "fullName": "Dra. Ana",
+                        "specialtyName": "Medicina general",
+                    }
+                ],
+                "requiresRequesterPhoneNumber": False,
+            },
+        )
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    options = await gateway.get_booking_options_by_identification("1234567890", "guest-token")
+    assert options.pets[0].name == "Luna"
+
+
+@pytest.mark.anyio
+async def test_create_cancel_reschedule_by_identification_paths() -> None:
+    seen: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.method == "POST":
+            body = json.loads(request.content.decode())
+            assert body["identificationNumber"] == "1234567890"
+            assert request.headers["Idempotency-Key"] == "idem-1"
+            return httpx.Response(200, json=payload())
+        return httpx.Response(204)
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    appointment_id = UUID("11111111-1111-1111-1111-111111111111")
+    await gateway.create_by_identification(
+        "1234567890",
+        AppointmentBookingRequest(
+            UUID("22222222-2222-2222-2222-222222222222"),
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+            datetime(2026, 9, 3, 15, 0, tzinfo=UTC),
+        ),
+        "idem-1",
+        "guest-token",
+    )
+    await gateway.cancel_by_identification(appointment_id, "1234567890", "guest-token")
+    await gateway.reschedule_by_identification(
+        appointment_id,
+        "1234567890",
+        AppointmentRescheduleRequest(
+            UUID("66666666-6666-6666-6666-666666666666"),
+            datetime(2026, 9, 11, 13, 0, tzinfo=UTC),
+            datetime(2026, 9, 11, 13, 30, tzinfo=UTC),
+            "3158940150",
+        ),
+        "guest-token",
+    )
+    assert seen == [
+        ("POST", "/api/bot/appointments/by-identification"),
+        ("PATCH", "/api/bot/appointments/11111111-1111-1111-1111-111111111111/cancel-by-identification"),
+        (
+            "PATCH",
+            "/api/bot/appointments/11111111-1111-1111-1111-111111111111/reschedule-by-identification",
+        ),
+    ]
+
+
+@pytest.mark.anyio
+async def test_create_pet_by_identification_posts_owned_pet_without_cedula() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/bot/pets"
+        body = json.loads(request.content.decode())
+        assert "identificationNumber" not in body
+        assert body["name"] == "Rocky"
+        return httpx.Response(
+            201,
+            json={
+                "id": "99999999-9999-9999-9999-999999999999",
+                "name": "Rocky",
+                "age": 2,
+                "gender": "M",
+                "weight": 12.5,
+                "observations": None,
+                "speciesId": "50000000-0000-0000-0000-000000000005",
+                "speciesName": "Canino",
+                "raceId": "60000000-0000-0000-0000-000000000006",
+                "raceName": "Mestizo",
+                "updatedAt": "2026-09-13T12:00:00Z",
+                "photoUrl": None,
+            },
+        )
+
+    from app.ports.appointments_gateway import InlinePetRegistration
+
+    gateway = DotNetAppointmentsGateway(
+        "https://backend.test", 2, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    pet = await gateway.create_pet_by_identification(
+        "1234567890",
+        InlinePetRegistration(
+            "Rocky",
+            2,
+            "M",
+            12.5,
+            None,
+            UUID("50000000-0000-0000-0000-000000000005"),
+            UUID("60000000-0000-0000-0000-000000000006"),
+        ),
+        "delegated-token",
+    )
+    assert pet.name == "Rocky"
+
+
+@pytest.mark.anyio
 async def test_reschedule_owned_raises_unavailable_on_backend_failure() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)

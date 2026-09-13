@@ -15,9 +15,18 @@ async def create_booking(
     idempotency_key: str,
     bearer_token: str,
 ) -> AppointmentItem:
-    if not all((draft.pet_id, draft.service_id, draft.veterinarian_id, draft.scheduled_start_utc)):
+    if not all(
+        (
+            draft.identification_number,
+            draft.pet_id,
+            draft.service_id,
+            draft.veterinarian_id,
+            draft.scheduled_start_utc,
+        )
+    ):
         raise ValueError("incomplete booking draft")
-    return await gateway.create_owned(
+    return await gateway.create_by_identification(
+        draft.identification_number,  # type: ignore[arg-type]
         AppointmentBookingRequest(
             pet_id=UUID(draft.pet_id),
             veterinarian_id=UUID(draft.veterinarian_id),

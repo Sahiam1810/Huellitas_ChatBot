@@ -13,7 +13,6 @@ from app.modules.veterinary_guidance.nodes.retrieve_authorized_guidance import (
 from app.modules.veterinary_guidance.state import VeterinaryGuidanceGraphState
 from app.orchestration.appointment_offer import appointment_offer_choice
 from app.orchestration.execution_context import ExecutionContext
-from app.orchestration.guest_access import is_guest
 from app.orchestration.module_executor import (
     ModuleContinuation,
     ModuleExecutionRequest,
@@ -25,7 +24,6 @@ from app.orchestration.rag_contracts import RagMessageResult, RagStatus, Semanti
 from app.ports.guidance_knowledge_gateway import GuidanceKnowledgeGateway, GuidanceKnowledgeResult
 from app.shared.enums import AccessRequirement, MessageResponseType
 
-_APPOINTMENT_RESUME_MESSAGE = "Quiero agendar una cita"
 
 
 class VeterinaryGuidanceModuleExecutor:
@@ -115,12 +113,6 @@ class VeterinaryGuidanceModuleExecutor:
             return VeterinaryGuidanceModuleExecutor._offer_result(
                 "Para saber si deseas agendar una cita, responde sí o no.",
                 pending=pending,
-            )
-        if is_guest(request.command.roles):
-            return VeterinaryGuidanceModuleExecutor._offer_result(
-                "Perfecto. Primero necesito verificar tu identidad para agendar la cita.",
-                access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
-                resume_message=_APPOINTMENT_RESUME_MESSAGE,
             )
         return VeterinaryGuidanceModuleExecutor._offer_result(
             "Perfecto. Vamos a iniciar el agendamiento.",

@@ -23,7 +23,12 @@ async def execute_reschedule(
         ),
         requester_phone_number=_required(draft.requester_phone),
     )
-    await gateway.reschedule_owned(UUID(draft.appointment_id), request, bearer_token)
+    await gateway.reschedule_by_identification(
+        UUID(draft.appointment_id),
+        draft.identification_number,
+        request,
+        bearer_token,
+    )
     return "Tu cita fue reprogramada correctamente."
 
 

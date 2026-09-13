@@ -221,8 +221,10 @@ def build_main_graph(
             if is_guest(command.roles) and not next_registration.manifest.guest_accessible:
                 result = replace(
                     result,
-                    access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
+                    message="Esa función está en desarrollo.",
+                    access_requirement=AccessRequirement.NONE,
                     handoff=None,
+                    resume_message=None,
                 )
                 break
             registration = next_registration

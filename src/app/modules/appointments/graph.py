@@ -22,15 +22,22 @@ from app.modules.appointments.nodes.collect_appointment_data import (
 from app.modules.appointments.nodes.collect_cancel_data import (
     CANCEL_COLLECTION_ACTION,
     CANCEL_CONFIRMATION_ACTION,
+    CANCEL_IDENTIFICATION_ACTION,
     advance_cancel,
+    advance_cancel_identification,
     cancel_abandoned,
     cancel_expired,
     start_cancel,
+)
+from app.modules.appointments.nodes.collect_identification import (
+    QUERY_IDENTIFICATION_ACTION,
+    RESCHEDULE_IDENTIFICATION_ACTION,
 )
 from app.modules.appointments.nodes.collect_reschedule_data import (
     RESCHEDULE_COLLECTION_ACTION,
     RESCHEDULE_CONFIRMATION_ACTION,
     advance_reschedule,
+    advance_reschedule_identification,
     reschedule_abandoned,
     reschedule_expired,
     start_reschedule,
@@ -43,7 +50,10 @@ from app.modules.appointments.nodes.identify_request import (
     is_booking_continuation,
     is_booking_start,
 )
-from app.modules.appointments.nodes.list_appointments import appointment_query_response
+from app.modules.appointments.nodes.list_appointments import (
+    continue_appointment_query,
+    start_appointment_query,
+)
 from app.modules.appointments.nodes.request_confirmation import confirmation_choice
 from app.modules.appointments.services.date_resolver import RESCHEDULE_DATE_PROMPT
 from app.modules.appointments.services.response_formatter import format_detail
@@ -51,7 +61,6 @@ from app.modules.appointments.state import AppointmentsGraphState
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.module_executor import (
     ModuleExecutionRequest,
-    ModuleHandoff,
     ModuleResult,
     PendingConfirmation,
 )
@@ -70,7 +79,7 @@ class AppointmentsModuleExecutor:
         gateway: AppointmentsGateway,
         display_time_zone: str,
         *,
-        booking_ttl_seconds: int = 600,
+        booking_ttl_seconds: int = 300,
         today_provider: Callable[[], date] | None = None,
         availability_search_days: int = 14,
         availability_max_dates: int = 3,
@@ -100,7 +109,7 @@ class AppointmentsModuleExecutor:
     ) -> AppointmentsGraphState:
         context = runtime.context
         if context is None:
-            return {"result": self._message("No pude verificar tu identidad.")}
+            return {"result": self._message("No pude verificar el contexto de la conversación.")}
         request = state["request"]
         try:
             if is_booking_start(request.intent):
@@ -108,11 +117,10 @@ class AppointmentsModuleExecutor:
                 payload = continuation.payload if continuation is not None else {}
                 selected_service_id = payload.get("service_id")
                 selected_service_name = payload.get("service_name")
-                message, pending, handoff = await start_booking(
+                message, pending = await start_booking(
                     self._gateway,
                     context.bearer_token,
                     self._booking_ttl_seconds,
-                    context.principal.account_id,
                     selected_service_id=(
                         selected_service_id
                         if isinstance(selected_service_id, str)
@@ -125,34 +133,49 @@ class AppointmentsModuleExecutor:
                     ),
                     message=request.command.message,
                 )
-                return {"result": self._message(message, pending=pending, handoff=handoff)}
+                return {"result": self._message(message, pending=pending)}
             if is_booking_continuation(request.intent):
                 return {"result": await self._continue_booking(request, context)}
             if request.intent == "appointments.cancel":
-                message, pending = await start_cancel(
-                    self._gateway,
-                    context.bearer_token,
-                    self._booking_ttl_seconds,
-                    context.principal.account_id,
-                    self._time_zone,
-                )
+                message, pending = await start_cancel(self._booking_ttl_seconds)
                 return {"result": self._message(message, pending=pending)}
             if request.intent == "appointments.canceling":
                 return {"result": await self._continue_cancel(request, context)}
             if request.intent == "appointments.reschedule":
-                message, pending = await start_reschedule(
-                    self._gateway,
-                    context.bearer_token,
-                    self._booking_ttl_seconds,
-                    context.principal.account_id,
-                    self._time_zone,
-                )
+                message, pending = await start_reschedule(self._booking_ttl_seconds)
                 return {"result": self._message(message, pending=pending)}
             if request.intent == "appointments.rescheduling":
                 return {"result": await self._continue_reschedule(request, context)}
-            message = await appointment_query_response(
-                self._gateway, request, context.bearer_token, self._time_zone
-            )
+            if request.intent in {
+                "appointments.list",
+                "appointments.history",
+                "appointments.view",
+            }:
+                pending = request.pending_confirmation
+                if pending is not None and pending.action == QUERY_IDENTIFICATION_ACTION:
+                    if pending.is_expired():
+                        return {
+                            "result": self._message(
+                                "La consulta venció. Indica nuevamente qué citas deseas ver."
+                            )
+                        }
+                    message, next_pending = await continue_appointment_query(
+                        self._gateway,
+                        request,
+                        pending,
+                        context.bearer_token,
+                        self._time_zone,
+                    )
+                    return {"result": self._message(message, pending=next_pending)}
+                message, pending = await start_appointment_query(
+                    request.intent, self._booking_ttl_seconds
+                )
+                return {"result": self._message(message, pending=pending)}
+            return {
+                "result": self._message(
+                    "No pude identificar la operación de citas solicitada."
+                )
+            }
         except (TypeError, ValueError):
             message = _invalid_pending_flow_message(request.intent)
         except AppointmentsGatewayError as error:
@@ -170,15 +193,10 @@ class AppointmentsModuleExecutor:
                 "El agendamiento venció. Escribe agendar cita para comenzar de nuevo."
             )
         draft = AppointmentBookingDraft.from_payload(pending.payload)
-        if draft.account_id != str(context.principal.account_id):
-            return self._message(
-                "El agendamiento pendiente no pertenece a esta cuenta. "
-                "Escribe agendar cita para comenzar de nuevo."
-            )
         if booking_cancelled(request.command.message):
             return self._message("Cancelé el agendamiento; no se creó ninguna cita.")
         if pending.action == COLLECTION_ACTION:
-            message, next_pending, handoff = await advance_booking(
+            message, next_pending = await advance_booking(
                 self._gateway,
                 context.bearer_token,
                 pending,
@@ -189,7 +207,7 @@ class AppointmentsModuleExecutor:
                 self._availability_max_dates,
                 self._booking_ttl_seconds,
             )
-            return self._message(message, pending=next_pending, handoff=handoff)
+            return self._message(message, pending=next_pending)
 
         choice = confirmation_choice(request.command.message)
         if choice is False:
@@ -213,6 +231,7 @@ class AppointmentsModuleExecutor:
     ) -> ModuleResult:
         pending = request.pending_confirmation
         if pending is None or pending.action not in {
+            CANCEL_IDENTIFICATION_ACTION,
             CANCEL_COLLECTION_ACTION,
             CANCEL_CONFIRMATION_ACTION,
         }:
@@ -221,13 +240,18 @@ class AppointmentsModuleExecutor:
             return self._message(
                 "La cancelación venció. Escribe cancelar mi cita para comenzar de nuevo."
             )
-        if pending.payload.get("account_id") != str(context.principal.account_id):
-            return self._message(
-                "La cancelación pendiente no pertenece a esta cuenta. "
-                "Escribe cancelar mi cita para comenzar de nuevo."
-            )
         if cancel_abandoned(request.command.message):
             return self._message("Cancelé la operación; no se realizaron cambios.")
+        if pending.action == CANCEL_IDENTIFICATION_ACTION:
+            message, next_pending = await advance_cancel_identification(
+                self._gateway,
+                context.bearer_token,
+                pending,
+                request.command.message,
+                self._time_zone,
+                self._booking_ttl_seconds,
+            )
+            return self._message(message, pending=next_pending)
         if pending.action == CANCEL_COLLECTION_ACTION:
             message, next_pending = await advance_cancel(
                 self._gateway,
@@ -235,7 +259,6 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
-                self._today_provider(),
             )
             return self._message(message, pending=next_pending)
         choice = confirmation_choice(request.command.message)
@@ -246,7 +269,10 @@ class AppointmentsModuleExecutor:
                 "Necesito una confirmación explícita. Responde sí o no.", pending=pending
             )
         appointment_id = UUID(str(pending.payload["appointment_id"]))
-        result_msg = await execute_cancel(self._gateway, appointment_id, context.bearer_token)
+        identification = str(pending.payload["identification_number"])
+        result_msg = await execute_cancel(
+            self._gateway, appointment_id, identification, context.bearer_token
+        )
         return self._message(result_msg)
 
     async def _continue_reschedule(
@@ -254,6 +280,7 @@ class AppointmentsModuleExecutor:
     ) -> ModuleResult:
         pending = request.pending_confirmation
         if pending is None or pending.action not in {
+            RESCHEDULE_IDENTIFICATION_ACTION,
             RESCHEDULE_COLLECTION_ACTION,
             RESCHEDULE_CONFIRMATION_ACTION,
         }:
@@ -264,13 +291,18 @@ class AppointmentsModuleExecutor:
             return self._message(
                 "La reprogramación venció. Escribe reprogramar mi cita para comenzar de nuevo."
             )
-        if pending.payload.get("account_id") != str(context.principal.account_id):
-            return self._message(
-                "La reprogramación pendiente no pertenece a esta cuenta. "
-                "Escribe reprogramar mi cita para comenzar de nuevo."
-            )
         if reschedule_abandoned(request.command.message):
             return self._message("Cancelé la operación; no se realizaron cambios.")
+        if pending.action == RESCHEDULE_IDENTIFICATION_ACTION:
+            message, next_pending = await advance_reschedule_identification(
+                self._gateway,
+                context.bearer_token,
+                pending,
+                request.command.message,
+                self._time_zone,
+                self._booking_ttl_seconds,
+            )
+            return self._message(message, pending=next_pending)
         if pending.action == RESCHEDULE_COLLECTION_ACTION:
             message, next_pending = await advance_reschedule(
                 self._gateway,
@@ -317,7 +349,6 @@ class AppointmentsModuleExecutor:
         message: str,
         *,
         pending: PendingConfirmation | None = None,
-        handoff: ModuleHandoff | None = None,
     ) -> ModuleResult:
         return ModuleResult(
             module_id="appointments",
@@ -325,7 +356,6 @@ class AppointmentsModuleExecutor:
             response_type=MessageResponseType.RETRIEVED,
             rag=RagMessageResult.disabled(),
             pending_confirmation=pending,
-            handoff=handoff,
         )
 
 

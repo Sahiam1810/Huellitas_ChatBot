@@ -693,7 +693,7 @@ async def test_telegram_guest_cannot_resume_pending_private_module() -> None:
 
 
 @pytest.mark.anyio
-async def test_telegram_guest_requesting_private_module_requires_identity_verification() -> None:
+async def test_telegram_guest_requesting_private_module_reports_feature_in_development() -> None:
     general = GeneralProcessor()
     executor = Executor()
     registry = ModuleRegistry()
@@ -709,8 +709,8 @@ async def test_telegram_guest_requesting_private_module_requires_identity_verifi
     )
 
     result = message_result_from_state(state["result"])
-    assert result.access_requirement.value == "identity_verification"
-    assert "verificar tu identidad" in (result.message or "").casefold()
+    assert result.access_requirement.value == "none"
+    assert "en desarrollo" in (result.message or "").casefold()
     assert state["fallback_reason"] == "guest_link_required"
     assert general.commands == []
     assert router.calls == 1
