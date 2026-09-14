@@ -75,6 +75,19 @@ async def test_pet_profile_routes_registration_without_using_general_model() -> 
         ("¿Cuánto cuesta la consulta general?", "services.detail"),
         ("¿Tienen servicio de vacunación?", "services.search"),
         ("¿Ofrecen consulta general?", "services.search"),
+        # Ticket 4: frases naturales que antes caían al mensaje genérico de alcance.
+        ("¿Qué servicios manejan?", "services.list"),
+        ("¿Qué manejan por aquí?", "services.list"),
+        ("¿Qué servicios hay?", "services.list"),
+        ("¿Qué hacen en Huellitas?", "services.list"),
+        ("¿Qué atienden en la veterinaria?", "services.list"),
+        ("¿Qué me pueden ofrecer para mi perro?", "services.list"),
+        ("¿Cuánto sale la consulta general?", "services.detail"),
+        ("¿Cuál es el precio de la vacunación?", "services.detail"),
+        ("¿Cuál es el valor de la desparasitación?", "services.detail"),
+        ("¿Manejan servicio de peluquería?", "services.search"),
+        ("¿Hacen consulta de urgencias?", "services.search"),
+        ("¿Atienden servicio de cirugía?", "services.search"),
     ],
 )
 async def test_services_catalog_routes_deterministically(message: str, intent: str) -> None:
@@ -85,3 +98,37 @@ async def test_services_catalog_routes_deterministically(message: str, intent: s
     assert decision.kind is RoutingKind.MODULE
     assert decision.intent == intent
     assert decision.module_id == "services_catalog"
+
+
+@pytest.mark.anyio
+async def test_services_catalog_new_phrases_do_not_collide_across_the_full_rule_set() -> None:
+    # Guards against ambiguity once every module's rules are combined, as they are
+    # in production (app.bootstrap.intent_routing.DETERMINISTIC_RULES).
+    from app.bootstrap.intent_routing import DETERMINISTIC_RULES
+    from app.modules.appointments.manifest import APPOINTMENTS_MANIFEST
+    from app.modules.preventive_care.manifest import PREVENTIVE_CARE_MANIFEST
+    from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
+
+    router = RuleBasedIntentRouter(DETERMINISTIC_RULES)
+    manifests = (
+        PET_PROFILE_MANIFEST,
+        SERVICES_CATALOG_MANIFEST,
+        APPOINTMENTS_MANIFEST,
+        VETERINARY_GUIDANCE_MANIFEST,
+        PREVENTIVE_CARE_MANIFEST,
+    )
+
+    for message in (
+        "¿Qué servicios manejan?",
+        "¿Qué manejan por aquí?",
+        "¿Qué servicios hay?",
+        "¿Qué hacen en Huellitas?",
+        "¿Qué atienden en la veterinaria?",
+        "¿Qué me pueden ofrecer para mi perro?",
+        "¿Manejan servicio de peluquería?",
+        "¿Hacen consulta de urgencias?",
+        "¿Atienden servicio de cirugía?",
+    ):
+        decision = await router.route(command(message), manifests)
+        assert decision.kind is RoutingKind.MODULE
+        assert decision.module_id == "services_catalog"
