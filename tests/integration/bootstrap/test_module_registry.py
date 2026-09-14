@@ -16,6 +16,7 @@ from app.modules.services_catalog.manifest import SERVICES_CATALOG_MANIFEST
 from app.modules.services_catalog.routing import SERVICES_CATALOG_ROUTING_RULES
 from app.modules.veterinary_guidance.manifest import VETERINARY_GUIDANCE_MANIFEST
 from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.guest_identification import GuestIdentificationCoordinator
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
@@ -137,14 +138,15 @@ def test_lifecycle_registers_both_backend_modules() -> None:
     }
 
 
-def test_backend_gateway_registers_private_preventive_care_module() -> None:
+def test_backend_gateway_registers_guest_accessible_preventive_care_module() -> None:
     registry = build_module_registry(
         PetGateway(),  # type: ignore[arg-type]
         vaccinations_gateway=VaccinationsGateway(),  # type: ignore[arg-type]
     )
     registration = registry.get_registration("preventive_care")
     assert registration.manifest == PREVENTIVE_CARE_MANIFEST
-    assert registration.manifest.guest_accessible is False
+    assert registration.manifest.guest_accessible is True
+    assert registration.manifest.guest_requires_identification is True
     assert registration.executor is not None
 
 
@@ -209,13 +211,14 @@ async def test_registry_aligns_guidance_offer_ttl_with_appointment_booking() -> 
     assert 895 <= remaining_seconds <= 900
 
 
-def test_backend_gateway_registers_private_appointments_module() -> None:
+def test_backend_gateway_registers_guest_accessible_appointments_module() -> None:
     registry = build_module_registry(
         appointments_gateway=AppointmentsGateway(),  # type: ignore[arg-type]
     )
     registration = registry.get_registration("appointments")
     assert registration.manifest == APPOINTMENTS_MANIFEST
-    assert registration.manifest.guest_accessible is False
+    assert registration.manifest.guest_accessible is True
+    assert registration.manifest.guest_requires_identification is True
     assert registration.executor is not None
 
 
@@ -306,6 +309,20 @@ class FlowAppointmentsGateway:
         return None
 
 
+class FlowGuestIdentityGateway:
+    async def lookup_by_identification(self, identification_number: str, bearer_token: str):
+        return None
+
+    async def register(self, registration: object, bearer_token: str):
+        raise AssertionError("register should not be called before the guest supplies data")
+
+    async def link_telegram_account(self, person_id: object, bearer_token: str) -> None:
+        raise AssertionError("link should not be called before the guest supplies data")
+
+    async def close(self) -> None:
+        return None
+
+
 class NeverGeneral:
     async def process(self, command: MessageCommand) -> MessageResult:
         raise AssertionError(f"unexpected general fallback: {command.message}")
@@ -355,6 +372,7 @@ def flow_graph(*, booking_ttl: int = 600):
         registry,
         RuleBasedIntentRouter(SERVICES_CATALOG_ROUTING_RULES),
         InMemorySaver(),
+        guest_identification=GuestIdentificationCoordinator(FlowGuestIdentityGateway()),
     )
 
 
@@ -443,6 +461,12 @@ async def test_authenticated_catalog_selection_starts_booking_with_service(
 
 @pytest.mark.anyio
 async def test_guest_catalog_selection_requests_identity_and_keeps_service_name() -> None:
+    # services_catalog itself still hard-blocks guests before handing off to appointments
+    # (see ServicesCatalogModuleExecutor._continue_service_offer) — that module's own
+    # guest gating is unchanged by Ticket 3, which only touches appointments/pet_profile/
+    # preventive_care and is explicitly not meant to change services_catalog's routing
+    # or behavior. A guest reaching appointments directly (not via this offer) does get
+    # the new conversational identification step — see the tests above.
     graph = flow_graph()
     config = {"configurable": {"thread_id": str(CONVERSATION_ID)}}
     context = flow_context("TelegramGuest")

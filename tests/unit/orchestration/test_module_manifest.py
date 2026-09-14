@@ -61,6 +61,25 @@ def test_manifest_rejects_non_boolean_guest_access() -> None:
         valid_manifest(guest_accessible="true")
 
 
+def test_manifest_denies_identification_requirement_by_default() -> None:
+    assert valid_manifest().guest_requires_identification is False
+
+
+def test_manifest_can_require_identification_when_guest_accessible() -> None:
+    manifest = valid_manifest(guest_accessible=True, guest_requires_identification=True)
+    assert manifest.guest_requires_identification is True
+
+
+def test_manifest_rejects_non_boolean_identification_requirement() -> None:
+    with pytest.raises(InvalidModuleManifestError, match="guest_requires_identification"):
+        valid_manifest(guest_accessible=True, guest_requires_identification="true")
+
+
+def test_manifest_rejects_identification_requirement_without_guest_access() -> None:
+    with pytest.raises(InvalidModuleManifestError, match="guest_requires_identification"):
+        valid_manifest(guest_accessible=False, guest_requires_identification=True)
+
+
 @pytest.mark.parametrize("field", ["module_id", "version", "description"])
 def test_manifest_rejects_blank_identity_fields(field: str) -> None:
     with pytest.raises(InvalidModuleManifestError, match=field):

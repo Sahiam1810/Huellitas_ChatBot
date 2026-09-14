@@ -27,5 +27,6 @@ APPOINTMENTS_MANIFEST = ModuleManifest(
     ),
     response_types=("retrieved",),
     confirmable_actions=("appointments.book", "appointments.cancel", "appointments.reschedule"),
-    guest_accessible=False,
+    guest_accessible=True,
+    guest_requires_identification=True,
 )

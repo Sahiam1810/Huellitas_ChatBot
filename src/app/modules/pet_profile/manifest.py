@@ -21,4 +21,6 @@ PET_PROFILE_MANIFEST = ModuleManifest(
     ),
     response_types=("retrieved",),
     confirmable_actions=("pets.update", "pets.register"),
+    guest_accessible=True,
+    guest_requires_identification=True,
 )

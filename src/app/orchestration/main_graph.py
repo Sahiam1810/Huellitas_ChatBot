@@ -8,6 +8,7 @@ from langgraph.runtime import Runtime
 
 from app.orchestration.execution_context import ExecutionContext
 from app.orchestration.guest_access import GUEST_FALLBACK_REASON, is_guest
+from app.orchestration.guest_identification import GuestIdentificationCoordinator
 from app.orchestration.intent_router import IntentRouter, RoutingDecision, RoutingKind
 from app.orchestration.message_processor import MessageCommand, MessageResult
 from app.orchestration.module_executor import ModuleExecutionRequest
@@ -61,6 +62,8 @@ def build_main_graph(
     registry: ModuleRegistry,
     router: IntentRouter | None,
     checkpointer: BaseCheckpointSaver,
+    *,
+    guest_identification: GuestIdentificationCoordinator | None = None,
 ) -> CompiledStateGraph:
     registrations = registry.list_registrations()
     if registrations and router is None:
@@ -188,11 +191,29 @@ def build_main_graph(
         registration = registry.get_registration(selected_module_id)
         if registration.executor is None:
             raise GraphCompositionError("Selected module executor is not configured")
+        pending = confirmation_from_state(state.get("confirmation"))
+        if (
+            guest_identification is not None
+            and is_guest(command.roles)
+            and registration.manifest.guest_requires_identification
+        ):
+            identification_result = await guest_identification.handle(
+                module_id=registration.manifest.module_id,
+                intent=decision.intent,
+                message=command.message,
+                bearer_token=runtime.context.bearer_token,
+                pending=pending,
+            )
+            return {
+                "module_result": module_result_to_state(identification_result),
+                "confirmation": confirmation_to_state(identification_result.pending_confirmation),
+                "selected_module_id": registration.manifest.module_id,
+            }
         request = ModuleExecutionRequest(
             command=command,
             intent=decision.intent,
             manifest=registration.manifest,
-            pending_confirmation=confirmation_from_state(state.get("confirmation")),
+            pending_confirmation=pending,
         )
         messages: list[str] = []
         handoff_count = 0
@@ -224,6 +245,22 @@ def build_main_graph(
                     access_requirement=AccessRequirement.IDENTITY_VERIFICATION,
                     handoff=None,
                 )
+                break
+            if (
+                guest_identification is not None
+                and is_guest(command.roles)
+                and next_registration.manifest.guest_requires_identification
+            ):
+                result = await guest_identification.handle(
+                    module_id=next_registration.manifest.module_id,
+                    intent=target.intent,
+                    message=command.message,
+                    bearer_token=runtime.context.bearer_token,
+                    pending=None,
+                )
+                if result.message:
+                    messages.append(result.message)
+                selected_module_id = next_registration.manifest.module_id
                 break
             registration = next_registration
             selected_module_id = registration.manifest.module_id

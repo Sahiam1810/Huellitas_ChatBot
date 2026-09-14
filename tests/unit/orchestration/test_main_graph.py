@@ -4,6 +4,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.orchestration.execution_context import ExecutionContext
+from app.orchestration.guest_identification import GuestIdentificationCoordinator
 from app.orchestration.intent_router import RoutingDecision
 from app.orchestration.main_graph import build_main_graph
 from app.orchestration.message_processor import MessageCommand, MessageResult
@@ -970,6 +971,189 @@ async def test_module_handoff_rejects_a_cycle() -> None:
             config=config(current),
             context=context(),
         )
+
+
+class StubGuestIdentityGateway:
+    async def lookup_by_identification(self, identification_number: str, bearer_token: str):
+        return None
+
+    async def register(self, registration: object, bearer_token: str):
+        raise AssertionError("register should not be called while only asking for data")
+
+    async def link_telegram_account(self, person_id: object, bearer_token: str) -> None:
+        raise AssertionError("link should not be called while only asking for data")
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.mark.anyio
+async def test_guest_identification_intercepts_before_the_module_executor_runs() -> None:
+    general = GeneralProcessor()
+    executor = Executor()
+    identification_manifest = ModuleManifest(
+        module_id="appointments",
+        version="1.0.0",
+        description="Appointment operations",
+        intents=("appointments.list", "appointments.book"),
+        guest_accessible=True,
+        guest_requires_identification=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(identification_manifest, executor)
+    router = FixedRouter(
+        RoutingDecision.module(intent="appointments.book", module_id="appointments")
+    )
+    graph = build_main_graph(
+        general,
+        registry,
+        router,
+        InMemorySaver(),
+        guest_identification=GuestIdentificationCoordinator(StubGuestIdentityGateway()),
+    )
+    current = command(message="quiero agendar una cita", roles=("TelegramGuest",))
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert "Nombre" in (result.message or "")
+    assert executor.requests == []
+    assert state["confirmation"]["action"] == "guest_identification"
+    assert state["confirmation"]["module_id"] == "appointments"
+    assert state["confirmation"]["intent"] == "appointments.book"
+    assert general.commands == []
+
+
+class AlreadyKnownGuestIdentityGateway:
+    """A guest whose cédula is already on file: identification resolves in one shot."""
+
+    def __init__(self) -> None:
+        self.link_calls: list[object] = []
+
+    async def lookup_by_identification(self, identification_number: str, bearer_token: str):
+        from app.ports.guest_identity_gateway import GuestClientMatch
+
+        return GuestClientMatch(
+            person_id=UUID("99999999-9999-9999-9999-999999999999"),
+            client_id=UUID("88888888-8888-8888-8888-888888888888"),
+        )
+
+    async def register(self, registration: object, bearer_token: str):
+        raise AssertionError("an already-known guest should never hit registration")
+
+    async def link_telegram_account(self, person_id: object, bearer_token: str) -> None:
+        self.link_calls.append(person_id)
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.mark.anyio
+async def test_a_now_linked_users_next_message_is_no_longer_intercepted() -> None:
+    # Ticket 2.5 (backend): once identification succeeds and the guest is linked, their
+    # NEXT message arrives already authenticated (roles no longer TelegramGuest). The
+    # chatbot needs no special handling for that turn — is_guest(...) simply stops
+    # matching and the module executes normally, with no leftover pending confirmation.
+    general = GeneralProcessor()
+    executor = Executor()
+    identification_manifest = ModuleManifest(
+        module_id="appointments",
+        version="1.0.0",
+        description="Appointment operations",
+        intents=("appointments.list", "appointments.book"),
+        guest_accessible=True,
+        guest_requires_identification=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(identification_manifest, executor)
+    router = FixedRouter(
+        RoutingDecision.module(intent="appointments.book", module_id="appointments")
+    )
+    gateway = AlreadyKnownGuestIdentityGateway()
+    graph = build_main_graph(
+        general,
+        registry,
+        router,
+        InMemorySaver(),
+        guest_identification=GuestIdentificationCoordinator(gateway),
+    )
+    first = command(message="quiero agendar una cita", roles=("TelegramGuest",))
+    first_state = await graph.ainvoke(
+        {"command": message_command_to_state(first)},
+        config=config(first),
+        context=context(),
+    )
+    assert first_state["confirmation"]["action"] == "guest_identification"
+
+    second = command(
+        message=(
+            "Nombre: Ana Perez\nCédula: 123456789\n"
+            "Correo: ana@example.test\nTeléfono: 3001234567"
+        ),
+        roles=("TelegramGuest",),
+        idempotency_key="message-002",
+    )
+    second_state = await graph.ainvoke(
+        {"command": message_command_to_state(second)},
+        config=config(second),
+        context=context(),
+    )
+    assert second_state["confirmation"] is None
+    assert gateway.link_calls == [UUID("99999999-9999-9999-9999-999999999999")]
+
+    third = command(
+        message="agendar cita",
+        roles=("Cliente",),
+        idempotency_key="message-003",
+    )
+    third_state = await graph.ainvoke(
+        {"command": message_command_to_state(third)},
+        config=config(third),
+        context=context(),
+    )
+
+    result = message_result_from_state(third_state["result"])
+    assert result.access_requirement is AccessRequirement.NONE
+    assert executor.requests != []
+    assert executor.requests[-1].pending_confirmation is None
+
+
+@pytest.mark.anyio
+async def test_guest_accessible_module_without_identification_requirement_is_unaffected() -> None:
+    general = GeneralProcessor()
+    executor = Executor(module_id="services_catalog")
+    selected_manifest = ModuleManifest(
+        module_id="services_catalog",
+        version="1.0.0",
+        description="Public veterinary services",
+        intents=("services.list",),
+        guest_accessible=True,
+    )
+    registry = ModuleRegistry()
+    registry.register(selected_manifest, executor)
+    router = PublicModuleRouter(selected_manifest)
+    graph = build_main_graph(
+        general,
+        registry,
+        router,
+        InMemorySaver(),
+        guest_identification=GuestIdentificationCoordinator(StubGuestIdentityGateway()),
+    )
+    current = command(roles=("TelegramGuest",))
+
+    state = await graph.ainvoke(
+        {"command": message_command_to_state(current)},
+        config=config(current),
+        context=context(),
+    )
+
+    result = message_result_from_state(state["result"])
+    assert result.module == "services_catalog"
+    assert executor.requests[0].intent == "services.list"
 
 
 def test_graph_exposes_the_approved_explicit_node_names() -> None:

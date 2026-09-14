@@ -21,5 +21,6 @@ PREVENTIVE_CARE_MANIFEST = ModuleManifest(
     ),
     response_types=("retrieved",),
     confirmable_actions=("preventive.vaccines.select_pet",),
-    guest_accessible=False,
+    guest_accessible=True,
+    guest_requires_identification=True,
 )

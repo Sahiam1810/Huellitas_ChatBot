@@ -11,6 +11,7 @@ from app.ports.conversation_lock import ConversationLock
 from app.ports.conversation_memory_store import ConversationMemoryStore
 from app.ports.embedding_model import EmbeddingModel
 from app.ports.global_knowledge_store import GlobalKnowledgeStore
+from app.ports.guest_identity_gateway import GuestIdentityGateway
 from app.ports.idempotency_store import IdempotencyStore
 from app.ports.pet_profile_gateway import PetProfileGateway
 from app.ports.runtime_store import RuntimeStore
@@ -43,3 +44,4 @@ class ApplicationDependencies:
     services_catalog_gateway: ServicesCatalogGateway | None = None
     appointments_gateway: AppointmentsGateway | None = None
     vaccinations_gateway: VaccinationsGateway | None = None
+    guest_identity_gateway: GuestIdentityGateway | None = None

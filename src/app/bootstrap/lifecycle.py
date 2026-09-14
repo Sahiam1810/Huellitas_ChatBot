@@ -10,6 +10,7 @@ from app.adapters.conversation_locks.conversation_lock_factory import (
     create_conversation_lock,
 )
 from app.adapters.dotnet.appointments import DotNetAppointmentsGateway
+from app.adapters.dotnet.guest_identity import DotNetGuestIdentityGateway
 from app.adapters.dotnet.pet_profile import DotNetPetProfileGateway
 from app.adapters.dotnet.services_catalog import DotNetServicesCatalogGateway
 from app.adapters.dotnet.vaccinations import DotNetVaccinationsGateway
@@ -40,6 +41,7 @@ from app.orchestration.checkpoint_ready_message_handler import CheckpointReadyMe
 from app.orchestration.context_retriever import ContextRetriever
 from app.orchestration.conversation_lock import ConversationLockedMessageHandler
 from app.orchestration.conversation_memory_writer import ConversationMemoryWriter
+from app.orchestration.guest_identification import GuestIdentificationCoordinator
 from app.orchestration.idempotent_message_processor import IdempotentMessageProcessor
 from app.orchestration.langgraph_message_handler import LangGraphMessageHandler
 from app.orchestration.main_graph import build_main_graph
@@ -147,6 +149,7 @@ def build_lifespan(
         services_catalog_gateway = None
         appointments_gateway = None
         vaccinations_gateway = None
+        guest_identity_gateway = None
         if backend_configuration is not None:
             pet_profile_gateway = DotNetPetProfileGateway(
                 str(backend_configuration.base_url),
@@ -164,10 +167,15 @@ def build_lifespan(
                 str(backend_configuration.base_url),
                 backend_configuration.timeout_seconds,
             )
+            guest_identity_gateway = DotNetGuestIdentityGateway(
+                str(backend_configuration.base_url),
+                backend_configuration.timeout_seconds,
+            )
             app.state.dependencies.pet_profile_gateway = pet_profile_gateway
             app.state.dependencies.services_catalog_gateway = services_catalog_gateway
             app.state.dependencies.appointments_gateway = appointments_gateway
             app.state.dependencies.vaccinations_gateway = vaccinations_gateway
+            app.state.dependencies.guest_identity_gateway = guest_identity_gateway
         try:
             runtime_configuration = settings.active_redis_configuration()
             if runtime_store is not None and runtime_configuration is not None:
@@ -370,11 +378,17 @@ def build_lifespan(
                         else None
                     ),
                 )
+            guest_identification = (
+                GuestIdentificationCoordinator(guest_identity_gateway)
+                if guest_identity_gateway is not None
+                else None
+            )
             main_graph = build_main_graph(
                 general_processor=general_processor,
                 registry=module_registry,
                 router=intent_router,
                 checkpointer=graph_checkpointer,
+                guest_identification=guest_identification,
             )
             graph_metrics = InMemoryGraphMetrics()
             graph_observer = CompositeGraphRunObserver((graph_metrics, SafeLoggingGraphObserver()))
@@ -444,6 +458,8 @@ def build_lifespan(
             app.state.dependencies.services_catalog_gateway = None
             appointments_gateway = app.state.dependencies.appointments_gateway
             app.state.dependencies.appointments_gateway = None
+            guest_identity_gateway = app.state.dependencies.guest_identity_gateway
+            app.state.dependencies.guest_identity_gateway = None
             try:
                 if pet_profile_gateway is not None:
                     await pet_profile_gateway.close()
@@ -457,40 +473,44 @@ def build_lifespan(
                             await appointments_gateway.close()
                     finally:
                         try:
-                            if idempotency_store is not None:
-                                await idempotency_store.close()
+                            if guest_identity_gateway is not None:
+                                await guest_identity_gateway.close()
                         finally:
                             try:
-                                if conversation_lock is not None:
-                                    await conversation_lock.close()
+                                if idempotency_store is not None:
+                                    await idempotency_store.close()
                             finally:
                                 try:
-                                    if intent_adjudicator_model is not None:
-                                        await intent_adjudicator_model.close()
+                                    if conversation_lock is not None:
+                                        await conversation_lock.close()
                                 finally:
                                     try:
-                                        if chat_model is not None:
-                                            await chat_model.close()
+                                        if intent_adjudicator_model is not None:
+                                            await intent_adjudicator_model.close()
                                     finally:
                                         try:
-                                            if embedding_model is not None:
-                                                await embedding_model.close()
+                                            if chat_model is not None:
+                                                await chat_model.close()
                                         finally:
                                             try:
-                                                if vector_store is not None:
-                                                    await vector_store.close()
+                                                if embedding_model is not None:
+                                                    await embedding_model.close()
                                             finally:
                                                 try:
-                                                    if runtime_store is not None:
-                                                        await runtime_store.close()
+                                                    if vector_store is not None:
+                                                        await vector_store.close()
                                                 finally:
                                                     try:
-                                                        if checkpoint_store is not None:
-                                                            await checkpoint_store.close()
+                                                        if runtime_store is not None:
+                                                            await runtime_store.close()
                                                     finally:
-                                                        logger.info(
-                                                            "application_stopped name=%s",
-                                                            settings.app_name,
-                                                        )
+                                                        try:
+                                                            if checkpoint_store is not None:
+                                                                await checkpoint_store.close()
+                                                        finally:
+                                                            logger.info(
+                                                                "application_stopped name=%s",
+                                                                settings.app_name,
+                                                            )
 
     return lifespan
