@@ -10,11 +10,21 @@ from app.ports.appointments_gateway import AppointmentScope, AppointmentsGateway
 
 CANCEL_COLLECTION_ACTION = "appointments.cancel.collect"
 CANCEL_CONFIRMATION_ACTION = "appointments.cancel"
+CANCEL_RETRY_ACTION = "appointments.cancel.retry"
 CANCEL_INTENT = "appointments.canceling"
 
 
 def cancel_abandoned(message: str) -> bool:
     return normalize_for_routing(message) in {"cancelar", "cancela", "cancelo"}
+
+
+def cancel_retry_choice(message: str) -> bool | None:
+    normalized = normalize_for_routing(message)
+    if normalized in {"reintentar", "intentar de nuevo", "intenta de nuevo", "si"}:
+        return True
+    if normalized in {"salir", "no", "cancelar", "cancela", "cancelo"}:
+        return False
+    return None
 
 
 def cancel_expired(pending: PendingConfirmation) -> bool:

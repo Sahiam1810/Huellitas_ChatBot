@@ -22,9 +22,11 @@ from app.modules.appointments.nodes.collect_appointment_data import (
 from app.modules.appointments.nodes.collect_cancel_data import (
     CANCEL_COLLECTION_ACTION,
     CANCEL_CONFIRMATION_ACTION,
+    CANCEL_RETRY_ACTION,
     advance_cancel,
     cancel_abandoned,
     cancel_expired,
+    cancel_retry_choice,
     start_cancel,
 )
 from app.modules.appointments.nodes.collect_reschedule_data import (
@@ -57,9 +59,13 @@ from app.orchestration.module_executor import (
 )
 from app.orchestration.rag_contracts import RagMessageResult
 from app.ports.appointments_gateway import (
+    AppointmentNotFoundError,
+    AppointmentsAuthenticationError,
     AppointmentsConflictError,
+    AppointmentsForbiddenError,
     AppointmentsGateway,
     AppointmentsGatewayError,
+    AppointmentsUnavailableError,
 )
 from app.shared.enums import MessageResponseType
 
@@ -215,6 +221,7 @@ class AppointmentsModuleExecutor:
         if pending is None or pending.action not in {
             CANCEL_COLLECTION_ACTION,
             CANCEL_CONFIRMATION_ACTION,
+            CANCEL_RETRY_ACTION,
         }:
             return self._message("No hay una cancelación pendiente. Escribe cancelar mi cita.")
         if cancel_expired(pending):
@@ -226,6 +233,17 @@ class AppointmentsModuleExecutor:
                 "La cancelación pendiente no pertenece a esta cuenta. "
                 "Escribe cancelar mi cita para comenzar de nuevo."
             )
+        if pending.action == CANCEL_RETRY_ACTION:
+            retry_choice = cancel_retry_choice(request.command.message)
+            if retry_choice is False:
+                return self._message("Cancelé la operación; no se realizaron cambios.")
+            if retry_choice is None:
+                return self._message(
+                    "La cancelación sigue pendiente. Responde reintentar para volver a "
+                    "intentarlo o salir para terminar.",
+                    pending=pending,
+                )
+            return await self._execute_cancel(pending, context)
         if cancel_abandoned(request.command.message):
             return self._message("Cancelé la operación; no se realizaron cambios.")
         if pending.action == CANCEL_COLLECTION_ACTION:
@@ -235,7 +253,6 @@ class AppointmentsModuleExecutor:
                 pending,
                 request.command.message,
                 self._time_zone,
-                self._today_provider(),
             )
             return self._message(message, pending=next_pending)
         choice = confirmation_choice(request.command.message)
@@ -246,7 +263,37 @@ class AppointmentsModuleExecutor:
                 "Necesito una confirmación explícita. Responde sí o no.", pending=pending
             )
         appointment_id = UUID(str(pending.payload["appointment_id"]))
-        result_msg = await execute_cancel(self._gateway, appointment_id, context.bearer_token)
+        return await self._execute_cancel(pending, context, appointment_id=appointment_id)
+
+    async def _execute_cancel(
+        self,
+        pending: PendingConfirmation,
+        context: ExecutionContext,
+        *,
+        appointment_id: UUID | None = None,
+    ) -> ModuleResult:
+        selected_id = appointment_id or UUID(str(pending.payload["appointment_id"]))
+        try:
+            result_msg = await execute_cancel(
+                self._gateway,
+                selected_id,
+                context.bearer_token,
+            )
+        except AppointmentsUnavailableError:
+            retry_pending = dataclass_replace(pending, action=CANCEL_RETRY_ACTION)
+            return self._message(
+                "No pude cancelar la cita porque el sistema no está disponible en este "
+                "momento. Responde reintentar para volver a intentarlo o salir para terminar.",
+                pending=retry_pending,
+            )
+        except (
+            AppointmentsAuthenticationError,
+            AppointmentsForbiddenError,
+            AppointmentNotFoundError,
+            AppointmentsConflictError,
+            AppointmentsGatewayError,
+        ) as error:
+            return self._message(safe_appointments_error(error))
         return self._message(result_msg)
 
     async def _continue_reschedule(

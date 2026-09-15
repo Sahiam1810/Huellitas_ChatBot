@@ -68,7 +68,7 @@ class Gateway(AppointmentsGateway):
         return self.items
 
     async def get_owned(self, appointment_id: UUID, bearer_token: str) -> AppointmentItem:
-        return self.items[0]
+        return next(item for item in self.items if item.id == appointment_id)
 
     async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
         return AppointmentBookingOptions(
@@ -939,11 +939,14 @@ class GatewayWithCancel(Gateway):
     def __init__(self, items: tuple[AppointmentItem, ...] = (appointment(),)) -> None:
         super().__init__(items)
         self.cancelled: list[tuple[UUID, str, str | None]] = []
+        self.cancel_error: AppointmentsGatewayError | None = None
 
     async def cancel_owned(
         self, appointment_id: UUID, bearer_token: str, *, comment: str | None = None
     ) -> None:
         self.cancelled.append((appointment_id, bearer_token, comment))
+        if self.cancel_error is not None:
+            raise self.cancel_error
 
 
 @pytest.mark.anyio
@@ -994,6 +997,87 @@ async def test_cancel_confirmation_no_aborts_without_calling_cancel() -> None:
     assert "no se realizaron cambios" in (result.message or "")
     assert result.pending_confirmation is None
     assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_multiple_appointments_selects_one_and_awaits_confirmation() -> None:
+    second = replace(
+        appointment(pet="Milo", service="Vacunacion"),
+        id=UUID("99999999-9999-9999-9999-999999999999"),
+        client_pet_id=UUID("88888888-8888-8888-8888-888888888888"),
+    )
+    gateway = GatewayWithCancel((appointment(), second))
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+
+    selected = await executor.execute(
+        request("2", "appointments.canceling", started.pending_confirmation), context()
+    )
+
+    assert "Milo" in (selected.message or "")
+    assert selected.pending_confirmation is not None
+    assert selected.pending_confirmation.action == "appointments.cancel"
+    assert selected.pending_confirmation.payload["appointment_id"] == str(second.id)
+    assert gateway.cancelled == []
+
+
+@pytest.mark.anyio
+async def test_cancel_retry_requires_an_explicit_command_after_temporary_failure() -> None:
+    gateway = GatewayWithCancel()
+    gateway.cancel_error = AppointmentsUnavailableError("backend unavailable")
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+
+    failed = await executor.execute(
+        request("si", "appointments.canceling", started.pending_confirmation), context()
+    )
+
+    assert failed.pending_confirmation is not None
+    assert failed.pending_confirmation.action == "appointments.cancel.retry"
+    assert "reintentar" in (failed.message or "").casefold()
+    assert len(gateway.cancelled) == 1
+
+    unrelated = await executor.execute(
+        request("hola", "appointments.canceling", failed.pending_confirmation), context()
+    )
+
+    assert unrelated.pending_confirmation == failed.pending_confirmation
+    assert "reintentar" in (unrelated.message or "").casefold()
+    assert len(gateway.cancelled) == 1
+
+    gateway.cancel_error = None
+    retried = await executor.execute(
+        request("reintentar", "appointments.canceling", unrelated.pending_confirmation), context()
+    )
+
+    assert retried.pending_confirmation is None
+    assert "cancelada correctamente" in (retried.message or "").casefold()
+    assert len(gateway.cancelled) == 2
+
+
+@pytest.mark.anyio
+async def test_cancel_retry_can_be_abandoned_without_another_backend_call() -> None:
+    gateway = GatewayWithCancel()
+    gateway.cancel_error = AppointmentsUnavailableError("backend unavailable")
+    executor = AppointmentsModuleExecutor(gateway, "America/Bogota")
+    started = await executor.execute(
+        request("Cancelar mi cita", "appointments.cancel"), context()
+    )
+    failed = await executor.execute(
+        request("si", "appointments.canceling", started.pending_confirmation), context()
+    )
+
+    abandoned = await executor.execute(
+        request("salir", "appointments.canceling", failed.pending_confirmation), context()
+    )
+
+    assert abandoned.pending_confirmation is None
+    assert "no se realizaron cambios" in (abandoned.message or "").casefold()
+    assert len(gateway.cancelled) == 1
 
 
 @pytest.mark.anyio
