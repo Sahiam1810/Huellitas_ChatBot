@@ -29,6 +29,7 @@ class ChatMessage:
 class ChatRequest:
     messages: tuple[ChatMessage, ...]
     max_output_tokens: int = 1024
+    reasoning_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not self.messages:

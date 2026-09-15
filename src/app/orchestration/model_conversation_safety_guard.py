@@ -93,6 +93,11 @@ class ModelConversationSafetyGuard(ConversationSafetyGuard):
                             ),
                         ),
                         max_output_tokens=self._max_output_tokens,
+                        # El clasificador necesita un JSON corto y determinista; con
+                        # razonamiento habilitado, modelos "thinking" (p.ej. Gemini 3.5
+                        # via OpenRouter) agotan max_output_tokens en tokens de
+                        # razonamiento ocultos antes de escribir el JSON visible.
+                        reasoning_enabled=False,
                     )
                 ),
                 timeout=self._timeout_seconds,

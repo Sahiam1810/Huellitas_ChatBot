@@ -59,6 +59,7 @@ async def test_returns_only_valid_structured_classifications(
     assert decision.classification is ConversationSafetyClassification(classification)
     assert decision.allowed is expected_allowed
     assert model.requests[0].max_output_tokens == 48
+    assert model.requests[0].reasoning_enabled is False
 
 
 @pytest.mark.anyio

@@ -21,6 +21,17 @@ class OpenRouterChatModel:
         self.model = model
 
     async def generate(self, request: ChatRequest) -> ChatResponse:
+        extra_body: dict[str, Any] = {}
+        if not request.reasoning_enabled:
+            # google/gemini-3.5-flash (y otros modelos "thinking" servidos por
+            # OpenRouter) rechazan reasoning.enabled=false con 400 ("Reasoning
+            # is mandatory for this endpoint and cannot be disabled"). El
+            # minimo aceptado es reasoning.max_tokens=1, que en la practica
+            # deja 0 tokens de razonamiento y todo el presupuesto de
+            # max_tokens disponible para el contenido visible. exclude=true
+            # evita que el texto de razonamiento (si lo hubiera) ocupe espacio
+            # en la respuesta.
+            extra_body["reasoning"] = {"max_tokens": 1, "exclude": True}
         try:
             completion = await self._client.chat.completions.create(
                 model=self.model,
@@ -29,6 +40,7 @@ class OpenRouterChatModel:
                     for message in request.messages
                 ],
                 max_tokens=request.max_output_tokens,
+                extra_body=extra_body or None,
             )
         except openai.AuthenticationError:
             raise ModelAuthenticationError("OpenRouter authentication failed") from None
