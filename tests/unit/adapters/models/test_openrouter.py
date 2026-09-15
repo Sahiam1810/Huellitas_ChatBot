@@ -16,13 +16,14 @@ from app.shared.exceptions import (
 )
 
 
-def request() -> ChatRequest:
+def request(*, reasoning_enabled: bool = True) -> ChatRequest:
     return ChatRequest(
         messages=(
             ChatMessage(role=ChatRole.SYSTEM, content="Be concise"),
             ChatMessage(role=ChatRole.USER, content="Hello"),
         ),
         max_output_tokens=64,
+        reasoning_enabled=reasoning_enabled,
     )
 
 
@@ -54,6 +55,7 @@ async def test_openrouter_maps_request_and_response() -> None:
             {"role": "user", "content": "Hello"},
         ],
         max_tokens=64,
+        extra_body=None,
     )
     assert response.text == "Hi"
     assert response.provider is ModelProvider.OPENROUTER
@@ -61,6 +63,38 @@ async def test_openrouter_maps_request_and_response() -> None:
     assert response.input_tokens == 9
     assert response.output_tokens == 2
     assert response.finish_reason == "stop"
+
+
+@pytest.mark.anyio
+async def test_openrouter_disables_reasoning_when_requested() -> None:
+    completion = SimpleNamespace(
+        model="google/gemini-3.5-flash",
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content='{"classification": "allowed"}'),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=9, completion_tokens=2),
+    )
+    create = AsyncMock(return_value=completion)
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        close=AsyncMock(),
+    )
+    adapter = OpenRouterChatModel(client=client, model="google/gemini-3.5-flash")
+
+    await adapter.generate(request(reasoning_enabled=False))
+
+    create.assert_awaited_once_with(
+        model="google/gemini-3.5-flash",
+        messages=[
+            {"role": "system", "content": "Be concise"},
+            {"role": "user", "content": "Hello"},
+        ],
+        max_tokens=64,
+        extra_body={"reasoning": {"max_tokens": 1, "exclude": True}},
+    )
 
 
 @pytest.mark.anyio
