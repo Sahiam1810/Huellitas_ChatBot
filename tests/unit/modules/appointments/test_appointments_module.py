@@ -68,7 +68,7 @@ class Gateway(AppointmentsGateway):
         return self.items
 
     async def get_owned(self, appointment_id: UUID, bearer_token: str) -> AppointmentItem:
-        return self.items[0]
+        return next(item for item in self.items if item.id == appointment_id)
 
     async def get_booking_options(self, bearer_token: str) -> AppointmentBookingOptions:
         return AppointmentBookingOptions(
