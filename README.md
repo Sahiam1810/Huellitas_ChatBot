@@ -197,13 +197,15 @@ otra fecha. Si el usuario pregunta qué días o próximos horarios están dispon
 El borrador se conserva en el checkpoint del `conversationId`, queda ligado a la cuenta autenticada,
 vence en 10 minutos por defecto y puede abandonarse escribiendo `cancelar`. Los números de horario
 se resuelven contra el instante UTC que se mostró y nunca se desplazan silenciosamente si cambia la
-disponibilidad. Una identidad invitada debe verificar primero su identidad mediante cédula y OTP;
-.NET deriva el cliente del JWT, comprueba la propiedad y vuelve a validar disponibilidad,
-solapamientos e idempotencia dentro de la transacción Oracle.
+disponibilidad. Una identidad invitada debe identificarse primero compartiendo nombre, cédula,
+correo y teléfono en un solo mensaje — sin código de verificación: por decisión de negocio, el
+agente acepta esos datos tal como se entregan (ver «Identificación de invitado sin código» más
+abajo). Una vez identificado, .NET deriva el cliente del JWT, comprueba la propiedad y vuelve a
+validar disponibilidad, solapamientos e idempotencia dentro de la transacción Oracle.
 
 El reagendamiento también se inicia de forma determinista con expresiones naturales como
 `necesito cambiar una cita`, `mover la cita` o `reagendar una cita`; estas solicitudes reutilizan
-el mismo flujo seguro de selección, disponibilidad, teléfono y OTP.
+el mismo flujo seguro de selección, disponibilidad y teléfono.
 
 Ejemplos: `¿Qué citas tengo?`, `Muéstrame mis citas pasadas`, `¿Cuándo es la cita de Luna?` y
 `Quiero agendar una cita`. Configura:
@@ -219,6 +221,31 @@ Las fechas cruzan HTTP en UTC y se muestran en la zona configurada. Consultar, a
 reprogramar son flujos deterministas: no llaman al LLM, embeddings ni RAG. Las operaciones
 destructivas solicitan confirmación explícita y los estados pendientes quedan ligados a la cuenta.
 
+## Identificación de invitado sin código
+
+Cuando una identidad `TelegramGuest` necesita una operación privada (mascotas, citas,
+vacunación), el agente pide en un solo mensaje nombre, cédula, correo y teléfono, cada uno en su
+propia línea. **No verifica ningún código de verificación**: por decisión de negocio, los datos se
+aceptan tal como se entregan. Con ellos busca al cliente por cédula en .NET, lo registra si no
+existe y vincula la cuenta de Telegram; solo entonces continúa con la solicitud original. Si el
+correo, la cédula o el teléfono ya pertenecen a otra cuenta, el agente lo informa y vuelve a pedir
+los datos. El borrador de identificación vive en el mismo checkpoint del `conversationId` y vence
+a los 10 minutos por defecto.
+
+`pet_profile`, `appointments` y `preventive_care` exigen esta identificación antes de ejecutarse
+con una identidad invitada; `services_catalog` y `veterinary_guidance` no la requieren porque no
+ejecutan operaciones sobre cuentas o mascotas.
+
+## Escalamiento a un asesor humano
+
+El chatbot no detecta la frase de escalamiento ni decide cuándo transferir a un asesor — esa
+lógica vive por completo en el backend .NET, que crea el `ChatEscalation` y lo notifica al panel
+de Recepcionista. El agente solo recibe el resultado: cada solicitud a `/api/v1/messages` incluye
+`isEscalated`, y en cuanto llega en `true` el grafo principal lo detecta como primer paso —antes
+de enrutar la intención, invocar el LLM, RAG o cualquier módulo— y responde con `message=null` y
+`responseType="human_controlled"`. El agente permanece en silencio mientras la conversación esté
+escalada; es el asesor humano quien responde desde la plataforma.
+
 ## Módulo de orientación veterinaria
 
 `veterinary_guidance` responde orientación general mediante conocimiento global activo etiquetado
@@ -232,11 +259,15 @@ expresiones como `sí, por favor`, `claro`, `para mañana` o `quiero agendar`; n
 una frase exacta. Una respuesta negativa cierra la oferta y una respuesta ambigua, contradictoria
 o con señales de inyección no inicia operaciones privadas.
 
-Si quien acepta es `TelegramGuest`, el módulo solicita `identity_verification` y entrega el valor
-canónico `resumeMessage="Quiero agendar una cita"`. El backend lo cifra en la sesión de identidad,
-solicita cédula y OTP, y reanuda el agendamiento autenticado al verificar el código. Este valor es
-determinista, no lo genera el LLM y está limitado a 500 caracteres. Ningún módulo privado puede
-ejecutarse con identidad invitada durante esa continuación.
+Si quien acepta es `TelegramGuest`, el módulo responde que primero necesita verificar su identidad
+y devuelve `accessRequirement="identity_verification"` junto con el valor canónico
+`resumeMessage="Quiero agendar una cita"` en la respuesta de `/api/v1/messages`. Este valor es
+determinista, no lo genera el LLM y está limitado a 500 caracteres. El backend .NET no actúa sobre
+`resumeMessage` en el canal de invitados: entrega la respuesta del agente tal cual. Cuando el
+invitado retoma la solicitud, el enrutador selecciona el módulo `appointments`, que exige
+identificación de invitado (ver «Identificación de invitado sin código»), y solo entonces continúa
+el agendamiento. Ningún módulo privado puede ejecutarse con identidad invitada durante esa
+continuación.
 
 ## Módulo de cuidado preventivo
 
@@ -324,8 +355,9 @@ intentos de ignorar, sustituir o revelar las instrucciones internas. La validaci
 de consultar RAG, generar la respuesta o guardar memoria, por lo que una solicitud rechazada
 no se publica ni se reutiliza posteriormente desde Qdrant.
 
-Los flujos especializados de OTP, mascotas, servicios, citas y vacunación se enrutan primero y
-no pasan por este clasificador. Así conservan sus estados y respuestas deterministas:
+Los flujos especializados de identificación de invitado, mascotas, servicios, citas y vacunación
+se enrutan primero y no pasan por este clasificador. Así conservan sus estados y respuestas
+deterministas:
 
 En el fallback general, respuestas completas y breves como `sí`, `no`, `gracias` o
 `listo` reciben una contestación determinista antes del clasificador. La coincidencia se
@@ -537,7 +569,9 @@ La respuesta incluye el resultado operativo sin exponer vectores ni detalles de 
 
 `accessRequirement` vale `none` normalmente. Para una identidad interna
 `TelegramGuest`, una intención privada devuelve `identity_verification` sin
-ejecutar el módulo; el backend .NET administra cédula, OTP y reanudación.
+ejecutar el módulo. El backend .NET entrega esa respuesta tal cual; es el propio
+agente quien identifica al invitado sin código de verificación cuando retoma la
+solicitud (ver «Identificación de invitado sin código»).
 
 Los estados son `disabled`, `skipped`, `empty`, `used` y `degraded`. Las rutas observables son `direct`, `contextual`, `general`, `disabled`, `skipped` y `degraded`; `topScore` es `null` cuando no existe un puntaje seguro.
 
