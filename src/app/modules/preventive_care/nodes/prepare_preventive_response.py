@@ -12,7 +12,8 @@ DEGRADED_MESSAGE = (
 )
 DISABLED_MESSAGE = (
     "Por ahora no puedo consultar la guía preventiva autorizada. "
-    "Consulta a un veterinario para orientación personalizada."
+    "Consulta a un veterinario para orientación personalizada. "
+    "Si prefieres hablar con una persona, escribe la palabra asesor."
 )
 CLOSING = "Para un calendario exacto según el historial clínico, agenda una cita de control."
 

@@ -28,8 +28,10 @@ from app.shared.enums import AccessRequirement, MessageResponseType
 from app.shared.exceptions import ModelConfigurationError
 
 _OUT_OF_SCOPE_MESSAGE = (
-    "Solo puedo ayudarte con servicios de Huellitas, tus mascotas, citas y "
-    "orientación veterinaria general. ¿Qué necesitas consultar?"
+    "No sé cómo responderte a eso con seguridad. "
+    "Puedo ayudarte con servicios de Huellitas, tus mascotas, citas y "
+    "orientación veterinaria general. "
+    "Si prefieres hablar con una persona, escribe la palabra asesor."
 )
 _INPUT_TOO_LONG_MESSAGE = (
     "Tu mensaje es demasiado largo. Resume tu consulta sobre Huellitas o veterinaria "
@@ -162,6 +164,9 @@ class MessageProcessor:
             ChatRequest(
                 messages=tuple(messages),
                 max_output_tokens=self._max_output_tokens,
+                # Modelos "thinking" (p.ej. Gemini vía OpenRouter) agotan max_tokens
+                # en razonamiento oculto y dejan respuestas visibles truncadas.
+                reasoning_enabled=False,
             )
         )
         write_result = await self._store_exchange(command, response.text, retrieved)

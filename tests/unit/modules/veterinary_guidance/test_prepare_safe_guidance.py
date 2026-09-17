@@ -36,5 +36,13 @@ def test_prepare_safe_guidance_handles_empty_and_degraded() -> None:
         urgency=UrgencyAssessment(False, ()),
         knowledge=GuidanceKnowledgeResult(status=RagStatus.DEGRADED),
     )
+    disabled = prepare_safe_guidance(
+        urgency=UrgencyAssessment(False, ()),
+        knowledge=GuidanceKnowledgeResult(status=RagStatus.DISABLED),
+    )
     assert "guía autorizada" in empty.lower()
+    assert "asesor" in empty.lower()
     assert "no puedo consultar" in degraded.lower()
+    assert "asesor" in degraded.lower()
+    assert "guía autorizada" in disabled.lower()
+    assert "asesor" in disabled.lower()

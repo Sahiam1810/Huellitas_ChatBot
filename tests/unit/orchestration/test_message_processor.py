@@ -75,6 +75,7 @@ async def test_processor_sends_only_current_user_message_to_model() -> None:
     assert request.messages[1].role is ChatRole.USER
     assert request.messages[1].content == "Necesito información"
     assert request.max_output_tokens == 2048
+    assert request.reasoning_enabled is False
     assert result.message == "Respuesta"
     assert result.response_type is MessageResponseType.AI_GENERATED
     assert result.provider is ModelProvider.OPENROUTER
@@ -156,10 +157,8 @@ async def test_safety_rejection_happens_before_rag_generation_and_memory(
     retriever.retrieve.assert_not_awaited()
     model.generate.assert_not_awaited()
     writer.write.assert_not_awaited()
-    assert result.message == (
-        "Solo puedo ayudarte con servicios de Huellitas, tus mascotas, citas y "
-        "orientación veterinaria general. ¿Qué necesitas consultar?"
-    )
+    assert "No sé cómo responderte" in result.message
+    assert "asesor" in result.message.lower()
     assert result.response_type is MessageResponseType.RETRIEVED
     assert result.rag.status is RagStatus.SKIPPED
 
