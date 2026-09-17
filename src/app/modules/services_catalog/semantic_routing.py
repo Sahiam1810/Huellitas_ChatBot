@@ -5,12 +5,12 @@ SERVICES_CATALOG_SEMANTIC_INTENTS = (
         "services_catalog",
         "services.list",
         (
-            "conocer el catálogo completo de atenciones que presta la veterinaria",
-            "saber qué ofrece la clínica para atender animales",
-            "consultar las prestaciones veterinarias actualmente disponibles",
-            "mostrar el listado completo de servicios ofrecidos por Huellitas",
-            "pregunta general para conocer todas las atenciones disponibles en la clínica",
-            "conocer de forma general los procedimientos que realiza la veterinaria",
+            "quiero ver la lista completa de servicios veterinarios",
+            "muéstrame el catálogo de servicios disponibles",
+            "qué servicios ofrecen en la veterinaria",
+            "listado de prestaciones del catálogo oficial",
+            "cuáles son los servicios que tienen disponibles",
+            "dame el menú de servicios de la clínica",
         ),
     ),
     SemanticIntentDefinition(

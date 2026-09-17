@@ -545,3 +545,5 @@ async def test_general_generation_forbids_unverified_huellitas_operational_claim
     assert "official module context" in policy
     assert "services, prices, availability" in policy
     assert "never infer or invent" in policy
+    assert "si quieres, te ayudo a agendar una cita" in policy
+    assert "warm" in policy or "friendly" in policy

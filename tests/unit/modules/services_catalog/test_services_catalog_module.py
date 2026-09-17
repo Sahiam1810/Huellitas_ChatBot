@@ -204,6 +204,25 @@ async def test_invalid_catalog_selection_keeps_the_current_numbered_options() ->
     assert result.pending_confirmation == listed.pending_confirmation
 
 
+@pytest.mark.anyio
+async def test_open_question_releases_catalog_selection_pending() -> None:
+    executor = ServicesCatalogModuleExecutor(CatalogGateway())
+    listed = await executor.execute(request("servicios", "services.list"), context())
+
+    result = await executor.execute(
+        request(
+            "Pero quiero conocer más sobre huellitas",
+            "services.selecting",
+            listed.pending_confirmation,
+        ),
+        context(),
+    )
+
+    assert "dejamos la lista" in (result.message or "").casefold()
+    assert "si quieres, te ayudo a agendar una cita" in (result.message or "").casefold()
+    assert result.pending_confirmation is None
+
+
 async def selected_offer(executor: ServicesCatalogModuleExecutor) -> PendingConfirmation:
     listed = await executor.execute(request("servicios", "services.list"), context())
     selected = await executor.execute(
