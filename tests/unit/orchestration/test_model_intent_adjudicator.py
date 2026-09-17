@@ -85,6 +85,7 @@ async def test_selects_only_a_supplied_candidate() -> None:
         intent="appointments.book",
     )
     assert model.requests[0].max_output_tokens == 60
+    assert model.requests[0].reasoning_enabled is False
 
 
 @pytest.mark.anyio

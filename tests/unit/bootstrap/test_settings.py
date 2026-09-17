@@ -549,7 +549,7 @@ def test_conversation_safety_uses_bounded_defaults() -> None:
 
     assert configuration is not None
     assert configuration.max_input_characters == 2000
-    assert configuration.max_general_output_tokens == 512
+    assert configuration.max_general_output_tokens == 2048
     assert configuration.max_classifier_tokens == 48
     assert configuration.classifier_timeout_seconds == 5
     assert configuration.minimum_confidence == 0.75

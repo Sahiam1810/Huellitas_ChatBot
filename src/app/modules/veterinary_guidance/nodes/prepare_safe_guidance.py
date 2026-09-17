@@ -7,17 +7,23 @@ URGENT_MESSAGE = (
     "Hay señales que requieren atención veterinaria inmediata. "
     "Acude a urgencias o contacta a la clínica ahora."
 )
+_ASESOR_HINT = (
+    "Si no te ayuda o prefieres una persona, escribe la palabra asesor."
+)
 EMPTY_MESSAGE = (
     "No tengo una guía autorizada para ese caso. "
-    "Evita medicar por tu cuenta y consulta a un veterinario."
+    "Evita medicar por tu cuenta y consulta a un veterinario. "
+    f"{_ASESOR_HINT}"
 )
 DEGRADED_MESSAGE = (
     "Ahora no puedo consultar la guía. Si hay signos graves, busca atención inmediata; "
-    "si no, intenta de nuevo en unos minutos."
+    "si no, intenta de nuevo en unos minutos. "
+    f"{_ASESOR_HINT}"
 )
 DISABLED_MESSAGE = (
     "Por ahora no puedo consultar la guía autorizada. "
-    "Si hay signos graves, busca atención inmediata; si no, consulta a un veterinario."
+    "Si hay signos graves, busca atención inmediata; si no, consulta a un veterinario. "
+    f"{_ASESOR_HINT}"
 )
 CLOSING = (
     "Si empeora o dura más de lo esperado, agenda una cita o consulta a un veterinario."

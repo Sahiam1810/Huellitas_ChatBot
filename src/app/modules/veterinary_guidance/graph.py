@@ -83,7 +83,7 @@ class VeterinaryGuidanceModuleExecutor:
         }:
             response += (
                 "\n\nSi deseas, puedo ayudarte a agendar una cita. "
-                "Puedes responder de forma natural."
+                "Puedes responder sí, o escribir por ejemplo: agéndame una cita."
             )
             next_pending = create_appointment_offer(
                 self._appointment_offer_ttl_seconds
@@ -113,7 +113,8 @@ class VeterinaryGuidanceModuleExecutor:
             )
         if choice is None:
             return VeterinaryGuidanceModuleExecutor._offer_result(
-                "Para saber si deseas agendar una cita, responde sí o no.",
+                "Para saber si deseas agendar una cita, responde sí o no, "
+                "o escribe por ejemplo: agéndame una cita.",
                 pending=pending,
             )
         if is_guest(request.command.roles):

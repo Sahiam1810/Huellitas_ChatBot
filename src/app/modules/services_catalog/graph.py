@@ -182,7 +182,8 @@ class ServicesCatalogModuleExecutor:
         )
         return self._message(
             format_service_detail(selected)
-            + "\n\n¿Deseas agendar una cita para este servicio? Puedes responder de forma natural.",
+            + "\n\n¿Deseas agendar una cita para este servicio? "
+            "Puedes responder sí, o escribir por ejemplo: agéndame una cita.",
             pending=offer,
         )
 
@@ -231,7 +232,8 @@ class ServicesCatalogModuleExecutor:
             return self._message("Entendido. No iniciaré el agendamiento.")
         if choice is None:
             return self._message(
-                "Para saber si deseas agendar este servicio, responde sí o no.",
+                "Para saber si deseas agendar este servicio, responde sí o no, "
+                "o escribe por ejemplo: agéndame una cita.",
                 pending=pending,
             )
         resume_message = f"Quiero agendar una cita para {selected.name}"

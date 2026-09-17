@@ -151,7 +151,7 @@ async def test_verified_user_without_guidance_receives_resumable_appointment_off
     )
 
     assert "puedo ayudarte a agendar una cita" in (result.message or "").lower()
-    assert "responder de forma natural" in (result.message or "").lower()
+    assert "agéndame una cita" in (result.message or "").lower()
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.action == "guidance.offer_appointment"
 
@@ -169,6 +169,31 @@ async def test_verified_user_acceptance_hands_off_to_appointment_booking() -> No
     result = await executor.execute(
         request(
             "sí",
+            "guidance.appointment_offer",
+            roles=("Cliente",),
+            pending=offered.pending_confirmation,
+        ),
+        execution_context(role="Cliente"),
+    )
+
+    assert result.handoff == ModuleHandoff(
+        target=ModuleContinuation("appointments", "appointments.book")
+    )
+
+
+@pytest.mark.anyio
+async def test_agendame_natural_phrase_hands_off_to_appointment_booking() -> None:
+    executor = VeterinaryGuidanceModuleExecutor(
+        knowledge_gateway=KnowledgeGateway(GuidanceKnowledgeResult(status=RagStatus.EMPTY))
+    )
+    offered = await executor.execute(
+        request("mi gato no come", roles=("Cliente",)),
+        execution_context(role="Cliente"),
+    )
+
+    result = await executor.execute(
+        request(
+            "Agéndame una",
             "guidance.appointment_offer",
             roles=("Cliente",),
             pending=offered.pending_confirmation,

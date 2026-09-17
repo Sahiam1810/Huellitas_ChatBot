@@ -35,6 +35,8 @@ def test_appointment_offer_accepts_explicit_rejection(message: str) -> None:
         "hagámoslo",
         "me gustaría",
         "quiero agendar",
+        "agéndame una",
+        "agendame una cita",
         "para mañana",
         "el viernes a las 10",
     ),

@@ -72,6 +72,9 @@ class ModelIntentAdjudicator(IntentAdjudicator):
                             ),
                         ),
                         max_output_tokens=self._max_output_tokens,
+                        # El adjudicador necesita JSON corto; con reasoning activo,
+                        # modelos thinking agotan el presupuesto antes del JSON.
+                        reasoning_enabled=False,
                     )
                 ),
                 timeout=self._timeout_seconds,

@@ -12,8 +12,13 @@ _AFFIRMATIVE_CHOICES = {
     "hagamoslo",
     "me gustaria",
     "agendalo",
+    "agendame",
+    "agendamela",
+    "agendemela",
     "reservalo",
+    "reservame",
     "reservarlo",
+    "reservamela",
 }
 _NEGATIVE_CHOICES = {
     "no",
@@ -31,8 +36,15 @@ _UNSAFE_PATTERNS = (
     re.compile(r"\b(?:cambia|toma)\b.{0,20}\brol\b"),
 )
 _SCHEDULING_PATTERN = re.compile(
+    r"(?:"
     r"\b(?:quiero|quisiera|deseo|necesito|podemos|puedes)\b.*"
-    r"\b(?:agendar(?:lo)?|reservar(?:lo)?|programar(?:lo)?|sacar)\b"
+    r"\b(?:agendar(?:lo|me|la|nos)?|reservar(?:lo|me|la|nos)?|programar(?:lo|me|la)?|sacar)\b"
+    r"|"
+    r"\b(?:agendame|agendalo|agendala|agendemela|reservame|reservalo|reservala|"
+    r"programame|programalo)\b"
+    r"|"
+    r"\bagenda(?:me|lo|la)?\b.{0,40}\b(?:cita|una|consulta)\b"
+    r")"
 )
 _DATE_PATTERN = re.compile(
     r"^(?:para\s+)?(?:hoy|manana|pasado\s+manana|"
@@ -61,4 +73,3 @@ def appointment_offer_choice(message: str) -> bool | None:
     if is_explicitly_affirmative or has_booking_signal or has_date_signal:
         return True
     return None
-

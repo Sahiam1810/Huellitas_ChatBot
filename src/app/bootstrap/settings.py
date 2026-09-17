@@ -208,7 +208,7 @@ class Settings(BaseSettings):
 
     safety_enabled: bool = True
     safety_max_input_characters: int = Field(default=2000, ge=100, le=20000)
-    safety_max_general_output_tokens: int = Field(default=512, ge=64, le=2048)
+    safety_max_general_output_tokens: int = Field(default=2048, ge=64, le=4096)
     safety_max_classifier_tokens: int = Field(default=48, ge=16, le=128)
     safety_classifier_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     safety_minimum_confidence: float = Field(default=0.75, ge=0, le=1)
