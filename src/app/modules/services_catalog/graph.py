@@ -23,6 +23,7 @@ from app.modules.services_catalog.services.service_selection import (
     SERVICE_OFFER_ACTION,
     SERVICE_OFFER_INTENT,
     choose_catalog_service,
+    looks_like_catalog_selection_attempt,
 )
 from app.modules.services_catalog.state import ServicesCatalogGraphState
 from app.orchestration.appointment_offer import appointment_offer_choice
@@ -159,6 +160,15 @@ class ServicesCatalogModuleExecutor:
             )
         selected = choose_catalog_service(request.command.message, stored_ids, catalog)
         if selected is None:
+            if not looks_like_catalog_selection_attempt(
+                request.command.message, stored_ids, catalog
+            ):
+                return self._message(
+                    "Entendido, dejamos la lista de servicios por ahora. "
+                    "Cuéntame con calma qué quieres saber sobre Huellitas, tu mascota "
+                    "o cómo te puedo ayudar. "
+                    "Si quieres, te ayudo a agendar una cita."
+                )
             current_ids = [str(service.id) for service in catalog]
             current_pending = (
                 pending

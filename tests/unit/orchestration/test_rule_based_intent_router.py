@@ -75,13 +75,10 @@ async def test_pet_profile_routes_registration_without_using_general_model() -> 
         ("¿Cuánto cuesta la consulta general?", "services.detail"),
         ("¿Tienen servicio de vacunación?", "services.search"),
         ("¿Ofrecen consulta general?", "services.search"),
-        # Ticket 4: frases naturales que antes caían al mensaje genérico de alcance.
         ("¿Qué servicios manejan?", "services.list"),
-        ("¿Qué manejan por aquí?", "services.list"),
         ("¿Qué servicios hay?", "services.list"),
-        ("¿Qué hacen en Huellitas?", "services.list"),
-        ("¿Qué atienden en la veterinaria?", "services.list"),
-        ("¿Qué me pueden ofrecer para mi perro?", "services.list"),
+        ("lista de servicios", "services.list"),
+        ("catálogo de servicios", "services.list"),
         ("¿Cuánto sale la consulta general?", "services.detail"),
         ("¿Cuál es el precio de la vacunación?", "services.detail"),
         ("¿Cuál es el valor de la desparasitación?", "services.detail"),
@@ -120,11 +117,8 @@ async def test_services_catalog_new_phrases_do_not_collide_across_the_full_rule_
 
     for message in (
         "¿Qué servicios manejan?",
-        "¿Qué manejan por aquí?",
         "¿Qué servicios hay?",
-        "¿Qué hacen en Huellitas?",
-        "¿Qué atienden en la veterinaria?",
-        "¿Qué me pueden ofrecer para mi perro?",
+        "lista de servicios",
         "¿Manejan servicio de peluquería?",
         "¿Hacen consulta de urgencias?",
         "¿Atienden servicio de cirugía?",
@@ -132,3 +126,25 @@ async def test_services_catalog_new_phrases_do_not_collide_across_the_full_rule_
         decision = await router.route(command(message), manifests)
         assert decision.kind is RoutingKind.MODULE
         assert decision.module_id == "services_catalog"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "message",
+    (
+        "¿Qué hacen en Huellitas?",
+        "¿Qué atienden en la veterinaria?",
+        "¿Qué me pueden ofrecer para mi perro?",
+        "¿Qué manejan por aquí?",
+        "Qué es huellitas",
+        "quiero conocer más sobre huellitas",
+    ),
+)
+async def test_brand_and_open_curiosity_do_not_match_services_catalog_rules(
+    message: str,
+) -> None:
+    router = RuleBasedIntentRouter(SERVICES_CATALOG_ROUTING_RULES)
+
+    decision = await router.route(command(message), (SERVICES_CATALOG_MANIFEST,))
+
+    assert decision.kind is not RoutingKind.MODULE or decision.module_id != "services_catalog"
